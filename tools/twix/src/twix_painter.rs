@@ -4,7 +4,7 @@ use std::{
 };
 
 use eframe::{
-    egui::{Painter, Response, Sense, Ui},
+    egui::{pos2, Painter, Response, Sense, TextureId, Ui},
     emath::{Pos2, Rect},
     epaint::{Color32, PathShape, Shape, Stroke},
 };
@@ -393,6 +393,11 @@ impl<Frame> TwixPainter<Frame> {
         let position = self.transform_world_to_pixel(position);
         self.painter.text(position, align, text, font_id, color);
     }
+
+    pub fn image(&self, texture_id: TextureId, rect: Rect){
+        self.painter.image(texture_id, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+
 }
 impl TwixPainter<Ground> {
     pub fn with_ground_transforms(self) -> Self {
