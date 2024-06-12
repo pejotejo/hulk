@@ -14,5 +14,48 @@
         1.1906325817108154
       ]
     }
+  },
+  "field_color_detection": {
+    "vision_bottom": {
+      "blue_chromaticity_threshold": {
+        "first_half_own_half_towards_own_goal": 0.28424936532974243
+      },
+      "green_chromaticity_threshold": {
+        "first_half_own_half_towards_own_goal": 0.4651999771595001
+      },
+      "green_luminance_threshold": {
+        "first_half_own_half_towards_own_goal": 24.64502716064453
+      },
+      "luminance_threshold": {
+        "first_half_own_half_towards_own_goal": 15.977771759033203
+      },
+      "red_chromaticity_threshold": {
+        "first_half_own_half_towards_own_goal": 0.2483307868242264
+      }
+    },
+    "vision_top": {
+      "blue_chromaticity_threshold": {
+        "first_half_own_half_towards_own_goal": 0.26260215044021606
+      }
+    }
+  },
+  "image_segmenter": {
+    "vision_bottom": {
+      "vertical_edge_threshold": {
+        "first_half_own_half_towards_own_goal": 19.69688415527344
+      }
+    }
+  }
+}
+ 0.24730007350444794
+      }
+    }
+  },
+  "image_segmenter": {
+    "vision_bottom": {
+      "vertical_edge_threshold": {
+        "first_half_own_half_towards_own_goal": 19.69688415527344
+      }
+    }
   }
 }
