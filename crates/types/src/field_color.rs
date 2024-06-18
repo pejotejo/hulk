@@ -4,7 +4,15 @@ use serde::{Deserialize, Serialize};
 use crate::color::{Intensity, Rgb, RgbChannel, YCbCr444};
 
 #[derive(
-    Clone, Debug, Default, Deserialize, Serialize, PathSerialize, PathDeserialize, PathIntrospect,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Deserialize,
+    Serialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
 )]
 pub struct FieldColor {
     pub red_chromaticity_threshold: f32,
