@@ -13,7 +13,7 @@ use linear_algebra::{point, vector};
 use serde_json::{json, Value};
 use types::{
     camera_position::CameraPosition,
-    color::{Rgb, RgbChannel},
+    color::Rgb,
     image_segments::ImageSegments,
 };
 
@@ -185,12 +185,13 @@ impl Widget for &mut ImageSegmentsPanel {
                     let cb = ycbcr_color.cb;
                     let cr = ycbcr_color.cr;
                     let rgb_color = Rgb::from(ycbcr_color);
-                    let r = rgb_color.r;
-                    let g = rgb_color.g;
-                    let b = rgb_color.b;
-                    let red_chromaticity = rgb_color.get_chromaticity(RgbChannel::Red);
-                    let green_chromaticity = rgb_color.get_chromaticity(RgbChannel::Green);
-                    let blue_chromaticity = rgb_color.get_chromaticity(RgbChannel::Blue);
+                    let r = rgb_color.red;
+                    let g = rgb_color.green;
+                    let b = rgb_color.blue;
+                    let chromaticity = rgb_color.convert_to_rgchromaticity();
+                    let red_chromaticity = chromaticity.red;
+                    let green_chromaticity = chromaticity.green;
+                    let blue_chromaticity = chromaticity.blue;
                     response = response
                 .on_hover_text_at_pointer(format!("x: {x}, start: {start}, end: {end}\nY: {y:3}, Cb: {cb:3}, Cr: {cr:3}\nR: {r:3}, G: {g:3}, B: {b:3}\nr: {red_chromaticity:.2}, g: {green_chromaticity:.2}, b: {blue_chromaticity:.2}"));
                 }
@@ -204,8 +205,9 @@ impl Widget for &mut ImageSegmentsPanel {
                 let rgb_color = Rgb::from(ycbcr_color);
                 let start = point![x, segment.start as f32];
                 let end = point![x, segment.end as f32];
-                let original_color = Color32::from_rgb(rgb_color.r, rgb_color.g, rgb_color.b);
+                let original_color = Color32::from_rgb(rgb_color.red, rgb_color.green, rgb_color.blue);
                 let high_color = Color32::YELLOW;
+                let chromaticity = rgb_color.convert_to_rgchromaticity();
                 let visualized_color = match self.color_mode {
                     ColorMode::Original => original_color,
                     ColorMode::FieldColor => match segment.field_color {
@@ -215,17 +217,17 @@ impl Widget for &mut ImageSegmentsPanel {
                     ColorMode::Y => Color32::from_gray(ycbcr_color.y),
                     ColorMode::Cb => Color32::from_gray(ycbcr_color.cb),
                     ColorMode::Cr => Color32::from_gray(ycbcr_color.cr),
-                    ColorMode::Red => Color32::from_gray(rgb_color.r),
-                    ColorMode::Green => Color32::from_gray(rgb_color.g),
-                    ColorMode::Blue => Color32::from_gray(rgb_color.b),
+                    ColorMode::Red => Color32::from_gray(rgb_color.red),
+                    ColorMode::Green => Color32::from_gray(rgb_color.green),
+                    ColorMode::Blue => Color32::from_gray(rgb_color.blue),
                     ColorMode::RedChromaticity => Color32::from_gray(
-                        (rgb_color.get_chromaticity(RgbChannel::Red) * 255.0) as u8,
+                        (chromaticity.red * 255.0) as u8,
                     ),
                     ColorMode::GreenChromaticity => Color32::from_gray(
-                        (rgb_color.get_chromaticity(RgbChannel::Green) * 255.0) as u8,
+                        (chromaticity.green * 255.0) as u8,
                     ),
                     ColorMode::BlueChromaticity => Color32::from_gray(
-                        (rgb_color.get_chromaticity(RgbChannel::Blue) * 255.0) as u8,
+                        (chromaticity.blue * 255.0) as u8,
                     ),
                 };
                 painter.line_segment(start, end, Stroke::new(4.0, visualized_color));
