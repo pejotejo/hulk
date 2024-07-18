@@ -8,8 +8,8 @@ use ball_filter::{BallFilter as BallFiltering, BallHypothesis};
 use context_attribute::context;
 use coordinate_systems::{Ground, Pixel};
 use framework::{AdditionalOutput, HistoricInput, MainOutput, PerceptionInput};
-use geometry::circle::Circle;
-use linear_algebra::{distance, IntoFramed, IntoTransform, Isometry2, Point2};
+use geometry::{circle::Circle, is_inside_polygon::is_inside_polygon};
+use linear_algebra::{distance, point, IntoFramed, IntoTransform, Isometry2, Point2};
 use projection::{camera_matrices::CameraMatrices, camera_matrix::CameraMatrix, Projection};
 use types::{
     ball_detection::BallPercept,
@@ -159,9 +159,11 @@ impl BallFilter {
                 .expect("time ran backwards");
             let validity_high_enough =
                 hypothesis.validity >= filter_parameters.validity_discard_threshold;
+            let is_in_side_kick_reach = is_inside_polygon(&[point!(-0.10, 0.09), point!(-0.10, -0.03), point!(-0.20 ,-0.03), point!(-0.20, 0.09)], &ball.position);
             is_ball_inside_field(ball, field_dimensions)
                 && validity_high_enough
                 && duration_since_last_observation < filter_parameters.hypothesis_timeout
+                && !is_in_side_kick_reach
         };
 
         let should_merge_hypotheses =
