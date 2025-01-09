@@ -1,0 +1,247 @@
+# Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
+function __fish_pepsi_global_optspecs
+	string join \n repository-root= h/help V/version
+end
+
+function __fish_pepsi_needs_command
+	# Figure out if the current invocation already has a command.
+	set -l cmd (commandline -opc)
+	set -e cmd[1]
+	argparse -s (__fish_pepsi_global_optspecs) -- $cmd 2>/dev/null
+	or return
+	if set -q argv[1]
+		# Also print the command, so this can be used to figure out what it is.
+		echo $argv[1]
+		return 1
+	end
+	return 0
+end
+
+function __fish_pepsi_using_subcommand
+	set -l cmd (__fish_pepsi_needs_command)
+	test -z "$cmd"
+	and return 1
+	contains -- $cmd[1] $argv
+end
+
+complete -c pepsi -n "__fish_pepsi_needs_command" -l repository-root -d 'Alternative repository root (if not given the parent of .git is used)' -r -F
+complete -c pepsi -n "__fish_pepsi_needs_command" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_needs_command" -s V -l version -d 'Print version'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "analyze" -d 'Analyze source code'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "aliveness" -d 'Get aliveness information from NAOs'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "build" -d 'Builds the code for a target'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "check" -d 'Checks the code with cargo check'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "clippy" -d 'Checks the code with cargo clippy'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "communication" -d 'Enable/disable communication'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "completions" -d 'Generates shell completion files'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "gammaray" -d 'Flash a HULKs-OS image to NAOs'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "hulk" -d 'Control the HULK service'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "location" -d 'Control the configured location'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "logs" -d 'Logging on the NAO'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "playernumber" -d 'Change player numbers of the NAOs in local parameters'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "ping" -d 'Ping NAOs'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "postgame" -d 'Disable NAOs after a game (downloads logs, unsets wireless network, etc.)'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "poweroff" -d 'Power NAOs off'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "pregame" -d 'Get NAOs ready for a game (sets player numbers, uploads, sets wireless network, etc.)'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "reboot" -d 'Reboot NAOs'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "recording" -d 'Set cycler instances to be recorded'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "run" -d 'Runs the code for a target'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "sdk" -d 'Manage the NAO SDK'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "shell" -d 'Opens a command line shell to a NAO'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "upload" -d 'Upload the code to NAOs'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "wireless" -d 'Control wireless network on the NAO'
+complete -c pepsi -n "__fish_pepsi_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and not __fish_seen_subcommand_from dump-contexts dump-latest help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and not __fish_seen_subcommand_from dump-contexts dump-latest help" -f -a "dump-contexts"
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and not __fish_seen_subcommand_from dump-contexts dump-latest help" -f -a "dump-latest"
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and not __fish_seen_subcommand_from dump-contexts dump-latest help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and __fish_seen_subcommand_from dump-contexts" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and __fish_seen_subcommand_from dump-latest" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and __fish_seen_subcommand_from help" -f -a "dump-contexts"
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and __fish_seen_subcommand_from help" -f -a "dump-latest"
+complete -c pepsi -n "__fish_pepsi_using_subcommand analyze; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand aliveness" -s t -l timeout -d 'Timeout in ms for waiting for responses' -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand aliveness" -s v -l verbose -d 'Output verbose version of the aliveness information'
+complete -c pepsi -n "__fish_pepsi_using_subcommand aliveness" -s j -l json -d 'Output aliveness information as json'
+complete -c pepsi -n "__fish_pepsi_using_subcommand aliveness" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l target -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l features -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l workspace -d 'Apply to entire workspace (only valid for build/check/clippy)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l no-sdk-installation
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand build" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l target -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l features -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l workspace -d 'Apply to entire workspace (only valid for build/check/clippy)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l no-sdk-installation
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand check" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l target -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l features -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l workspace -d 'Apply to entire workspace (only valid for build/check/clippy)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l no-sdk-installation
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand clippy" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and not __fish_seen_subcommand_from enable disable help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and not __fish_seen_subcommand_from enable disable help" -f -a "enable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and not __fish_seen_subcommand_from enable disable help" -f -a "disable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and not __fish_seen_subcommand_from enable disable help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and __fish_seen_subcommand_from enable" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and __fish_seen_subcommand_from disable" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and __fish_seen_subcommand_from help" -f -a "enable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and __fish_seen_subcommand_from help" -f -a "disable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand communication; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand completions" -l complete-naos
+complete -c pepsi -n "__fish_pepsi_using_subcommand completions" -l complete-assignments
+complete -c pepsi -n "__fish_pepsi_using_subcommand completions" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand gammaray" -l image-path -d 'Alternative path to an image' -r -F
+complete -c pepsi -n "__fish_pepsi_using_subcommand gammaray" -l os-version -d 'Alternative HULKs-OS version e.g. 3.3' -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand gammaray" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand hulk" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and not __fish_seen_subcommand_from list set status help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and not __fish_seen_subcommand_from list set status help" -f -a "list" -d 'List all available locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and not __fish_seen_subcommand_from list set status help" -f -a "set" -d 'Set location for repository'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and not __fish_seen_subcommand_from list set status help" -f -a "status" -d 'Get currently configured locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and not __fish_seen_subcommand_from list set status help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from set" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from status" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from help" -f -a "list" -d 'List all available locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from help" -f -a "set" -d 'Set location for repository'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from help" -f -a "status" -d 'Get currently configured locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand location; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -f -a "delete" -d 'Delete logs on the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -f -a "download" -d 'Download logs from the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -f -a "list" -d 'List logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -f -a "show" -d 'Show logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and not __fish_seen_subcommand_from delete download list show help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from delete" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from download" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete logs on the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from help" -f -a "download" -d 'Download logs from the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from help" -f -a "list" -d 'List logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand logs; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand playernumber" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand ping" -l timeout-seconds -d 'Time in seconds after which ping is aborted' -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand ping" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand postgame" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand poweroff" -l all -d 'Power off all NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand poweroff" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l recording-intervals -d 'Intervals between cycle recordings, e.g. Control=1,VisionTop=30 to record every cycle in Control and one out of every 30 in VisionTop. Set to 0 or don\'t specify to disable recording for a cycler' -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l no-sdk-installation -d 'Do not update nor install SDK'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l no-build -d 'Do not build before uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l no-restart -d 'Do not restart HULK nor HULA service after uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l no-clean -d 'Do not remove existing remote files during uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l with-communication -d 'Enable communication'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l skip-os-check -d 'Skip the OS version check'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l prepare -d 'Prepare everything for the upload without performing the actual one'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand pregame" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand reboot" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand recording" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l target -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l features -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l workspace -d 'Apply to entire workspace (only valid for build/check/clippy)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l no-sdk-installation
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand run" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and not __fish_seen_subcommand_from install help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and not __fish_seen_subcommand_from install help" -f -a "install"
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and not __fish_seen_subcommand_from install help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and __fish_seen_subcommand_from install" -l sdk-version -d 'Alternative SDK version e.g. 3.3' -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and __fish_seen_subcommand_from install" -l installation-directory -d 'Alternative SDK installation directory e.g. ~/.naosdk/' -r -F
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and __fish_seen_subcommand_from install" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and __fish_seen_subcommand_from help" -f -a "install"
+complete -c pepsi -n "__fish_pepsi_using_subcommand sdk; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand shell" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l profile -r
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l no-sdk-installation -d 'Do not update nor install SDK'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l no-build -d 'Do not build before uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l no-restart -d 'Do not restart HULK nor HULA service after uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l no-clean -d 'Do not remove existing remote files during uploading'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l no-communication -d 'Do not enable communication'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l skip-os-check -d 'Skip the OS version check'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l prepare -d 'Prepare everything for the upload without performing the actual one'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -l remote -d 'Use a remote machine for compilation, see ./scripts/remote for details'
+complete -c pepsi -n "__fish_pepsi_using_subcommand upload" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -f -a "list" -d 'List available networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -f -a "scan" -d 'Scan for networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -f -a "set" -d 'Set active network'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -f -a "status" -d 'Show current network status'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and not __fish_seen_subcommand_from list scan set status help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from scan" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from set" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from status" -s h -l help -d 'Print help'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from help" -f -a "list" -d 'List available networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from help" -f -a "scan" -d 'Scan for networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from help" -f -a "set" -d 'Set active network'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from help" -f -a "status" -d 'Show current network status'
+complete -c pepsi -n "__fish_pepsi_using_subcommand wireless; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "analyze" -d 'Analyze source code'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "aliveness" -d 'Get aliveness information from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "build" -d 'Builds the code for a target'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "check" -d 'Checks the code with cargo check'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "clippy" -d 'Checks the code with cargo clippy'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "communication" -d 'Enable/disable communication'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "completions" -d 'Generates shell completion files'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "gammaray" -d 'Flash a HULKs-OS image to NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "hulk" -d 'Control the HULK service'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "location" -d 'Control the configured location'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "logs" -d 'Logging on the NAO'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "playernumber" -d 'Change player numbers of the NAOs in local parameters'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "ping" -d 'Ping NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "postgame" -d 'Disable NAOs after a game (downloads logs, unsets wireless network, etc.)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "poweroff" -d 'Power NAOs off'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "pregame" -d 'Get NAOs ready for a game (sets player numbers, uploads, sets wireless network, etc.)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "reboot" -d 'Reboot NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "recording" -d 'Set cycler instances to be recorded'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "run" -d 'Runs the code for a target'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "sdk" -d 'Manage the NAO SDK'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "shell" -d 'Opens a command line shell to a NAO'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "upload" -d 'Upload the code to NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "wireless" -d 'Control wireless network on the NAO'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and not __fish_seen_subcommand_from analyze aliveness build check clippy communication completions gammaray hulk location logs playernumber ping postgame poweroff pregame reboot recording run sdk shell upload wireless help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from analyze" -f -a "dump-contexts"
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from analyze" -f -a "dump-latest"
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from communication" -f -a "enable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from communication" -f -a "disable"
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from location" -f -a "list" -d 'List all available locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from location" -f -a "set" -d 'Set location for repository'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from location" -f -a "status" -d 'Get currently configured locations'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from logs" -f -a "delete" -d 'Delete logs on the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from logs" -f -a "download" -d 'Download logs from the NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from logs" -f -a "list" -d 'List logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from logs" -f -a "show" -d 'Show logs from NAOs'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from sdk" -f -a "install"
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from wireless" -f -a "list" -d 'List available networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from wireless" -f -a "scan" -d 'Scan for networks'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from wireless" -f -a "set" -d 'Set active network'
+complete -c pepsi -n "__fish_pepsi_using_subcommand help; and __fish_seen_subcommand_from wireless" -f -a "status" -d 'Show current network status'
+complete -c pepsi -n "__fish_seen_subcommand_from aliveness" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from gammaray" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from hulk" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from logs; and __fish_seen_subcommand_from delete" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from logs; and __fish_seen_subcommand_from downloads" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from logs; and __fish_seen_subcommand_from show" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from ping" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from postgame" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from poweroff" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from reboot" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from shell" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from upload" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from wireless; and __fish_seen_subcommand_from list" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from wireless; and __fish_seen_subcommand_from set" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from wireless; and __fish_seen_subcommand_from status" -f -a "(pepsi completions --complete-naos fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from playernumber" -f -a "(pepsi completions --complete-assignments fish)"
+complete -c pepsi -n "__fish_seen_subcommand_from pregame" -f -a "(pepsi completions --complete-assignments fish)"

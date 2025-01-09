@@ -83,7 +83,7 @@ impl KinematicsProvider {
         let left_foot_to_robot =
             left_ankle_to_robot * left_foot_to_left_ankle(&measured_positions.left_leg);
         let left_sole_to_robot =
-            left_foot_to_robot * Isometry3::from(RobotDimensions::LEFT_ANKLE_TO_LEFT_SOLE);
+            left_foot_to_robot * Isometry3::from(RobotDimensions::LEFT_FOOT_TO_LEFT_SOLE);
         // right leg
         let right_pelvis_to_robot = right_pelvis_to_robot(&measured_positions.right_leg);
         let right_hip_to_robot =
@@ -97,7 +97,7 @@ impl KinematicsProvider {
         let right_foot_to_robot =
             right_ankle_to_robot * right_foot_to_right_ankle(&measured_positions.right_leg);
         let right_sole_to_robot =
-            right_foot_to_robot * Isometry3::from(RobotDimensions::RIGHT_ANKLE_TO_RIGHT_SOLE);
+            right_foot_to_robot * Isometry3::from(RobotDimensions::RIGHT_FOOT_TO_RIGHT_SOLE);
 
         let head = RobotHeadKinematics {
             neck_to_robot,

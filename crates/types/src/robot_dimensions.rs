@@ -17,8 +17,8 @@ impl RobotDimensions {
     pub const RIGHT_HIP_TO_RIGHT_KNEE: Vector3<RightThigh> = vector![0.0, 0.0, -0.1];
     pub const LEFT_KNEE_TO_LEFT_ANKLE: Vector3<LeftTibia> = vector![0.0, 0.0, -0.1029];
     pub const RIGHT_KNEE_TO_RIGHT_ANKLE: Vector3<RightTibia> = vector![0.0, 0.0, -0.1029];
-    pub const LEFT_ANKLE_TO_LEFT_SOLE: Vector3<LeftFoot> = vector![0.0, 0.0, -0.04519];
-    pub const RIGHT_ANKLE_TO_RIGHT_SOLE: Vector3<RightFoot> = vector![0.0, 0.0, -0.04519];
+    pub const LEFT_FOOT_TO_LEFT_SOLE: Vector3<LeftFoot> = vector![0.0, 0.0, -0.04519];
+    pub const RIGHT_FOOT_TO_RIGHT_SOLE: Vector3<RightFoot> = vector![0.0, 0.0, -0.04519];
     pub const ROBOT_TO_LEFT_SHOULDER: Vector3<Robot> = vector![0.0, 0.098, 0.185];
     pub const ROBOT_TO_RIGHT_SHOULDER: Vector3<Robot> = vector![0.0, -0.098, 0.185];
     pub const LEFT_SHOULDER_TO_LEFT_ELBOW: Vector3<LeftUpperArm> = vector![0.105, 0.015, 0.0];
