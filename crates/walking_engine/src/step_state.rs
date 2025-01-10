@@ -79,12 +79,12 @@ impl StepState {
         };
         let walk_to_robot = context.robot_to_walk.inverse();
 
-        let left_foot: Pose3<LeftSole> = Isometry3::from(RobotDimensions::LEFT_ANKLE_TO_LEFT_SOLE)
+        let left_foot: Pose3<LeftSole> = Isometry3::from(RobotDimensions::LEFT_FOOT_TO_LEFT_SOLE)
             .inverse()
             .as_pose();
         let left_sole_to_robot = (walk_to_robot * left_sole).as_transform();
         let right_foot: Pose3<RightSole> =
-            Isometry3::from(RobotDimensions::RIGHT_ANKLE_TO_RIGHT_SOLE)
+            Isometry3::from(RobotDimensions::RIGHT_FOOT_TO_RIGHT_SOLE)
                 .inverse()
                 .as_pose();
         let right_sole_to_robot = (walk_to_robot * right_sole).as_transform();
