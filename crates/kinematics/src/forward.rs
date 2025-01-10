@@ -171,12 +171,16 @@ pub fn right_foot_to_right_ankle(angles: &LegJoints<f32>) -> Isometry3<RightFoot
     Isometry3::from_rotation(Vector3::x_axis() * angles.ankle_roll)
 }
 
-pub fn right_sole_to_robot(angles: &LegJoints<f32>) -> Isometry3<RightSole, Robot> {
+pub fn right_foot_to_robot(angles: &LegJoints<f32>) -> Isometry3<RightFoot, Robot> {
     right_pelvis_to_robot(angles)
         * right_hip_to_right_pelvis(angles)
         * right_thigh_to_right_hip(angles)
         * right_tibia_to_right_thigh(angles)
         * right_ankle_to_right_tibia(angles)
         * right_foot_to_right_ankle(angles)
+}
+
+pub fn right_sole_to_robot(angles: &LegJoints<f32>) -> Isometry3<RightSole, Robot> {
+    right_foot_to_robot(angles)
         * Isometry3::from(RobotDimensions::RIGHT_FOOT_TO_RIGHT_SOLE)
 }

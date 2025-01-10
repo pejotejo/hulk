@@ -11,7 +11,10 @@ use types::{
 pub fn leg_angles(
     left_foot: linear_algebra::Pose3<Robot>,
     right_foot: linear_algebra::Pose3<Robot>,
+    joint_motion_ranges: &LegJoints<Vec<f32>>,
 ) -> LowerBodyJoints<f32> {
+    let ranges = [&joint_motion_ranges.hip_yaw_pitch, &joint_motion_ranges.hip_roll, &joint_motion_ranges.hip_pitch, &joint_motion_ranges.knee_pitch, &joint_motion_ranges.ankle_pitch, &joint_motion_ranges.ankle_roll];
+    
     let ratio = 0.5;
     let robot_to_left_pelvis = Isometry3::rotation(Vector3::x() * -1.0 * PI / 4.0)
         * Translation3::from(-RobotDimensions::ROBOT_TO_LEFT_PELVIS.inner);

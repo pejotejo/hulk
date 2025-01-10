@@ -1464,5 +1464,23 @@
       "secs": 1
     },
     "use_stand_head_unstiff_calibration": true
+  },
+  "joint_moition_ranges": {
+    "left_leg": {
+      "hip_yaw_pitch": [-1.145303, 0.740810],
+      "hip_roll": [-0.379472, 0.790477],
+      "hip_pitch": [-1.535889, 0.484090],
+      "knee_pitch": [-0.092346, 2.112528],
+      "ankle_pitch": [-1.189516, 0.922747],
+      "ankle_roll": [-0.397880 , 0.769001]
+    },
+    "right_leg": {
+      "hip_yaw_pitch": [-1.145303, 0.740810],
+      "hip_roll": [-0.790477, 0.379472],
+      "hip_pitch": [-1.535889, 0.484090],
+      "knee_pitch": [-0.103083, 2.120198],
+      "ankle_pitch": [-1.186448, 0.932056],
+      "ankle_roll": [-0.768992, 0.397935]
+    }
   }
 }

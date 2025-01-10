@@ -92,6 +92,7 @@ impl StepState {
         let leg_joints = leg_angles(
             left_sole_to_robot * left_foot,
             right_sole_to_robot * right_foot,
+            &context.parameters.joint_motion_ranges,
         )
         .balance_using_gyro(&self.gyro_balancing, self.plan.support_side)
         .level_swing_foot(&self.foot_leveling, self.plan.support_side);

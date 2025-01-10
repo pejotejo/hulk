@@ -28,6 +28,7 @@ pub struct Parameters {
     pub swinging_arms: SwingingArmsParameters,
     pub max_level_delta: f32,
     pub max_rotation_speed: f32,
+    pub joint_motion_ranges: LegJoints<Vec<f32>>,
 }
 
 #[derive(
