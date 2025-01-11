@@ -1,15 +1,16 @@
+use coordinate_systems::{Ground, Robot};
 use itertools::Itertools;
+use kinematics::{forward::{left_sole_to_robot, right_sole_to_robot}, inverse::leg_angles};
+use linear_algebra::{point, Orientation3, Point2, Pose3};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use serde::{Deserialize, Serialize};
 use splines::Interpolate;
 use std::time::Duration;
 use types::{
-    joints::{body::BodyJoints, leg::LegJoints},
-    motion_command::KickVariant,
-    support_foot::Side,
+    joints::{body::BodyJoints, leg::LegJoints}, motion_command::KickVariant, support_foot::Side
 };
 
-use crate::kick_steps::{JointOverride, KickStep, KickSteps};
+use crate::{kick_steps::{JointOverride, KickStep, KickSteps}, Context};
 
 use super::step_state::StepState;
 
@@ -51,29 +52,46 @@ impl KickState {
 }
 
 pub trait KickOverride {
-    fn override_with_kick(self, kick_steps: &KickSteps, kick: &KickState, step: &StepState)
-        -> Self;
+    fn override_with_kick(
+        self,
+        context: &Context,
+        kick: &KickState,
+        step: &StepState,
+    ) -> Self;
 }
 
 impl KickOverride for BodyJoints {
     fn override_with_kick(
         self,
-        kick_steps: &KickSteps,
+        context: &Context,
         kick: &KickState,
         step: &StepState,
     ) -> Self {
-        let kick_step = kick_steps.get_step_at(kick.variant, kick.index);
-        let overrides = compute_kick_overrides(kick_step, step.time_since_start, kick.strength);
-        match step.plan.support_side {
-            Side::Left => BodyJoints {
-                right_leg: self.right_leg + overrides,
-                ..self
-            },
-            Side::Right => BodyJoints {
-                left_leg: self.left_leg + overrides,
-                ..self
-            },
+        let kick_step = context.kick_steps.get_step_at(kick.variant, kick.index);
+        let ball_position: Point2<Ground> = context.ball_position.unwrap().position;
+        let ball_in_ground: Pose3<Ground> = Pose3::from_parts(point![ball_position.x(), ball_position.y(), 0.0], Orientation3::default());
+        let ball_in_robot: Pose3<Robot> = context.ground_to_robot.unwrap() * ball_in_ground;
+
+        let leg_joints = match step.plan.support_side {
+            Side::Left => leg_angles(left_sole_to_robot(&self.left_leg).as_pose(), ball_in_robot),
+            Side::Right => leg_angles(ball_in_robot, right_sole_to_robot(&self.right_leg).as_pose()),
+        };
+        BodyJoints{
+            left_leg: leg_joints.left_leg,
+            right_leg: leg_joints.right_leg,
+            ..self
         }
+        // let overrides = compute_kick_overrides(kick_step, step.time_since_start, kick.strength);
+        // match step.plan.support_side {
+        //     Side::Left => BodyJoints {
+        //         right_leg: self.right_leg + overrides,
+        //         ..self
+        //     },
+        //     Side::Right => BodyJoints {
+        //         left_leg: self.left_leg + overrides,
+        //         ..self
+        //     },
+        // }
     }
 }
 

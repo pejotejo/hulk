@@ -9,14 +9,7 @@ use kinematics::forward;
 use linear_algebra::{vector, Isometry2, Isometry3, Orientation3, Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
 use types::{
-    cycle_time::CycleTime,
-    joints::body::BodyJoints,
-    motion_selection::{MotionSafeExits, MotionType},
-    motor_commands::MotorCommands,
-    obstacle_avoiding_arms::{ArmCommand, ArmCommands},
-    sensor_data::SensorData,
-    support_foot::Side,
-    walk_command::WalkCommand,
+    ball_position::BallPosition, cycle_time::CycleTime, joints::body::BodyJoints, motion_selection::{MotionSafeExits, MotionType}, motor_commands::MotorCommands, obstacle_avoiding_arms::{ArmCommand, ArmCommands}, sensor_data::SensorData, support_foot::Side, walk_command::WalkCommand
 };
 use walking_engine::{kick_steps::KickSteps, mode::Mode, parameters::Parameters, Context, Engine};
 
@@ -57,6 +50,8 @@ pub struct CycleContext {
     last_actuated_joints: AdditionalOutput<BodyJoints, "walking.last_actuated_joints">,
     robot_to_walk: AdditionalOutput<Isometry3<Robot, Walk>, "walking.robot_to_walk">,
     walking_engine_mode: CyclerState<Mode, "walking_engine_mode">,
+    ball_position: Input<Option<BallPosition<Ground>>, "ball_filter.ball_position">,
+    ground_to_robot: Input<Option<Isometry3<Ground, Robot>>, "ground_to_robot?">,
 }
 
 #[context]
@@ -125,6 +120,8 @@ impl WalkingEngine {
             zero_moment_point: cycle_context.zero_moment_point,
             number_of_consecutive_cycles_zero_moment_point_outside_support_polygon: cycle_context
                 .number_of_consecutive_cycles_zero_moment_point_outside_support_polygon,
+            ball_position: cycle_context.ball_position,
+            ground_to_robot: cycle_context.ground_to_robot,
         };
 
         match *cycle_context.walk_command {

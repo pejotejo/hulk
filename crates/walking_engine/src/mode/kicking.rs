@@ -150,7 +150,7 @@ impl Kicking {
     pub fn compute_commands(&self, context: &Context) -> MotorCommands<BodyJoints> {
         self.step
             .compute_joints(context)
-            .override_with_kick(context.kick_steps, &self.kick, &self.step)
+            .override_with_kick(context, &self.kick, &self.step)
             .apply_stiffness(
                 context.parameters.stiffnesses.leg_stiffness_walk,
                 context.parameters.stiffnesses.arm_stiffness,

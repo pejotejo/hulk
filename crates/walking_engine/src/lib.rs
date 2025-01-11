@@ -10,9 +10,10 @@ use parameters::Parameters;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use serde::{Deserialize, Serialize};
 use types::{
-    cycle_time::CycleTime, joints::body::BodyJoints, motion_command::KickVariant,
-    motor_commands::MotorCommands, obstacle_avoiding_arms::ArmCommands,
-    sensor_data::ForceSensitiveResistors, step::Step, support_foot::Side,
+    ball_position::BallPosition, cycle_time::CycleTime, joints::body::BodyJoints,
+    motion_command::KickVariant, motor_commands::MotorCommands,
+    obstacle_avoiding_arms::ArmCommands, sensor_data::ForceSensitiveResistors, step::Step,
+    support_foot::Side,
 };
 
 mod anatomic_constraints;
@@ -47,6 +48,8 @@ pub struct Context<'a> {
     pub current_joints: BodyJoints,
     pub robot_to_walk: Isometry3<Robot, Walk>,
     pub obstacle_avoiding_arms: &'a ArmCommands,
+    pub ball_position: Option<&'a BallPosition<Ground>>,
+    pub ground_to_robot: Option<&'a Isometry3<Ground, Robot>>,
 }
 
 pub trait WalkTransition {
