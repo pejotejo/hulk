@@ -9,7 +9,7 @@ use kinematics::forward;
 use linear_algebra::{vector, Isometry2, Isometry3, Orientation3, Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
 use types::{
-    ball_position::BallPosition, cycle_time::CycleTime, joints::body::BodyJoints, motion_selection::{MotionSafeExits, MotionType}, motor_commands::MotorCommands, obstacle_avoiding_arms::{ArmCommand, ArmCommands}, sensor_data::SensorData, support_foot::Side, walk_command::WalkCommand
+    cycle_time::CycleTime, field_dimensions::FieldDimensions, joints::body::BodyJoints, motion_selection::{MotionSafeExits, MotionType}, motor_commands::MotorCommands, obstacle_avoiding_arms::{ArmCommand, ArmCommands}, sensor_data::SensorData, support_foot::Side, walk_command::WalkCommand, world_state::BallState
 };
 use walking_engine::{kick_steps::KickSteps, mode::Mode, parameters::Parameters, Context, Engine};
 
@@ -30,6 +30,7 @@ pub struct CreationContext {
 pub struct CycleContext {
     parameters: Parameter<Parameters, "walking_engine">,
     kick_steps: Parameter<KickSteps, "kick_steps">,
+    field_dimensions: Parameter<FieldDimensions, "field_dimensions">,
 
     motion_safe_exits: CyclerState<MotionSafeExits, "motion_safe_exits">,
     ground_to_upcoming_support:
@@ -50,7 +51,7 @@ pub struct CycleContext {
     last_actuated_joints: AdditionalOutput<BodyJoints, "walking.last_actuated_joints">,
     robot_to_walk: AdditionalOutput<Isometry3<Robot, Walk>, "walking.robot_to_walk">,
     walking_engine_mode: CyclerState<Mode, "walking_engine_mode">,
-    ball_position: Input<Option<BallPosition<Ground>>, "ball_filter.ball_position">,
+    ball_state: RequiredInput<Option<BallState>, "ball_state?">,
     ground_to_robot: Input<Option<Isometry3<Ground, Robot>>, "ground_to_robot?">,
 }
 
@@ -108,6 +109,7 @@ impl WalkingEngine {
         let context = Context {
             parameters: cycle_context.parameters,
             kick_steps: cycle_context.kick_steps,
+            field_dimensions: cycle_context.field_dimensions,
             cycle_time: cycle_context.cycle_time,
             center_of_mass: cycle_context.center_of_mass,
             force_sensitive_resistors: &cycle_context.sensor_data.force_sensitive_resistors,
@@ -120,7 +122,7 @@ impl WalkingEngine {
             zero_moment_point: cycle_context.zero_moment_point,
             number_of_consecutive_cycles_zero_moment_point_outside_support_polygon: cycle_context
                 .number_of_consecutive_cycles_zero_moment_point_outside_support_polygon,
-            ball_position: cycle_context.ball_position,
+            ball_state: cycle_context.ball_state,
             ground_to_robot: cycle_context.ground_to_robot,
         };
 

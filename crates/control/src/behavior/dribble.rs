@@ -107,7 +107,7 @@ fn is_kick_pose_reached(
     kick_info: &InWalkKickInfoParameters,
     ground_to_upcoming_support: Isometry2<Ground, UpcomingSupport>,
 ) -> bool {
-    let upcoming_kick_pose = ground_to_upcoming_support * kick_pose;
+    let upcoming_kick_pose: linear_algebra::Framed<UpcomingSupport, nalgebra::Isometry<f32, nalgebra::Unit<nalgebra::Complex<f32>>, 2>> = ground_to_upcoming_support * kick_pose;
     let is_x_reached = upcoming_kick_pose.position().x().abs() < kick_info.reached_thresholds.x;
     let is_y_reached = upcoming_kick_pose.position().y().abs() < kick_info.reached_thresholds.y;
     let is_orientation_reached =

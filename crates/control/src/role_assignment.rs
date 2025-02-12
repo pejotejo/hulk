@@ -369,7 +369,6 @@ impl RoleAssignment {
                 }
             }
         }
-
         Ok(MainOutputs {
             role: self.role.into(),
             team_ball: self.team_ball.into(),

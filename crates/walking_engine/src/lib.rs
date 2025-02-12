@@ -10,10 +10,7 @@ use parameters::Parameters;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use serde::{Deserialize, Serialize};
 use types::{
-    ball_position::BallPosition, cycle_time::CycleTime, joints::body::BodyJoints,
-    motion_command::KickVariant, motor_commands::MotorCommands,
-    obstacle_avoiding_arms::ArmCommands, sensor_data::ForceSensitiveResistors, step::Step,
-    support_foot::Side,
+    cycle_time::CycleTime, field_dimensions::FieldDimensions, joints::body::BodyJoints, motion_command::KickVariant, motor_commands::MotorCommands, obstacle_avoiding_arms::ArmCommands, sensor_data::ForceSensitiveResistors, step::Step, support_foot::Side, world_state::BallState
 };
 
 mod anatomic_constraints;
@@ -37,6 +34,7 @@ mod stiffness;
 pub struct Context<'a> {
     pub parameters: &'a Parameters,
     pub kick_steps: &'a KickSteps,
+    pub field_dimensions: &'a FieldDimensions,
     pub cycle_time: &'a CycleTime,
     pub center_of_mass: &'a Point3<Robot>,
     pub zero_moment_point: &'a Point2<Ground>,
@@ -48,8 +46,9 @@ pub struct Context<'a> {
     pub current_joints: BodyJoints,
     pub robot_to_walk: Isometry3<Robot, Walk>,
     pub obstacle_avoiding_arms: &'a ArmCommands,
-    pub ball_position: Option<&'a BallPosition<Ground>>,
+    pub ball_state: &'a BallState,
     pub ground_to_robot: Option<&'a Isometry3<Ground, Robot>>,
+
 }
 
 pub trait WalkTransition {

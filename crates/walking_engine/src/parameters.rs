@@ -5,8 +5,7 @@ use linear_algebra::Vector3;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use serde::{Deserialize, Serialize};
 use types::{
-    joints::{arm::ArmJoints, leg::LegJoints},
-    step::Step,
+    field_dimensions::FieldDimensions, joints::{arm::ArmJoints, leg::LegJoints}, step::Step
 };
 
 #[derive(
@@ -28,6 +27,7 @@ pub struct Parameters {
     pub swinging_arms: SwingingArmsParameters,
     pub max_level_delta: f32,
     pub max_rotation_speed: f32,
+    pub joint_motion_ranges: JointMotionRanges,
 }
 
 #[derive(
@@ -105,4 +105,12 @@ pub struct SwingingArmsParameters {
     pub pulling_back_duration: Duration,
     pub pulling_tight_duration: Duration,
     pub torso_tilt_compensation_factor: f32,
+}
+
+#[derive(
+    Clone, Debug, Default, Deserialize, Serialize, PathSerialize, PathDeserialize, PathIntrospect,
+)]
+pub struct JointMotionRanges{
+    pub left_leg: LegJoints<Vec<f32>>,
+    pub right_leg: LegJoints<Vec<f32>>, 
 }

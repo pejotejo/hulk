@@ -1,16 +1,17 @@
 use coordinate_systems::{Ground, Robot};
-use itertools::Itertools;
+use itertools::{Itertools, Position};
 use kinematics::{forward::{left_sole_to_robot, right_sole_to_robot}, inverse::leg_angles};
 use linear_algebra::{point, Orientation3, Point2, Pose3};
+use nalgebra::MatrixView1xX;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use serde::{Deserialize, Serialize};
 use splines::Interpolate;
-use std::time::Duration;
+use std::{ops::RangeFrom, time::Duration};
 use types::{
     joints::{body::BodyJoints, leg::LegJoints}, motion_command::KickVariant, support_foot::Side
 };
 
-use crate::{kick_steps::{JointOverride, KickStep, KickSteps}, Context};
+use crate::{kick_steps::{JointOverride, KickStep, KickSteps}, parameters::JointMotionRanges, Context};
 
 use super::step_state::StepState;
 
@@ -23,15 +24,20 @@ pub struct KickState {
     pub side: Side,
     pub index: usize,
     pub strength: f32,
+    pub ball_position: Pose3<Robot>,
 }
 
 impl KickState {
-    pub fn new(variant: KickVariant, side: Side, strength: f32) -> Self {
+    pub fn new(variant: KickVariant, side: Side, strength: f32, context: &Context) -> Self {
+        let ball_position: Point2<Ground> = context.ball_state.ball_in_ground;
+        let ball_in_ground: Pose3<Ground> = Pose3::from_parts(point![ball_position.x(), ball_position.y(), context.field_dimensions.ball_radius], Orientation3::default());
+        let ball_in_robot: Pose3<Robot> = context.ground_to_robot.unwrap() * ball_in_ground;
         KickState {
             variant,
             side,
             index: 0,
             strength,
+            ball_position: ball_in_robot,
         }
     }
 
@@ -67,15 +73,35 @@ impl KickOverride for BodyJoints {
         kick: &KickState,
         step: &StepState,
     ) -> Self {
-        let kick_step = context.kick_steps.get_step_at(kick.variant, kick.index);
-        let ball_position: Point2<Ground> = context.ball_position.unwrap().position;
-        let ball_in_ground: Pose3<Ground> = Pose3::from_parts(point![ball_position.x(), ball_position.y(), 0.0], Orientation3::default());
-        let ball_in_robot: Pose3<Robot> = context.ground_to_robot.unwrap() * ball_in_ground;
-
+        //let kick_step = context.kick_steps.get_step_at(kick.variant, kick.index);
+        let mut ball_side=kick.ball_position;
+        ball_side.inner.translation.x -= context.field_dimensions.ball_radius;
+        dbg!(kick.ball_position);
+        dbg!(ball_side);
         let leg_joints = match step.plan.support_side {
-            Side::Left => leg_angles(left_sole_to_robot(&self.left_leg).as_pose(), ball_in_robot),
-            Side::Right => leg_angles(ball_in_robot, right_sole_to_robot(&self.right_leg).as_pose()),
+            Side::Left => leg_angles(left_sole_to_robot(&self.left_leg).as_pose(), ball_side),
+            Side::Right => leg_angles(ball_side, right_sole_to_robot(&self.right_leg).as_pose()),
         };
+        
+
+        if !context.parameters.joint_motion_ranges.left_leg.hip_yaw_pitch.contains(&leg_joints.left_leg.hip_yaw_pitch)
+            || !context.parameters.joint_motion_ranges.left_leg.hip_pitch.contains(&leg_joints.left_leg.hip_pitch) 
+            || !context.parameters.joint_motion_ranges.left_leg.hip_roll.contains(&leg_joints.left_leg.hip_roll) 
+            || !context.parameters.joint_motion_ranges.left_leg.knee_pitch.contains(&leg_joints.left_leg.knee_pitch)
+            || !context.parameters.joint_motion_ranges.left_leg.ankle_pitch.contains(&leg_joints.left_leg.ankle_pitch) 
+            || !context.parameters.joint_motion_ranges.left_leg.ankle_roll.contains(&leg_joints.left_leg.ankle_roll)
+                
+            || !context.parameters.joint_motion_ranges.right_leg.hip_yaw_pitch.contains(&leg_joints.right_leg.hip_yaw_pitch)
+            || !context.parameters.joint_motion_ranges.right_leg.hip_pitch.contains(&leg_joints.right_leg.hip_pitch) 
+            || !context.parameters.joint_motion_ranges.right_leg.hip_roll.contains(&leg_joints.right_leg.hip_roll) 
+            || !context.parameters.joint_motion_ranges.right_leg.knee_pitch.contains(&leg_joints.right_leg.knee_pitch)
+            || !context.parameters.joint_motion_ranges.right_leg.ankle_pitch.contains(&leg_joints.right_leg.ankle_pitch) 
+            || !context.parameters.joint_motion_ranges.right_leg.ankle_roll.contains(&leg_joints.right_leg.ankle_roll) {
+            dbg!("bein kaputt");
+        
+        }
+        dbg!(leg_joints);
+
         BodyJoints{
             left_leg: leg_joints.left_leg,
             right_leg: leg_joints.right_leg,

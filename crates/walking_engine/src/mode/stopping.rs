@@ -78,7 +78,7 @@ impl WalkTransition for Stopping {
                 ));
             }
 
-            let kick = KickState::new(variant, side, strength);
+            let kick = KickState::new(variant, side, strength, context);
             return Mode::Kicking(Kicking::new(
                 context,
                 kick,

@@ -78,7 +78,7 @@ impl WalkTransition for Starting {
                 ));
             }
 
-            let kick = KickState::new(variant, kick_side, strength);
+            let kick = KickState::new(variant, kick_side, strength, context);
             return Mode::Kicking(Kicking::new(
                 context,
                 kick,

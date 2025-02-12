@@ -127,7 +127,7 @@ impl WalkTransition for Walking {
 
             return Mode::Kicking(Kicking::new(
                 context,
-                KickState::new(variant, kicking_side, strength),
+                KickState::new(variant, kicking_side, strength, context),
                 next_support_side,
             ));
         }
