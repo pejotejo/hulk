@@ -1,10 +1,7 @@
 use coordinate_systems::{Ground, UpcomingSupport};
 use linear_algebra::{Isometry2, Pose2};
 use types::{
-    motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand},
-    parameters::{InWalkKickInfoParameters, InWalkKicksParameters},
-    primary_state::{PrimaryState, RampDirection},
-    world_state::WorldState,
+    motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand}, parameters::{InWalkKickInfoParameters, InWalkKicksParameters}, primary_state::{PrimaryState, RampDirection}, support_foot::Side, world_state::WorldState
 };
 
 
@@ -37,7 +34,7 @@ pub fn execute(
         (PrimaryState::KickingRollingBall{ramp_direction: RampDirection::Left}, None) => Some(MotionCommand::Stand {
             head: HeadMotion::SearchLeft,
         }),
-        (PrimaryState::KickingRollingBall{..}, _) => {
+        (PrimaryState::KickingRollingBall{ramp_direction}, _) => {
             let head = HeadMotion::LookAt {
                 target: world_state.ball?.ball_in_ground,
                 image_region_target: ImageRegion::Center,
@@ -56,11 +53,15 @@ pub fn execute(
                         world_state.robot.ground_to_upcoming_support,
                     )
                 });
+                let kicking_side = match ramp_direction {
+                        RampDirection::Left => Side::Right,
+                        RampDirection::Right => Side::Left,
+                    };
             if let Some(kick) = available_kick {
                 let command = MotionCommand::InWalkKick {
                     head,
                     kick: kick.variant,
-                    kicking_side: kick.kicking_side,
+                    kicking_side,
                     strength: kick.strength,
                     left_arm: ArmMotion::Swing,
                     right_arm: ArmMotion::Swing,

@@ -131,16 +131,8 @@ impl LookAround {
                         InitialLookAround::Left => context.config.initial_left_positions,
                         InitialLookAround::Right => context.config.initial_right_positions,
                     },
-            LookAroundMode::BallSearchLeft(state) => match state {
-                        BallSearchLookAroundLeft::Center { .. } => context.config.middle_positions,
-                        BallSearchLookAroundLeft::Left => context.config.left_positions,
-                        BallSearchLookAroundLeft::HalfwayLeft { .. } => context.config.halfway_left_positions,
-                    },
-            LookAroundMode::BallSearchRight(state) => match state {
-                        BallSearchLookAroundRight::Center { .. } => context.config.middle_positions,
-                        BallSearchLookAroundRight::Right => context.config.right_positions,
-                        BallSearchLookAroundRight::HalfwayRight { .. } => context.config.halfway_right_positions,
-                    },
+            LookAroundMode::BallSearchLeft(state) => context.config.ball_ramp_left_positions,
+            LookAroundMode::BallSearchRight(state) => context.config.ball_ramp_right_positions,
         };
 
         Ok(MainOutputs {
