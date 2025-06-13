@@ -229,6 +229,19 @@ impl Localization {
                 self.hypotheses_when_entered_playing
                     .clone_from(&self.hypotheses);
             }
+            (_, PrimaryState::KickingRollingBall, _) => {
+                let kicking_rolling_ball_pose = Pose2::from(point![
+                    context.field_dimensions.center_circle_diameter / 4.0,
+                    0.0,
+                ]);
+                self.hypotheses = vec![ScoredPose::from_isometry(
+                    kicking_rolling_ball_pose,
+                    *context.initial_hypothesis_covariance,
+                    *context.initial_hypothesis_score,
+                )];
+                self.hypotheses_when_entered_playing
+                    .clone_from(&self.hypotheses);
+            }
             (
                 PrimaryState::Playing | PrimaryState::Ready | PrimaryState::Set,
                 PrimaryState::Penalized,
@@ -578,7 +591,7 @@ impl Localization {
                 )
                 .as_transform(),
             ),
-            PrimaryState::Ready | PrimaryState::Set | PrimaryState::Playing => {
+            PrimaryState::Ready | PrimaryState::Set | PrimaryState::Playing | PrimaryState::KickingRollingBall => {
                 self.update_state(&mut context)?;
                 Some(*context.ground_to_field)
             }

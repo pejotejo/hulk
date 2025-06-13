@@ -114,6 +114,15 @@ impl PrimaryStateFilter {
                 None,
                 true,
             ) => PrimaryState::Animation { stiff: false },
+
+            (
+                PrimaryState::Initial | PrimaryState::KickingRollingBall,
+                _,
+                false,
+                _,
+                None,
+                true,
+            ) => PrimaryState::KickingRollingBall,
             (PrimaryState::Animation { .. }, _, true, _, None, false) => {
                 PrimaryState::Animation { stiff: true }
             }

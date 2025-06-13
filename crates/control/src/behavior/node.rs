@@ -29,7 +29,7 @@ use types::{
 };
 
 use super::{
-    animation, calibrate,
+    animation, ball_ramp, calibrate,
     defend::{Defend, DefendMode},
     dribble, fall_safely,
     head::LookAction,
@@ -143,6 +143,7 @@ impl Behavior {
             Action::NoGroundContact,
             Action::Stand,
             Action::Calibrate,
+            Action::LookToBallRamp,
         ];
 
         if let Some(active_since) = self.active_since {
@@ -274,6 +275,7 @@ impl Behavior {
             .iter()
             .find_map(|action| {
                 let motion_command = match action {
+                    Action::LookToBallRamp => ball_ramp::execute(world_state),
                     Action::Animation => animation::execute(world_state),
                     Action::Unstiff => unstiff::execute(world_state),
                     Action::SitDown => sit_down::execute(world_state),
