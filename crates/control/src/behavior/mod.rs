@@ -23,5 +23,4 @@ mod unstiff;
 mod walk_to_kick_off;
 mod walk_to_penalty_kick;
 pub mod walk_to_pose;
-mod ball_ramp;
 mod kicking_ball;

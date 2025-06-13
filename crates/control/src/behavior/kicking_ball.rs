@@ -1,17 +1,12 @@
 use coordinate_systems::{Ground, UpcomingSupport};
 use linear_algebra::{Isometry2, Pose2};
-use spl_network_messages::GamePhase;
 use types::{
-    camera_position::CameraPosition,
-    dribble_path_plan::DribblePathPlan,
-    filtered_game_controller_state::FilteredGameControllerState,
-    motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand, WalkSpeed},
-    parameters::{DribblingParameters, InWalkKickInfoParameters, InWalkKicksParameters},
-    primary_state::PrimaryState,
+    motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand},
+    parameters::{InWalkKickInfoParameters, InWalkKicksParameters},
+    primary_state::{PrimaryState, RampDirection},
     world_state::WorldState,
 };
 
-use super::walk_to_pose::WalkPathPlanner;
 
 #[allow(clippy::too_many_arguments)]
 pub fn execute(
@@ -35,10 +30,14 @@ pub fn execute(
     dbg!(world_state.ball);
     dbg!(world_state.robot.primary_state);
     match (world_state.robot.primary_state, world_state.ball) {
-        (PrimaryState::KickingRollingBall, None) => Some(MotionCommand::Stand {
+        (PrimaryState::KickingRollingBall{ramp_direction: RampDirection::Right}, None) => Some(MotionCommand::Stand {
             head: HeadMotion::SearchRight,
         }),
-        (PrimaryState::KickingRollingBall, _) => {
+
+        (PrimaryState::KickingRollingBall{ramp_direction: RampDirection::Left}, None) => Some(MotionCommand::Stand {
+            head: HeadMotion::SearchLeft,
+        }),
+        (PrimaryState::KickingRollingBall{..}, _) => {
             let head = HeadMotion::LookAt {
                 target: world_state.ball?.ball_in_ground,
                 image_region_target: ImageRegion::Center,

@@ -14,6 +14,7 @@ pub struct ButtonFilter {
     debounced_calibration_button: DebounceButton,
     debounced_animation_button: DebounceButton,
     animation_button_released: TapDetector,
+    debounced_front_head_button: DebounceButton,
 }
 
 #[context]
@@ -43,6 +44,7 @@ impl ButtonFilter {
             debounced_calibration_button: DebounceButton::default(),
             debounced_animation_button: DebounceButton::default(),
             animation_button_released: TapDetector::default(),
+            debounced_front_head_button: DebounceButton::default(),
         })
     }
 
@@ -72,9 +74,15 @@ impl ButtonFilter {
             );
 
         let animation_buttons_touched = touch_sensors.head_rear;
-
         let debounced_animation_buttons_touched = self.debounced_animation_button.debounce_button(
             animation_buttons_touched,
+            context.cycle_time.start_time,
+            animation_button_timeout,
+        );
+
+        let front_head_button_touched = touch_sensors.head_front;
+        let debounced_front_head_button_touched = self.debounced_front_head_button.debounce_button(
+            front_head_button_touched,
             context.cycle_time.start_time,
             animation_button_timeout,
         );
@@ -85,6 +93,7 @@ impl ButtonFilter {
                 head_buttons_touched: debounced_head_buttons_touched,
                 calibration_buttons_touched: debounced_calibration_buttons_touched,
                 animation_buttons_touched: debounced_animation_buttons_touched,
+                front_head_button_touched: debounced_front_head_button_touched,
             }
             .into(),
         })

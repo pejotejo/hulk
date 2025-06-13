@@ -11,7 +11,7 @@ use types::{
     buttons::Buttons,
     filtered_game_controller_state::FilteredGameControllerState,
     filtered_game_state::FilteredGameState,
-    primary_state::PrimaryState,
+    primary_state::{PrimaryState, RampDirection},
 };
 
 #[derive(Deserialize, Serialize)]
@@ -66,9 +66,10 @@ impl PrimaryStateFilter {
             context.buttons.calibration_buttons_touched,
             context.filtered_game_controller_state,
             context.buttons.animation_buttons_touched,
+            context.buttons.front_head_button_touched,
         ) {
             // Unstiff transitions (entering and exiting)
-            (last_primary_state, true, _, _, _, _) => {
+            (last_primary_state, true, _, _, _, _, _) => {
                 if last_primary_state != PrimaryState::Unstiff {
                     context
                         .hardware_interface
@@ -79,17 +80,18 @@ impl PrimaryStateFilter {
 
             (PrimaryState::Calibration, ..) => PrimaryState::Calibration,
 
-            (PrimaryState::Initial, _, _, true, _, _) => PrimaryState::Calibration,
+            (PrimaryState::Initial, _, _, true, _, _, _) => PrimaryState::Calibration,
 
             // GameController transitions (entering listening mode and staying within)
-            (PrimaryState::Unstiff, _, true, _, Some(filtered_game_controller_state), _)
-            | (PrimaryState::Finished, _, true, _, Some(filtered_game_controller_state), _) => self
-                .game_state_to_primary_state(
+            (PrimaryState::Unstiff, _, true, _, Some(filtered_game_controller_state), _, _)
+            | (PrimaryState::Finished, _, true, _, Some(filtered_game_controller_state), _, _) => {
+                self.game_state_to_primary_state(
                     filtered_game_controller_state.game_state,
                     is_penalized,
                     *context.has_ground_contact,
-                ),
-            (_, _, _, _, Some(filtered_game_controller_state), _)
+                )
+            }
+            (_, _, _, _, Some(filtered_game_controller_state), _, _)
                 if {
                     let finished_to_initial = self.last_primary_state == PrimaryState::Finished
                         && filtered_game_controller_state.game_state == FilteredGameState::Initial;
@@ -105,7 +107,7 @@ impl PrimaryStateFilter {
             }
 
             // non-GameController transitions
-            (PrimaryState::Unstiff, _, true, _, None, _) => PrimaryState::Initial,
+            (PrimaryState::Unstiff, _, true, _, None, _, _) => PrimaryState::Initial,
             (
                 PrimaryState::Unstiff | PrimaryState::Animation { stiff: true },
                 _,
@@ -113,25 +115,42 @@ impl PrimaryStateFilter {
                 _,
                 None,
                 true,
+                _,
             ) => PrimaryState::Animation { stiff: false },
 
             (
-                PrimaryState::Initial | PrimaryState::KickingRollingBall,
+                PrimaryState::Initial | PrimaryState::KickingRollingBall { .. },
                 _,
                 false,
                 _,
                 None,
                 true,
-            ) => PrimaryState::KickingRollingBall,
-            (PrimaryState::Animation { .. }, _, true, _, None, false) => {
+                false,
+            ) => PrimaryState::KickingRollingBall {
+                ramp_direction: RampDirection::Right,
+            },
+
+            (
+                PrimaryState::Initial | PrimaryState::KickingRollingBall { .. },
+                _,
+                false,
+                _,
+                None,
+                false,
+                true,
+            ) => PrimaryState::KickingRollingBall {
+                ramp_direction: RampDirection::Left,
+            },
+
+            (PrimaryState::Animation { .. }, _, true, _, None, false, _) => {
                 PrimaryState::Animation { stiff: true }
             }
-            (PrimaryState::Finished, _, true, _, None, _) => PrimaryState::Initial,
-            (PrimaryState::Initial, _, true, _, None, _) => PrimaryState::Penalized,
-            (PrimaryState::Penalized, _, true, _, None, _) => PrimaryState::Playing,
-            (PrimaryState::Playing, _, true, _, None, _) => PrimaryState::Penalized,
+            (PrimaryState::Finished, _, true, _, None, _, _) => PrimaryState::Initial,
+            (PrimaryState::Initial, _, true, _, None, _, _) => PrimaryState::Penalized,
+            (PrimaryState::Penalized, _, true, _, None, _, _) => PrimaryState::Playing,
+            (PrimaryState::Playing, _, true, _, None, _, _) => PrimaryState::Penalized,
 
-            (_, _, _, _, _, _) => self.last_primary_state,
+            (_, _, _, _, _, _, _) => self.last_primary_state,
         };
 
         context.hardware_interface.set_whether_to_record(
