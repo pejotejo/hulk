@@ -67,18 +67,18 @@ pub fn execute(
         walk_speed = WalkSpeed::Slow;
     }
 
-    match dribble_path_plan {
-        Some(DribblePathPlan {
-            orientation_mode,
-            path,
-        }) => Some(walk_path_planner.walk_with_obstacle_avoiding_arms(
-            head,
-            orientation_mode,
-            path,
-            walk_speed,
-        )),
-        None => Some(MotionCommand::Stand { head }),
-    }
+    // match dribble_path_plan {
+    //     Some(DribblePathPlan {
+    //         orientation_mode,
+    //         path,
+    //     }) => Some(walk_path_planner.walk_with_obstacle_avoiding_arms(
+    //         head,
+    //         orientation_mode,
+    //         path,
+    //         walk_speed,
+    //     )),
+        Some(MotionCommand::Stand { head })
+    //}
 }
 
 fn is_kick_pose_reached(

@@ -33,9 +33,9 @@ use super::{
     defend::{Defend, DefendMode},
     dribble, fall_safely,
     head::LookAction,
-    initial, intercept_ball, jump, look_around, look_at_referee, lost_ball, no_ground_contact,
-    penalize, prepare_jump, search, sit_down, stand, stand_up, support, unstiff, walk_to_kick_off,
-    walk_to_penalty_kick,
+    initial, intercept_ball, jump, kicking_ball, look_around, look_at_referee, lost_ball,
+    no_ground_contact, penalize, prepare_jump, search, sit_down, stand, stand_up, support, unstiff,
+    walk_to_kick_off, walk_to_penalty_kick,
     walk_to_pose::{WalkAndStand, WalkPathPlanner},
 };
 
@@ -275,7 +275,10 @@ impl Behavior {
             .iter()
             .find_map(|action| {
                 let motion_command = match action {
-                    Action::LookToBallRamp => ball_ramp::execute(world_state),
+                    Action::LookToBallRamp => kicking_ball::execute(
+                        world_state,
+                        context.in_walk_kicks,
+                    ),
                     Action::Animation => animation::execute(world_state),
                     Action::Unstiff => unstiff::execute(world_state),
                     Action::SitDown => sit_down::execute(world_state),
