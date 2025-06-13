@@ -231,7 +231,7 @@ impl Localization {
             }
             (_, PrimaryState::KickingRollingBall, _) => {
                 let kicking_rolling_ball_pose = Pose2::from(point![
-                    context.field_dimensions.center_circle_diameter / 4.0,
+                    context.field_dimensions.center_circle_diameter * 3 / 8.0,
                     0.0,
                 ]);
                 self.hypotheses = vec![ScoredPose::from_isometry(
@@ -591,7 +591,10 @@ impl Localization {
                 )
                 .as_transform(),
             ),
-            PrimaryState::Ready | PrimaryState::Set | PrimaryState::Playing | PrimaryState::KickingRollingBall => {
+            PrimaryState::Ready
+            | PrimaryState::Set
+            | PrimaryState::Playing
+            | PrimaryState::KickingRollingBall => {
                 self.update_state(&mut context)?;
                 Some(*context.ground_to_field)
             }

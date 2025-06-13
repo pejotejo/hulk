@@ -336,7 +336,7 @@ pub fn move_robots(mut robots: Query<&mut Robot>, mut ball: ResMut<BallResource>
         let desired_head_yaw = match head_motion {
             HeadMotion::ZeroAngles => 0.0,
             HeadMotion::Center => 0.0,
-            HeadMotion::LookAround | HeadMotion::SearchForLostBall => {
+            HeadMotion::LookAround | HeadMotion::SearchForLostBall | HeadMotion::SearchLeft | HeadMotion::SearchRight => {
                 robot.database.main_outputs.look_around.yaw
             }
             HeadMotion::LookAt { target, .. } => Orientation2::from_vector(target.coords()).angle(),

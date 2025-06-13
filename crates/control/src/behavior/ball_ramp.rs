@@ -8,7 +8,7 @@ use types::{
     pub fn execute(world_state: &WorldState) -> Option<MotionCommand> {
         match (world_state.robot.primary_state, world_state.ball) {
             (PrimaryState::KickingRollingBall, None) => Some(MotionCommand::Stand {
-                head: HeadMotion::SearchForLostBall,
+                head: HeadMotion::SearchRight,
             }),
             (PrimaryState::KickingRollingBall, _) => Some(MotionCommand::Stand {
                 head: HeadMotion::LookAt {

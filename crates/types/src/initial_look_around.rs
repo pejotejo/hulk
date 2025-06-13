@@ -23,6 +23,70 @@ impl Default for BallSearchLookAround {
 }
 
 #[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+)]
+pub enum BallSearchLookAroundLeft {
+    Center,
+    Left,
+    HalfwayLeft { moving_towards: Side },
+}
+
+impl Default for BallSearchLookAroundLeft {
+    fn default() -> Self {
+        Self::HalfwayLeft {
+            moving_towards: Side::Left,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+)]
+pub enum BallSearchLookAroundRight {
+    Center,
+    Right,
+    HalfwayRight { moving_towards: Side },
+}
+
+impl Default for BallSearchLookAroundRight {
+    fn default() -> Self {
+        Self::HalfwayRight {
+            moving_towards: Side::Right,
+        }
+    }
+}
+
+// #[derive(
+//     Debug,
+//     Default,
+//     Clone,
+//     Copy,
+//     Serialize,
+//     Deserialize,
+//     PathSerialize,
+//     PathDeserialize,
+//     PathIntrospect,
+// )]
+// pub struct BallSearchLookAroundLeft {
+//     pub mode: BallSearchLookAround,
+// }
+
+// #[derive(
+//     Debug,
+//     Default,
+//     Clone,
+//     Copy,
+//     Serialize,
+//     Deserialize,
+//     PathSerialize,
+//     PathDeserialize,
+//     PathIntrospect,
+// )]
+// pub struct BallSearchLookAroundRight {
+//     pub mode: BallSearchLookAround,
+// }
+
+#[derive(
     Debug,
     Default,
     Clone,
@@ -59,4 +123,6 @@ pub enum LookAroundMode {
     BallSearch(BallSearchLookAround),
     QuickSearch(QuickLookAround),
     Initial(InitialLookAround),
+    BallSearchLeft(BallSearchLookAroundLeft),
+    BallSearchRight(BallSearchLookAroundRight),
 }

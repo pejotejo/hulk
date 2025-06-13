@@ -167,6 +167,8 @@ pub enum HeadMotion {
     Center,
     LookAround,
     SearchForLostBall,
+    SearchLeft,
+    SearchRight,
     LookAt {
         target: Point2<Ground>,
         image_region_target: ImageRegion,
