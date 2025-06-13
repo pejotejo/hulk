@@ -1187,8 +1187,8 @@
         "end": 0.12
       },
       "reached_y": {
-        "start": -0.20,
-        "end": 0.20
+        "start": -0.40,
+        "end": 0.40
       },
       "reached_turn": {
         "start": -0.1,
