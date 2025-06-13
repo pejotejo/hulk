@@ -273,6 +273,9 @@ pub struct LookAroundParameters {
     pub halfway_right_positions: HeadJoints<f32>,
     pub initial_left_positions: HeadJoints<f32>,
     pub initial_right_positions: HeadJoints<f32>,
+    pub ball_ramp_left_positions: HeadJoints<f32>,
+    pub ball_ramp_right_positions: HeadJoints<f32>,
+
 }
 
 #[derive(
