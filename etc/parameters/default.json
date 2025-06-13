@@ -1184,11 +1184,11 @@
       "orientation": 0.0,
       "reached_x": {
         "start": -0.12,
-        "end": 0.06
+        "end": 0.12
       },
       "reached_y": {
-        "start": -0.02,
-        "end": 0.02
+        "start": -0.20,
+        "end": 0.20
       },
       "reached_turn": {
         "start": -0.1,
