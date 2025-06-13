@@ -46,4 +46,5 @@ pub enum Action {
     Unstiff,
     WalkToKickOff,
     WalkToPenaltyKick,
+    LookToBallRamp,
 }

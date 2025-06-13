@@ -29,4 +29,5 @@ pub enum PrimaryState {
     Finished,
     Calibration,
     Standby,
+    KickingRollingBall,
 }

@@ -141,6 +141,7 @@ impl Rgb {
     pub const WHITE: Rgb = Rgb::new(255, 255, 255);
     pub const PINK: Rgb = Rgb::new(250, 45, 208);
     pub const ORANGE: Rgb = Rgb::new(255, 69, 0);
+    pub const MAGENTA: Rgb = Rgb::new(225, 0, 117);
 
     pub const fn new(red: u8, green: u8, blue: u8) -> Self {
         Self { red, green, blue }
