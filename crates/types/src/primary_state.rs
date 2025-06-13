@@ -5,6 +5,25 @@ use serde::{Deserialize, Serialize};
     Clone,
     Copy,
     Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    Serialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+)]
+pub enum RampDirection{
+    Left,
+    Right,
+}
+
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
     Default,
     Deserialize,
     Eq,
@@ -29,5 +48,7 @@ pub enum PrimaryState {
     Finished,
     Calibration,
     Standby,
-    KickingRollingBall,
+    KickingRollingBall{
+        ramp_direction: RampDirection,
+    },
 }

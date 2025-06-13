@@ -17,4 +17,5 @@ pub struct Buttons {
     pub head_buttons_touched: bool,
     pub calibration_buttons_touched: bool,
     pub animation_buttons_touched: bool,
+    pub front_head_button_touched: bool,
 }
