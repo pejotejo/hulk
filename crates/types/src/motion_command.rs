@@ -204,6 +204,8 @@ pub enum ImageRegion {
     Bottom,
     #[default]
     Center,
+    TopRight,
+    TopLeft,
 }
 
 #[derive(

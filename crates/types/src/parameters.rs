@@ -259,6 +259,8 @@ pub struct GameStateFilterParameters {
 pub struct ImageRegionParameters {
     pub bottom: Point2<NormalizedPixel>,
     pub center: Point2<NormalizedPixel>,
+    pub top_right: Point2<NormalizedPixel>,
+    pub top_left: Point2<NormalizedPixel>,
 }
 
 #[derive(
