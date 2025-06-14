@@ -229,7 +229,7 @@ impl Localization {
                 self.hypotheses_when_entered_playing
                     .clone_from(&self.hypotheses);
             }
-            (_, PrimaryState::KickingRollingBall{..}, _) => {
+            (_, PrimaryState::KickingRollingBall { .. }, _) => {
                 let kicking_rolling_ball_pose = Pose2::from(point![
                     context.field_dimensions.center_circle_diameter * 3.0 / 8.0,
                     0.0,
@@ -594,7 +594,7 @@ impl Localization {
             PrimaryState::Ready
             | PrimaryState::Set
             | PrimaryState::Playing
-            | PrimaryState::KickingRollingBall{..} => {
+            | PrimaryState::KickingRollingBall { .. } => {
                 self.update_state(&mut context)?;
                 Some(*context.ground_to_field)
             }

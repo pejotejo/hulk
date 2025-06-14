@@ -14,11 +14,10 @@ use serde::{Deserialize, Serialize};
     PathDeserialize,
     PathIntrospect,
 )]
-pub enum RampDirection{
+pub enum RampDirection {
     Left,
     Right,
 }
-
 
 #[derive(
     Clone,
@@ -48,7 +47,7 @@ pub enum PrimaryState {
     Finished,
     Calibration,
     Standby,
-    KickingRollingBall{
+    KickingRollingBall {
         ramp_direction: RampDirection,
     },
 }
