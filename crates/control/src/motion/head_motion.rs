@@ -131,12 +131,15 @@ impl HeadMotion {
                 positions: *context.center_head_position,
                 stiffnesses,
             },
-            Some(HeadMotionCommand::LookAround | HeadMotionCommand::SearchForLostBall | HeadMotionCommand::SearchLeft | HeadMotionCommand::SearchRight) => {
-                MotorCommands {
-                    positions: *context.look_around,
-                    stiffnesses,
-                }
-            }
+            Some(
+                HeadMotionCommand::LookAround
+                | HeadMotionCommand::SearchForLostBall
+                | HeadMotionCommand::SearchLeft
+                | HeadMotionCommand::SearchRight,
+            ) => MotorCommands {
+                positions: *context.look_around,
+                stiffnesses,
+            },
             Some(HeadMotionCommand::LookAt { .. })
             | Some(HeadMotionCommand::LookAtReferee { .. })
             | Some(HeadMotionCommand::LookLeftAndRightOf { .. }) => MotorCommands {

@@ -9,7 +9,8 @@ use types::{
     field_dimensions::GlobalFieldSide,
     filtered_game_controller_state::FilteredGameControllerState,
     initial_look_around::{
-        BallSearchLookAround, BallSearchLookAroundLeft, BallSearchLookAroundRight, InitialLookAround, LookAroundMode, QuickLookAround
+        BallSearchLookAround, BallSearchLookAroundLeft, BallSearchLookAroundRight,
+        InitialLookAround, LookAroundMode, QuickLookAround,
     },
     joints::head::HeadJoints,
     motion_command::{HeadMotion, MotionCommand},
@@ -74,13 +75,11 @@ impl LookAround {
                 ),
                 Some(HeadMotion::SearchForLostBall) => {
                     LookAroundMode::QuickSearch(Default::default())
-                },
+                }
                 Some(HeadMotion::SearchRight) => {
                     LookAroundMode::BallSearchRight(Default::default())
-                },
-                Some(HeadMotion::SearchLeft) => {
-                    LookAroundMode::BallSearchLeft(Default::default())
-                },
+                }
+                Some(HeadMotion::SearchLeft) => LookAroundMode::BallSearchLeft(Default::default()),
                 _ => LookAroundMode::Center,
             };
         }
@@ -93,7 +92,9 @@ impl LookAround {
                     context.config.look_around_timeout,
                 );
             }
-            Some(HeadMotion::SearchForLostBall | HeadMotion::SearchLeft | HeadMotion::SearchRight) => self.look_around(
+            Some(
+                HeadMotion::SearchForLostBall | HeadMotion::SearchLeft | HeadMotion::SearchRight,
+            ) => self.look_around(
                 context.cycle_time.start_time,
                 context.config.quick_search_timeout,
             ),
@@ -120,17 +121,17 @@ impl LookAround {
         let request = match self.current_mode {
             LookAroundMode::Center => context.config.middle_positions,
             LookAroundMode::QuickSearch(QuickLookAround { mode: state })
-                    | LookAroundMode::BallSearch(state) => match state {
-                        BallSearchLookAround::Center { .. } => context.config.middle_positions,
-                        BallSearchLookAround::Left => context.config.left_positions,
-                        BallSearchLookAround::Right => context.config.right_positions,
-                        BallSearchLookAround::HalfwayLeft { .. } => context.config.halfway_left_positions,
-                        BallSearchLookAround::HalfwayRight { .. } => context.config.halfway_right_positions,
-                    },
+            | LookAroundMode::BallSearch(state) => match state {
+                BallSearchLookAround::Center { .. } => context.config.middle_positions,
+                BallSearchLookAround::Left => context.config.left_positions,
+                BallSearchLookAround::Right => context.config.right_positions,
+                BallSearchLookAround::HalfwayLeft { .. } => context.config.halfway_left_positions,
+                BallSearchLookAround::HalfwayRight { .. } => context.config.halfway_right_positions,
+            },
             LookAroundMode::Initial(state) => match state {
-                        InitialLookAround::Left => context.config.initial_left_positions,
-                        InitialLookAround::Right => context.config.initial_right_positions,
-                    },
+                InitialLookAround::Left => context.config.initial_left_positions,
+                InitialLookAround::Right => context.config.initial_right_positions,
+            },
             LookAroundMode::BallSearchLeft(state) => context.config.ball_ramp_left_positions,
             LookAroundMode::BallSearchRight(state) => context.config.ball_ramp_right_positions,
         };
