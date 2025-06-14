@@ -139,6 +139,7 @@ pub struct InWalkKickInfoParameters {
     pub reached_turn: Range<f32>,
     pub shot_distance: f32,
     pub enabled: bool,
+    pub ball_ramp_velocity_scale: f32,
 }
 
 #[derive(

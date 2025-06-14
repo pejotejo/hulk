@@ -1177,11 +1177,11 @@
       "pitch": 0.4
     },
     "ball_ramp_left_positions": {
-      "yaw": -1.3,
+      "yaw": -1.0,
       "pitch": 0.0
     },
     "ball_ramp_right_positions": {
-      "yaw": -1.3,
+      "yaw": -1.0,
       "pitch": 0.0
     }
   },
@@ -1203,7 +1203,8 @@
         "end": 0.1
       },
       "shot_distance": 4.0,
-      "enabled": true
+      "enabled": true,
+      "ball_ramp_velocity_scale": 1.0
     },
     "turn": {
       "position": [-0.16, -0.09],
@@ -1222,7 +1223,9 @@
         "end": 0.1
       },
       "shot_distance": 3.5,
-      "enabled": true
+      "enabled": true,
+      "ball_ramp_velocity_scale": 1.0
+
     },
     "side": {
       "position": [-0.15, 0.03],
@@ -1241,7 +1244,9 @@
         "end": 0.1
       },
       "shot_distance": 0.8,
-      "enabled": true
+      "enabled": true,
+      "ball_ramp_velocity_scale": 1.0
+
     }
   },
   "kick_selector": {
