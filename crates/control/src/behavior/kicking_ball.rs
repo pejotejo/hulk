@@ -1,5 +1,5 @@
 use coordinate_systems::{Ground, UpcomingSupport};
-use linear_algebra::{vector, Isometry2, Pose2, Vector2};
+use linear_algebra::{Isometry2, Pose2};
 use types::{
     camera_position::CameraPosition, motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand}, parameters::{InWalkKickInfoParameters, InWalkKicksParameters}, primary_state::{PrimaryState, RampDirection}, support_foot::Side, world_state::WorldState
 };
@@ -28,23 +28,19 @@ pub fn execute(
             head: HeadMotion::SearchLeft,
         }),
         (PrimaryState::KickingRollingBall { ramp_direction }, _) => {
-            let image_region_target = match ramp_direction {
-                RampDirection::Left => ImageRegion::TopLeft,
-                RampDirection::Right => ImageRegion::TopRight,
-            };
 
             let head = HeadMotion::LookAt {
                 target: world_state.ball?.ball_in_ground,
-                image_region_target,
-                camera: Some(CameraPosition::Bottom),
+                image_region_target: ImageRegion::TopRight,
+                camera: None,
             };
             let kick_decisions = world_state.kick_decisions.as_ref()?;
             let instant_kick_decisions = world_state.instant_kick_decisions.as_ref()?;
 
-            let ball_in_ground_velocity = match world_state.ball {
-                Some(ball) => ball.ball_in_ground_velocity,
-                None => vector![1.0, 1.0],
-            };
+            // let ball_in_ground_velocity = match world_state.ball {
+            //     Some(ball) => ball.ball_in_ground_velocity,
+            //     None => vector![1.0, 1.0],
+            // };
             let available_kick = kick_decisions
                 .iter()
                 .chain(instant_kick_decisions.iter())
@@ -53,7 +49,7 @@ pub fn execute(
                         decision.kick_pose,
                         &in_walk_kicks[decision.variant],
                         world_state.robot.ground_to_upcoming_support,
-                        ball_in_ground_velocity,
+                        //ball_in_ground_velocity,
                     )
                 });
             let kicking_side = match ramp_direction {
@@ -82,7 +78,7 @@ fn is_kick_pose_reached(
     kick_pose: Pose2<Ground>,
     kick_info: &InWalkKickInfoParameters,
     ground_to_upcoming_support: Isometry2<Ground, UpcomingSupport>,
-    ball_velocity: Vector2<Ground>,
+    //ball_velocity: Vector2<Ground>,
 ) -> bool {
     let upcoming_kick_pose = ground_to_upcoming_support * kick_pose;
     let is_x_reached = kick_info
