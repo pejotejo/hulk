@@ -1,11 +1,7 @@
 use coordinate_systems::{Ground, UpcomingSupport};
 use linear_algebra::{vector, Isometry2, Pose2, Vector2};
 use types::{
-    motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand},
-    parameters::{InWalkKickInfoParameters, InWalkKicksParameters},
-    primary_state::{PrimaryState, RampDirection},
-    support_foot::Side,
-    world_state::WorldState,
+    camera_position::CameraPosition, motion_command::{ArmMotion, HeadMotion, ImageRegion, MotionCommand}, parameters::{InWalkKickInfoParameters, InWalkKicksParameters}, primary_state::{PrimaryState, RampDirection}, support_foot::Side, world_state::WorldState
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -13,7 +9,6 @@ pub fn execute(
     world_state: &WorldState,
     in_walk_kicks: &InWalkKicksParameters,
 ) -> Option<MotionCommand> {
-
     match (world_state.robot.primary_state, world_state.ball) {
         (
             PrimaryState::KickingRollingBall {
@@ -33,17 +28,22 @@ pub fn execute(
             head: HeadMotion::SearchLeft,
         }),
         (PrimaryState::KickingRollingBall { ramp_direction }, _) => {
+            let image_region_target = match ramp_direction {
+                RampDirection::Left => ImageRegion::TopLeft,
+                RampDirection::Right => ImageRegion::TopRight,
+            };
+
             let head = HeadMotion::LookAt {
                 target: world_state.ball?.ball_in_ground,
-                image_region_target: ImageRegion::Center,
-                camera: None,
+                image_region_target,
+                camera: Some(CameraPosition::Bottom),
             };
             let kick_decisions = world_state.kick_decisions.as_ref()?;
             let instant_kick_decisions = world_state.instant_kick_decisions.as_ref()?;
 
             let ball_in_ground_velocity = match world_state.ball {
                 Some(ball) => ball.ball_in_ground_velocity,
-                _ => vector![1.0, 1.0],
+                None => vector![1.0, 1.0],
             };
             let available_kick = kick_decisions
                 .iter()
@@ -90,7 +90,7 @@ fn is_kick_pose_reached(
         .contains(&upcoming_kick_pose.position().x());
     let is_y_reached = kick_info
         .reached_y
-        .contains(&(upcoming_kick_pose.position().y() *kick_info.ball_ramp_velocity_scale)); //maybr add ball_velocity back
+        .contains(&(upcoming_kick_pose.position().y() * kick_info.ball_ramp_velocity_scale)); //maybr add ball_velocity back
     let is_orientation_reached = kick_info
         .reached_turn
         .contains(&upcoming_kick_pose.orientation().angle());
