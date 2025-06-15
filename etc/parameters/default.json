@@ -1601,11 +1601,11 @@
       "orientation": 0.0,
       "reached_x": {
         "start": -0.12,
-        "end": 0.12
+        "end": 0.06
       },
       "reached_y": {
-        "start": -0.30,
-        "end": 0.30
+        "start": -0.02,
+        "end": 0.02
       },
       "reached_turn": {
         "start": -0.1,
@@ -1718,6 +1718,9 @@
     "support": "Normal",
     "walk_to_kickoff": "Normal",
     "walk_to_penalty_kick": "Normal"
+  },
+  "rolling_ball": {
+    "kick_start_threshold": 0.3
   },
   "behavior": {
     "optional_roles": [

@@ -132,8 +132,8 @@ impl LookAround {
                 InitialLookAround::Left => context.config.initial_left_positions,
                 InitialLookAround::Right => context.config.initial_right_positions,
             },
-            LookAroundMode::BallSearchLeft(state) => context.config.ball_ramp_left_positions,
-            LookAroundMode::BallSearchRight(state) => context.config.ball_ramp_right_positions,
+            LookAroundMode::BallSearchLeft(..) => context.config.ball_ramp_left_positions,
+            LookAroundMode::BallSearchRight(..) => context.config.ball_ramp_right_positions,
         };
 
         Ok(MainOutputs {

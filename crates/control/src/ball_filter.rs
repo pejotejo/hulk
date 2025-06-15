@@ -108,8 +108,6 @@ impl BallFilter {
                 current_to_last_odometry.inverse(),
                 filter_parameters.velocity_decay_factor,
                 Matrix4::from_diagonal(&filter_parameters.noise.process_noise_moving),
-                Matrix2::from_diagonal(&filter_parameters.noise.process_noise_resting),
-                filter_parameters.log_likelihood_of_zero_velocity_threshold,
             );
 
             if !had_ground_contact.get(&detection_time) {
@@ -199,9 +197,6 @@ impl BallFilter {
                 &hypothesis1.mode,
                 &hypothesis2.mode,
             ) {
-                (BallMode::Resting(ball1), BallMode::Resting(ball2)) => {
-                    (ball1.mean - ball2.mean).norm() < filter_parameters.hypothesis_merge_distance
-                }
                 _ => false,
             };
 
