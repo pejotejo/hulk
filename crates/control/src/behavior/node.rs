@@ -1,4 +1,7 @@
-use std::time::SystemTime;
+use std::{
+    time::{Duration, SystemTime},
+    vec,
+};
 
 use color_eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -70,6 +73,9 @@ pub struct CycleContext {
     keeper_motion: Parameter<KeeperMotionParameters, "keeper_motion">,
     use_stand_head_unstiff_calibration:
         Parameter<bool, "calibration_controller.use_stand_head_unstiff_calibration">,
+    step_duration: Parameter<Duration, "walking_engine.base.step_duration">,
+    kick_strength: Parameter<f32, "kick_selector.default_kick_strength">,
+    kick_start_threshold: Parameter<f32, "rolling_ball.kick_start_threshold">,
 
     defend_walk_speed: Parameter<WalkSpeed, "walk_speed.defend">,
     dribble_walk_speed: Parameter<WalkSpeed, "walk_speed.dribble">,
@@ -82,6 +88,7 @@ pub struct CycleContext {
 
     path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">,
     active_action_output: AdditionalOutput<Action, "active_action">,
+    time_to_reach_foot: AdditionalOutput<Duration, "time_to_reach_foot">,
 
     last_motion_command: CyclerState<MotionCommand, "last_motion_command">,
 }
@@ -271,13 +278,35 @@ impl Behavior {
             &mut self.last_defender_mode,
         );
 
+
+        let time_to_reach_foot = match (world_state.robot.ground_to_field, world_state.ball) {
+            (Some(ground_to_field), Some(ball)) => {
+                let field_to_ground = ground_to_field.inverse();
+                let kick_foot_position = ;
+                let ball_in_ground_position = (kick_foot_position - field_to_ground) * self.last_known_ball_position;
+                let ball_in_ground_velocity = ball.ball_in_ground_velocity;
+                Duration::from_secs_f32(
+                    ball_in_ground_position.coords().norm()
+                        / (ball_in_ground_velocity.norm() + f32::EPSILON),
+                )
+            }
+            _ => Duration::from_secs(100),
+        };
+        context
+            .time_to_reach_foot
+            .fill_if_subscribed(|| time_to_reach_foot);
+
         let (action, motion_command) = actions
             .iter()
             .find_map(|action| {
                 let motion_command = match action {
-                    Action::LookToBallRamp => {
-                        kicking_ball::execute(world_state, context.in_walk_kicks)
-                    }
+                    Action::LookToBallRamp => kicking_ball::execute(
+                        world_state,
+                        &time_to_reach_foot,
+                        context.step_duration,
+                        context.kick_strength,
+                        *context.kick_start_threshold,
+                    ),
                     Action::Animation => animation::execute(world_state),
                     Action::Unstiff => unstiff::execute(world_state),
                     Action::SitDown => sit_down::execute(world_state),

@@ -33,13 +33,6 @@ impl Layer<Ground> for BallFilter {
             for hypothesis in filter.hypotheses {
                 let stroke = Stroke::new(0.01, Color32::BLACK);
                 match hypothesis.mode {
-                    BallMode::Resting(resting) => {
-                        let position = Point::from(resting.mean.xy());
-                        let covariance = resting.covariance.fixed_view::<2, 2>(0, 0).into_owned();
-                        let yellow = Color32::from_rgba_unmultiplied(255, 255, 0, 100);
-                        painter.covariance(position, covariance, stroke, yellow);
-                        painter.target(position, 0.02, stroke, yellow);
-                    }
                     BallMode::Moving(moving) => {
                         let position = Point::from(moving.mean.xy());
                         let covariance = moving.covariance.fixed_view::<2, 2>(0, 0).into_owned();
