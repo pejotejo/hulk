@@ -17,6 +17,7 @@ mod pose_detection;
 mod referee_position;
 mod robot_pose;
 mod walking;
+mod in_walk_kick_area;
 
 pub use ball_filter::BallFilter;
 pub use ball_measurements::BallMeasurement;
@@ -37,3 +38,4 @@ pub use pose_detection::PoseDetection;
 pub use referee_position::RefereePosition;
 pub use robot_pose::RobotPose;
 pub use walking::Walking;
+pub use in_walk_kick_area::KickThreshold;
