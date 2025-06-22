@@ -32,17 +32,18 @@ pub fn execute(
         ) => Some(MotionCommand::Stand {
             head: HeadMotion::SearchLeft,
         }),
-        (PrimaryState::KickingRollingBall { ramp_direction }, _) => {
+        (PrimaryState::KickingRollingBall { ramp_direction }, Some(ball)) => {
             let image_region_target = match ramp_direction {
                 RampDirection::Left => ImageRegion::TopLeft,
                 RampDirection::Right => ImageRegion::TopRight,
             };
             let head = HeadMotion::LookAt {
-                target: world_state.ball?.ball_in_ground,
+                target: ball.ball_in_ground,
                 image_region_target,
                 camera: None,
             };
-            if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32() < kick_start_threshold
+            if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32()
+                < kick_start_threshold
             {
                 let kicking_side = match ramp_direction {
                     RampDirection::Left => Side::Right,
