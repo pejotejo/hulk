@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use context_attribute::context;
 use coordinate_systems::Field;
 use framework::{AdditionalOutput, MainOutput};
-use linear_algebra::{point, Point2};
+use linear_algebra::{point, IntoFramed, Point2};
 use spl_network_messages::{GamePhase, PlayerNumber, SubState, Team};
 use types::{
     action::Action,
@@ -278,15 +278,13 @@ impl Behavior {
             &mut self.last_defender_mode,
         );
 
-
-        let time_to_reach_foot = match (world_state.robot.ground_to_field, world_state.ball) {
-            (Some(ground_to_field), Some(ball)) => {
-                let field_to_ground = ground_to_field.inverse();
-                let kick_foot_position = ;
-                let ball_in_ground_position = (kick_foot_position - field_to_ground) * self.last_known_ball_position;
+        let time_to_reach_foot = match world_state.ball {
+            Some(ball) => {
+                let distance_ball_to_foot = ball.ball_in_ground.coords()
+                    + context.in_walk_kicks.forward.position.framed().coords();
                 let ball_in_ground_velocity = ball.ball_in_ground_velocity;
                 Duration::from_secs_f32(
-                    ball_in_ground_position.coords().norm()
+                    distance_ball_to_foot.norm()
                         / (ball_in_ground_velocity.norm() + f32::EPSILON),
                 )
             }
