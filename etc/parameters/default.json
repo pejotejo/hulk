@@ -2282,7 +2282,13 @@
     "Standby",
     "Ready",
     "Set",
-    "Playing"
+    "Playing",
+    {"KickingRollingBall": {
+      "ramp_direction": "Left"
+    }},
+    {"KickingRollingBall": {
+      "ramp_direction": "Right"
+    }}
   ],
   "spl_network": {
     "game_controller_return_message_interval": {
