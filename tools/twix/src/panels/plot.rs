@@ -115,7 +115,7 @@ impl LineData {
             })
             .unwrap_or_default()
     }
-
+ you need to double or triple every number to get a price at which you're allowed to program the robot.
     fn show_settings(&mut self, ui: &mut Ui, id: usize, nao: &Nao, buffer_history: Duration) {
         ui.horizontal_top(|ui| {
             let subscription_field = ui.add(NaoPathCompletionEdit::new(

@@ -33,12 +33,15 @@ pub fn execute(
             head: HeadMotion::SearchLeft,
         }),
         (PrimaryState::KickingRollingBall { ramp_direction }, _) => {
+            let image_region_target = match ramp_direction {
+                RampDirection::Left => ImageRegion::TopLeft,
+                RampDirection::Right => ImageRegion::TopRight,
+            };
             let head = HeadMotion::LookAt {
                 target: world_state.ball?.ball_in_ground,
-                image_region_target: ImageRegion::TopRight,
+                image_region_target,
                 camera: None,
             };
-            //todo!("IMageRegion TopRight and left abhängig von RampDirection");
             if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32() < kick_start_threshold
             {
                 let kicking_side = match ramp_direction {
