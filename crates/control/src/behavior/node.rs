@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use context_attribute::context;
 use coordinate_systems::Field;
 use framework::{AdditionalOutput, MainOutput};
-use linear_algebra::{point, IntoFramed, Point2};
+use linear_algebra::{point, Point2};
 use spl_network_messages::{GamePhase, PlayerNumber, SubState, Team};
 use types::{
     action::Action,
@@ -25,7 +25,7 @@ use types::{
         LostBallParameters,
     },
     path_obstacles::PathObstacle,
-    primary_state::PrimaryState,
+    primary_state::{PrimaryState, RampDirection},
     roles::Role,
     step::Step,
     world_state::WorldState,
@@ -74,6 +74,8 @@ pub struct CycleContext {
     use_stand_head_unstiff_calibration:
         Parameter<bool, "calibration_controller.use_stand_head_unstiff_calibration">,
     step_duration: Parameter<Duration, "walking_engine.base.step_duration">,
+    step_duration_increase:
+        Parameter<f32, "walking_engine.base.step_duration_increase.forward">,
     kick_strength: Parameter<f32, "kick_selector.default_kick_strength">,
     kick_start_threshold: Parameter<f32, "rolling_ball.kick_start_threshold">,
 
@@ -278,14 +280,34 @@ impl Behavior {
             &mut self.last_defender_mode,
         );
 
+        let kicking_side = match world_state.robot.primary_state {
+            PrimaryState::KickingRollingBall {
+                ramp_direction: RampDirection::Right,
+            } => Some(Side::Right),
+            PrimaryState::KickingRollingBall {
+                ramp_direction: RampDirection::Left,
+            } => Some(Side::Left),
+            _ => None,
+        };
+        let base_foot_position = match kicking_side {
+            Some(Side::Left) => point![
+                -context.in_walk_kicks.forward.position.x,
+                -context.in_walk_kicks.forward.position.y
+            ],
+            Some(Side::Right) => point![
+                -context.in_walk_kicks.forward.position.x,
+                context.in_walk_kicks.forward.position.y
+            ],
+            None => point![0.0, 0.0],
+        };
+        let step_duration = *context.step_duration + Duration::from_secs_f32(*context.step_duration_increase) + *context.step_duration + Duration::from_secs_f32(*context.step_duration_increase);
         let time_to_reach_foot = match world_state.ball {
             Some(ball) => {
-                let distance_ball_to_foot = ball.ball_in_ground.coords()
-                    + context.in_walk_kicks.forward.position.framed().coords();
+                let distance_ball_to_foot =
+                    base_foot_position.coords() - ball.ball_in_ground.coords();
                 let ball_in_ground_velocity = ball.ball_in_ground_velocity;
                 Duration::from_secs_f32(
-                    distance_ball_to_foot.norm()
-                        / (ball_in_ground_velocity.norm() + f32::EPSILON),
+                    distance_ball_to_foot.norm() / (ball_in_ground_velocity.norm() + f32::EPSILON),
                 )
             }
             _ => Duration::from_secs(100),
@@ -301,7 +323,7 @@ impl Behavior {
                     Action::LookToBallRamp => kicking_ball::execute(
                         world_state,
                         &time_to_reach_foot,
-                        context.step_duration,
+                        &step_duration,
                         context.kick_strength,
                         *context.kick_start_threshold,
                     ),
