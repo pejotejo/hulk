@@ -292,11 +292,11 @@ impl Behavior {
         let base_foot_position = match kicking_side {
             Some(Side::Left) => point![
                 -context.in_walk_kicks.forward.position.x,
-                -context.in_walk_kicks.forward.position.y
+                context.in_walk_kicks.forward.position.y
             ],
             Some(Side::Right) => point![
                 -context.in_walk_kicks.forward.position.x,
-                context.in_walk_kicks.forward.position.y
+                -context.in_walk_kicks.forward.position.y
             ],
             None => point![0.0, 0.0],
         };
