@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use types::{
+    camera_position::CameraPosition,
     motion_command::{ArmMotion, HeadMotion, ImageRegion, KickVariant, MotionCommand},
     primary_state::{PrimaryState, RampDirection},
     support_foot::Side,
@@ -33,23 +34,14 @@ pub fn execute(
             head: HeadMotion::SearchLeft,
         }),
         (PrimaryState::KickingRollingBall { ramp_direction }, Some(ball)) => {
-            let image_region_target = match ramp_direction {
-                RampDirection::Left => ImageRegion::TopLeft,
-                RampDirection::Right => ImageRegion::TopRight,
+            
+            let (kicking_side, head) = match ramp_direction {
+                RampDirection::Left => (Side::Left, HeadMotion::SearchLeft),
+                RampDirection::Right => (Side::Right, HeadMotion::SearchRight),
             };
-            let head = HeadMotion::LookAt {
-                target: ball.ball_in_ground,
-                image_region_target,
-                camera: None,
-            };
-            if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32()
-                < kick_start_threshold
+            if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32() < kick_start_threshold
             {
-                let kicking_side = match ramp_direction {
-                    RampDirection::Left => Side::Right,
-                    RampDirection::Right => Side::Left,
-                };
-
+                    
                 let command = MotionCommand::InWalkKick {
                     head,
                     kick: KickVariant::Forward,
@@ -62,6 +54,37 @@ pub fn execute(
             }
             Some(MotionCommand::Stand { head })
         }
+
+        // (PrimaryState::KickingRollingBall { ramp_direction }, Some(ball)) => {
+        //     let image_region_target = match ramp_direction {
+        //         RampDirection::Left => ImageRegion::TopLeft,
+        //         RampDirection::Right => ImageRegion::TopRight,
+        //     };
+        //     let head = HeadMotion::LookAt {
+        //         target: ball.ball_in_ground,
+        //         image_region_target,
+        //         camera: Some(CameraPosition::Top),
+        //     };
+        // if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32()
+        //     < kick_start_threshold
+        // {
+        //     let kicking_side = match ramp_direction {
+        //         RampDirection::Left => Side::Right,
+        //         RampDirection::Right => Side::Left,
+        //     };
+
+        //     let command = MotionCommand::InWalkKick {
+        //         head,
+        //         kick: KickVariant::Forward,
+        //         kicking_side,
+        //         strength: *kick_strength,
+        //         left_arm: ArmMotion::Swing,
+        //         right_arm: ArmMotion::Swing,
+        //     };
+        //     return Some(command);
+        // }
+        //     Some(MotionCommand::Stand { head })
+        // }
         _ => None,
     }
 }

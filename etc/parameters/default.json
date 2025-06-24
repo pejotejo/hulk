@@ -1577,12 +1577,12 @@
       "pitch": 0.4
     },
     "ball_ramp_left_positions": {
-      "yaw": 1.0,
-      "pitch": 0.0
+      "yaw": 0.95,
+      "pitch": 0.05
     },
     "ball_ramp_right_positions": {
-      "yaw": -1.0,
-      "pitch": 0.0
+      "yaw": -0.95,
+      "pitch": 0.05
     }
   },
   "in_walk_kicks": {
@@ -1687,7 +1687,7 @@
     "penalty_shot_kick_variants": [
       "Forward"
     ],
-    "default_kick_strength": 1.0,
+    "default_kick_strength": 2.0,
     "corner_kick_strength": 0.25,
     "kick_off_kick_strength": 1.0,
     "penalty_shot_kick_strength": 1.0,
@@ -1717,7 +1717,7 @@
     "walk_to_penalty_kick": "Normal"
   },
   "rolling_ball": {
-    "kick_start_threshold": 0.3
+    "kick_start_threshold": 0.05
   },
   "behavior": {
     "optional_roles": [
