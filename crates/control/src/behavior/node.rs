@@ -74,10 +74,10 @@ pub struct CycleContext {
     use_stand_head_unstiff_calibration:
         Parameter<bool, "calibration_controller.use_stand_head_unstiff_calibration">,
     step_duration: Parameter<Duration, "walking_engine.base.step_duration">,
-    step_duration_increase:
-        Parameter<f32, "walking_engine.base.step_duration_increase.forward">,
+    step_duration_increase: Parameter<f32, "walking_engine.base.step_duration_increase.forward">,
     kick_strength: Parameter<f32, "kick_selector.default_kick_strength">,
     kick_start_threshold: Parameter<f32, "rolling_ball.kick_start_threshold">,
+    kick_duration_threshold: Parameter<Duration, "rolling_ball.kick_duration_threshold">,
 
     defend_walk_speed: Parameter<WalkSpeed, "walk_speed.defend">,
     dribble_walk_speed: Parameter<WalkSpeed, "walk_speed.dribble">,
@@ -300,7 +300,6 @@ impl Behavior {
             ],
             None => point![0.0, 0.0],
         };
-        let step_duration = *context.step_duration + Duration::from_secs_f32(*context.step_duration_increase) + *context.step_duration + Duration::from_secs_f32(*context.step_duration_increase);
         let time_to_reach_foot = match world_state.ball {
             Some(ball) => {
                 let distance_ball_to_foot =
@@ -323,9 +322,9 @@ impl Behavior {
                     Action::LookToBallRamp => kicking_ball::execute(
                         world_state,
                         &time_to_reach_foot,
-                        &step_duration,
                         context.kick_strength,
                         *context.kick_start_threshold,
+                        context.kick_duration_threshold,
                     ),
                     Action::Animation => animation::execute(world_state),
                     Action::Unstiff => unstiff::execute(world_state),

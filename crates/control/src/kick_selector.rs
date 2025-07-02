@@ -85,6 +85,7 @@ impl KickSelector {
         .iter()
         .filter(|variant| match variant {
             KickVariant::Forward => context.in_walk_kicks.forward.enabled,
+            KickVariant::InstantForward => context.in_walk_kicks.forward.enabled,
             KickVariant::Turn => context.in_walk_kicks.turn.enabled,
             KickVariant::Side => context.in_walk_kicks.side.enabled,
         })

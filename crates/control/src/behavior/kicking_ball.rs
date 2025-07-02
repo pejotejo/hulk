@@ -12,9 +12,9 @@ use types::{
 pub fn execute(
     world_state: &WorldState,
     time_to_reach_foot: &Duration,
-    step_duration: &Duration,
     kick_strength: &f32,
     kick_start_threshold: f32,
+    kick_duration_threshold: &Duration,
 ) -> Option<MotionCommand> {
     match (world_state.robot.primary_state, world_state.ball) {
         (
@@ -36,15 +36,15 @@ pub fn execute(
         (PrimaryState::KickingRollingBall { ramp_direction }, Some(ball)) => {
             
             let (kicking_side, head) = match ramp_direction {
-                RampDirection::Left => (Side::Left, HeadMotion::SearchLeft),
-                RampDirection::Right => (Side::Right, HeadMotion::SearchRight),
+                RampDirection::Left => (Side::Right, HeadMotion::SearchLeft),
+                RampDirection::Right => (Side::Left, HeadMotion::SearchRight),
             };
-            if time_to_reach_foot.as_secs_f32() - step_duration.as_secs_f32() < kick_start_threshold
+            if time_to_reach_foot.as_secs_f32() - kick_duration_threshold.as_secs_f32() < kick_start_threshold
             {
                     
                 let command = MotionCommand::InWalkKick {
                     head,
-                    kick: KickVariant::Forward,
+                    kick: KickVariant::InstantForward,
                     kicking_side,
                     strength: *kick_strength,
                     left_arm: ArmMotion::Swing,
