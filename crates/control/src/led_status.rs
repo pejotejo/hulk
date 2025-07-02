@@ -12,11 +12,14 @@ use types::{
     filtered_whistle::FilteredWhistle,
     led::{Ear, Eye, Leds},
     messages::IncomingMessage,
+    motion_command::{self, MotionCommand},
     pose_detection::{FreeKickSignalDetectionResult, ReadySignalDetectionResult},
     primary_state::PrimaryState,
     roles::Role,
     sensor_data::SensorData,
 };
+
+use crate::motion;
 
 #[derive(Deserialize, Serialize)]
 pub struct LedStatus {
@@ -47,6 +50,7 @@ pub struct CycleContext {
     balls_top: PerceptionInput<Option<Vec<BallPercept>>, "VisionTop", "balls?">,
     network_message: PerceptionInput<Option<IncomingMessage>, "SplNetwork", "filtered_message?">,
     sensor_data: Input<SensorData, "sensor_data">,
+    motion_command: Input<MotionCommand, "motion_command">,
 }
 
 #[context]
@@ -103,7 +107,10 @@ impl LedStatus {
             PrimaryState::Finished => Rgb::BLACK,
             PrimaryState::Calibration => Rgb::PURPLE,
             PrimaryState::Standby => Rgb::TURQUOISE,
-            PrimaryState::KickingRollingBall { .. } => Rgb::MAGENTA,
+            PrimaryState::KickingRollingBall { .. } => match context.motion_command {
+                MotionCommand::Stand { .. } => Rgb::MAGENTA,
+                _ => Rgb::YELLOW,
+            },
         };
 
         let at_least_one_ball_top =
