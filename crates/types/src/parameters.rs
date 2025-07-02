@@ -121,6 +121,7 @@ impl Index<KickVariant> for InWalkKicksParameters {
     fn index(&self, variant: KickVariant) -> &Self::Output {
         match variant {
             KickVariant::Forward => &self.forward,
+            KickVariant::InstantForward => &self.forward,
             KickVariant::Turn => &self.turn,
             KickVariant::Side => &self.side,
         }

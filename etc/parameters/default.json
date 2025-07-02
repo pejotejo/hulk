@@ -848,6 +848,193 @@
         }
       }
     ],
+    "instant_forward": [
+      {
+        "base_step": {
+          "forward": 0.08,
+          "left": 0.0,
+          "turn": 0.0
+        },
+        "step_duration": {
+          "nanos": 280000000,
+          "secs": 0
+        },
+        "foot_lift_apex": 0.02,
+        "midpoint": 0.5,
+        "support_overrides": {
+          "hip_pitch": [
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 0,
+                "secs": 0
+              }
+            },
+            {
+              "value": -0.02,
+              "timepoint": {
+                "nanos": 100000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": -0.04,
+              "timepoint": {
+                "nanos": 150000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": -0.02,
+              "timepoint": {
+                "nanos": 240000000,
+                "secs": 0
+              }
+            }
+          ],
+          "knee_pitch": null,
+          "ankle_pitch": [
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 0,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 50000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 150000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 200000000,
+                "secs": 0
+              }
+            }
+          ]
+        },
+        "swing_overrides": {
+          "hip_pitch": [
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 0,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 100000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": -0.4,
+              "timepoint": {
+                "nanos": 150000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 240000000,
+                "secs": 0
+              }
+            }
+          ],
+          "knee_pitch": null,
+          "ankle_pitch": [
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 0,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 50000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.1,
+              "timepoint": {
+                "nanos": 150000000,
+                "secs": 0
+              }
+            },
+            {
+              "value": 0.0,
+              "timepoint": {
+                "nanos": 200000000,
+                "secs": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "base_step": {
+          "forward": 0.0,
+          "left": 0.0,
+          "turn": 0.0
+        },
+        "step_duration": {
+          "nanos": 260000000,
+          "secs": 0
+        },
+        "foot_lift_apex": 0.015,
+        "midpoint": 0.5,
+        "support_overrides": {
+          "hip_pitch": null,
+          "knee_pitch": null,
+          "ankle_pitch": null
+        },
+        "swing_overrides": {
+          "hip_pitch": null,
+          "knee_pitch": null,
+          "ankle_pitch": null
+        }
+      },
+      {
+        "base_step": {
+          "forward": -0.02,
+          "left": 0.0,
+          "turn": 0.0
+        },
+        "step_duration": {
+          "nanos": 260000000,
+          "secs": 0
+        },
+        "foot_lift_apex": 0.01,
+        "midpoint": 0.5,
+        "support_overrides": {
+          "hip_pitch": null,
+          "knee_pitch": null,
+          "ankle_pitch": null
+        },
+        "swing_overrides": {
+          "hip_pitch": null,
+          "knee_pitch": null,
+          "ankle_pitch": null
+        }
+      }
+    ],
     "turn": [
       {
         "base_step": {
@@ -1687,7 +1874,7 @@
     "penalty_shot_kick_variants": [
       "Forward"
     ],
-    "default_kick_strength": 2.0,
+    "default_kick_strength": 1.75,
     "corner_kick_strength": 0.25,
     "kick_off_kick_strength": 1.0,
     "penalty_shot_kick_strength": 1.0,
@@ -1717,7 +1904,11 @@
     "walk_to_penalty_kick": "Normal"
   },
   "rolling_ball": {
-    "kick_start_threshold": 0.05
+    "kick_start_threshold": 0.03,
+    "kick_duration_threshold": {
+      "nanos": 300000000,
+      "secs": 0
+    }
   },
   "behavior": {
     "optional_roles": [
@@ -2283,12 +2474,16 @@
     "Ready",
     "Set",
     "Playing",
-    {"KickingRollingBall": {
-      "ramp_direction": "Left"
-    }},
-    {"KickingRollingBall": {
-      "ramp_direction": "Right"
-    }}
+    {
+      "KickingRollingBall": {
+        "ramp_direction": "Left"
+      }
+    },
+    {
+      "KickingRollingBall": {
+        "ramp_direction": "Right"
+      }
+    }
   ],
   "spl_network": {
     "game_controller_return_message_interval": {

@@ -32,6 +32,7 @@ pub struct KickStep {
 )]
 pub struct KickSteps {
     pub forward: Vec<KickStep>,
+    pub instant_forward: Vec<KickStep>,
     pub turn: Vec<KickStep>,
     pub side: Vec<KickStep>,
 }
@@ -40,6 +41,7 @@ impl KickSteps {
     pub fn get_steps(&self, variant: KickVariant) -> &[KickStep] {
         match variant {
             KickVariant::Forward => &self.forward,
+            KickVariant::InstantForward => &self.instant_forward,
             KickVariant::Turn => &self.turn,
             KickVariant::Side => &self.side,
         }

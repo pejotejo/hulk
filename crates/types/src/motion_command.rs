@@ -258,6 +258,7 @@ pub enum KickDirection {
 )]
 pub enum KickVariant {
     Forward,
+    InstantForward,
     Turn,
     Side,
 }

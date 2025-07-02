@@ -319,6 +319,7 @@ pub fn move_robots(mut robots: Query<&mut Robot>, mut ball: ResMut<BallResource>
                     if in_range && previous_kick_finished {
                         let direction = match kick {
                             KickVariant::Forward => vector![1.0, 0.0],
+                            KickVariant::InstantForward => vector![1.0, 0.0],
                             KickVariant::Turn => vector![0.707, 0.707 * side],
                             KickVariant::Side => vector![0.0, 1.0 * -side],
                         };
