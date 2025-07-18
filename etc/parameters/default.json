@@ -1903,7 +1903,7 @@
     "walk_to_penalty_kick": "Normal"
   },
   "rolling_ball": {
-    "kick_start_threshold": 0.025,
+    "kick_start_threshold": 0.03,
     "kick_duration_threshold": {
       "nanos": 300000000,
       "secs": 0
