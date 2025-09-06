@@ -77,7 +77,7 @@ impl<'a> Panel<'a> for ImagePanel {
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
 
-        let image_buffer = subscribe_image(&context.nao, cycler_path, is_jpeg, false);
+        let image_buffer = subscribe_image(&nao, cycler_path, is_jpeg, false);
 
         let overlays = Overlays::new(
             context.nao.clone(),
