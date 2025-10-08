@@ -82,9 +82,7 @@ pub struct MapPanel {
     feet_detection: EnabledLayer<layers::FeetDetection, Ground>,
     ball_filter: EnabledLayer<layers::BallFilter, Ground>,
     obstacle_filter: EnabledLayer<layers::ObstacleFilter, Ground>,
-    walking: EnabledLayer<layers::Walking, Ground>,
     localization: EnabledLayer<layers::Localization, Field>,
-    planned_steps: EnabledLayer<layers::PlannedSteps, Ground>,
 }
 
 impl<'a> Panel<'a> for MapPanel {
@@ -152,9 +150,7 @@ impl<'a> Panel<'a> for MapPanel {
             feet_detection,
             ball_filter,
             obstacle_filter,
-            walking,
             localization,
-            planned_steps,
         }
     }
 
@@ -181,9 +177,7 @@ impl<'a> Panel<'a> for MapPanel {
             "feet_detection": self.feet_detection.save(),
             "ball_filter": self.ball_filter.save(),
             "obstacle_filter": self.obstacle_filter.save(),
-            "walking": self.walking.save(),
             "localization": self.localization.save(),
-            "planned_steps": self.planned_steps.save(),
         })
     }
 }
@@ -210,9 +204,7 @@ impl Widget for &mut MapPanel {
                 self.feet_detection.checkbox(ui);
                 self.ball_filter.checkbox(ui);
                 self.obstacle_filter.checkbox(ui);
-                self.walking.checkbox(ui);
                 self.localization.checkbox(ui);
-                self.planned_steps.checkbox(ui);
             });
             ComboBox::from_id_salt("plot_type_selector")
                 .selected_text(format!("{:?}", self.current_plot_type))
@@ -304,11 +296,7 @@ impl Widget for &mut MapPanel {
             .generic_paint(&painter, ground_to_field, &field_dimensions);
         self.obstacle_filter
             .generic_paint(&painter, ground_to_field, &field_dimensions);
-        self.walking
-            .generic_paint(&painter, ground_to_field, &field_dimensions);
         self.localization
-            .generic_paint(&painter, ground_to_field, &field_dimensions);
-        self.planned_steps
             .generic_paint(&painter, ground_to_field, &field_dimensions);
 
         response

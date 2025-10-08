@@ -171,7 +171,6 @@ impl_selectable_panel!(
     SemiAutomaticCameraCalibrationPanel,
     TextPanel,
     VisionTunerPanel,
-    WalkPanel,
 );
 
 struct TwixApp {

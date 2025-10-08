@@ -54,4 +54,3 @@ tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 toml = { workspace = true }
 types = { workspace = true }
-walking_engine = { workspace = true }

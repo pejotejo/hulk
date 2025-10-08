@@ -1,32 +1,51 @@
 use linear_algebra::{point, vector, Isometry3, Point3, Vector3};
 
 use coordinate_systems::{
-    Head, LeftFoot, LeftForearm, LeftSole, LeftThigh, LeftTibia, LeftUpperArm, RightFoot,
-    RightForearm, RightSole, RightThigh, RightTibia, RightUpperArm, Robot,
+    Head, LeftFoot, LeftHip, LeftInnerShoulder, LeftOuterShoulder, LeftPelvis, LeftSole, LeftThigh,
+    LeftTibia, LeftUpperArm, Neck, RightFoot, RightHip, RightInnerShoulder, RightOuterShoulder,
+    RightPelvis, RightSole, RightThigh, RightTibia, RightUpperArm, Robot,
 };
 
 #[derive(Debug)]
 pub struct RobotDimensions {}
 
 impl RobotDimensions {
-    pub const ROBOT_TO_TORSO: Vector3<Robot> = vector![-0.00413, 0.0, 0.12842];
-    pub const ROBOT_TO_NECK: Vector3<Robot> = vector![0.0, 0.0, 0.2115];
-    pub const ROBOT_TO_LEFT_PELVIS: Vector3<Robot> = vector![0.0, 0.05, 0.0];
-    pub const ROBOT_TO_RIGHT_PELVIS: Vector3<Robot> = vector![0.0, -0.05, 0.0];
-    pub const LEFT_HIP_TO_LEFT_KNEE: Vector3<LeftThigh> = vector![0.0, 0.0, -0.1];
-    pub const RIGHT_HIP_TO_RIGHT_KNEE: Vector3<RightThigh> = vector![0.0, 0.0, -0.1];
-    pub const LEFT_KNEE_TO_LEFT_ANKLE: Vector3<LeftTibia> = vector![0.0, 0.0, -0.1029];
-    pub const RIGHT_KNEE_TO_RIGHT_ANKLE: Vector3<RightTibia> = vector![0.0, 0.0, -0.1029];
-    pub const LEFT_ANKLE_TO_LEFT_SOLE: Vector3<LeftFoot> = vector![0.0, 0.0, -0.04519];
-    pub const RIGHT_ANKLE_TO_RIGHT_SOLE: Vector3<RightFoot> = vector![0.0, 0.0, -0.04519];
-    pub const ROBOT_TO_LEFT_SHOULDER: Vector3<Robot> = vector![0.0, 0.098, 0.185];
-    pub const ROBOT_TO_RIGHT_SHOULDER: Vector3<Robot> = vector![0.0, -0.098, 0.185];
-    pub const LEFT_SHOULDER_TO_LEFT_ELBOW: Vector3<LeftUpperArm> = vector![0.105, 0.015, 0.0];
-    pub const RIGHT_SHOULDER_TO_RIGHT_ELBOW: Vector3<RightUpperArm> = vector![0.105, -0.015, 0.0];
-    pub const LEFT_ELBOW_TO_LEFT_WRIST: Vector3<LeftForearm> = vector![0.05595, 0.0, 0.0];
-    pub const RIGHT_ELBOW_TO_RIGHT_WRIST: Vector3<RightForearm> = vector![0.05595, 0.0, 0.0];
-    pub const HEAD_TO_TOP_CAMERA: Vector3<Head> = vector![0.05871, 0.0, 0.06364];
-    pub const HEAD_TO_BOTTOM_CAMERA: Vector3<Head> = vector![0.05071, 0.0, 0.01774];
+    pub const ROBOT_TO_TORSO: Vector3<Robot> = vector![0.0, 0.0, 0.0]; // TODO
+    pub const ROBOT_TO_NECK: Vector3<Robot> = vector![0.0056, 0.0, 0.2149];
+    pub const NECK_TO_HEAD: Vector3<Neck> = vector![0.0, 0.0, 0.033];
+
+    pub const HEAD_TO_TOP_CAMERA: Vector3<Head> = vector![0.05871, 0.0, 0.06364]; // TODO
+    pub const HEAD_TO_BOTTOM_CAMERA: Vector3<Head> = vector![0.05071, 0.0, 0.01774]; // TODO
+
+    pub const ROBOT_TO_LEFT_INNER_SHOULDER: Vector3<Robot> = vector![0.0, 0.077, 0.1845];
+    pub const LEFT_INNER_SHOULDER_TO_LEFT_OUTER_SHOULDER: Vector3<LeftInnerShoulder> =
+        vector![0.0025, 0.068, -0.0135];
+    pub const LEFT_OUTER_SHOULDER_TO_LEFT_UPPER_ARM: Vector3<LeftOuterShoulder> =
+        vector![0.0, 0.044428, 0.0];
+    pub const LEFT_UPPER_ARM_TO_LEFT_FOREARM: Vector3<LeftUpperArm> = vector![0.0, 0.1215, 0.0];
+
+    pub const ROBOT_TO_RIGHT_INNER_SHOULDER: Vector3<Robot> = vector![0.0, -0.077, 0.1845];
+    pub const RIGHT_INNER_SHOULDER_TO_RIGHT_OUTER_SHOULDER: Vector3<RightInnerShoulder> =
+        vector![0.0025, -0.068, -0.0135];
+    pub const RIGHT_OUTER_SHOULDER_TO_RIGHT_UPPER_ARM: Vector3<RightOuterShoulder> =
+        vector![0.0, -0.044428, 0.0];
+    pub const RIGHT_UPPER_ARM_TO_RIGHT_FOREARM: Vector3<RightUpperArm> = vector![0.0, -0.1215, 0.0];
+
+    pub const ROBOT_TO_LEFT_PELVIS: Vector3<Robot> = vector![0.0, 0.096, -0.062];
+    pub const LEFT_PELVIS_TO_LEFT_HIP: Vector3<LeftPelvis> = vector![0.0, 0.0, -0.026];
+    pub const LEFT_HIP_TO_LEFT_THIGH: Vector3<LeftHip> = vector![0.012, 0.0, -0.0485];
+    pub const LEFT_THIGH_TO_LEFT_TIBIA: Vector3<LeftThigh> = vector![-0.014, 0.0, -0.117];
+    pub const LEFT_TIBIA_TO_LEFT_ANKLE: Vector3<LeftTibia> = vector![0.00019706, 0.0002, -0.24519];
+    pub const LEFT_FOOT_TO_LEFT_SOLE: Vector3<LeftFoot> = vector![0.0, 0.0, 0.0]; // TODO
+
+    pub const ROBOT_TO_RIGHT_PELVIS: Vector3<Robot> = vector![0.0, -0.096, -0.062];
+    pub const RIGHT_PELVIS_TO_RIGHT_HIP: Vector3<RightPelvis> = vector![0.0, 0.0, -0.026];
+    pub const RIGHT_HIP_TO_RIGHT_THIGH: Vector3<RightHip> = vector![0.012, 0.0, -0.0485];
+    pub const RIGHT_THIGH_TO_RIGHT_TIBIA: Vector3<RightThigh> = vector![-0.014, 0.0, -0.117];
+    pub const RIGHT_TIBIA_TO_RIGHT_ANKLE: Vector3<RightTibia> =
+        vector![0.00019706, -0.0002, -0.24519];
+    pub const RIGHT_FOOT_TO_RIGHT_SOLE: Vector3<RightFoot> = vector![0.0, 0.0, 0.0]; // TODO
+
     pub const LEFT_SOLE_OUTLINE: [Point3<LeftSole>; 32] = [
         point![-0.05457, -0.015151, 0.0],
         point![-0.050723, -0.021379, 0.0],
@@ -60,7 +79,7 @@ impl RobotDimensions {
         point![-0.045156, 0.042039, 0.0],
         point![-0.04905, 0.037599, 0.0],
         point![-0.054657, 0.029814, 0.0],
-    ];
+    ]; // TODO
 }
 
 pub fn transform_left_sole_outline<Frame>(
