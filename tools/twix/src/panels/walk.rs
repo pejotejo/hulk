@@ -1,6 +1,7 @@
-use std::sync::Arc;
-
-use crate::{nao::Nao, panel::Panel, value_buffer::BufferHandle};
+use crate::{
+    panel::{Panel, PanelCreationContext},
+    value_buffer::BufferHandle,
+};
 use coordinate_systems::{Ground, Robot, Walk};
 use eframe::egui::{CentralPanel, Color32, Response, Stroke, Ui, Widget};
 use egui_plot::{MarkerShape, Plot, PlotPoint, PlotPoints, PlotUi, Points, Polygon};
@@ -30,16 +31,25 @@ pub struct WalkPanel {
     zero_moment_point: BufferHandle<Point2<Ground>>,
 }
 
-impl Panel for WalkPanel {
+impl<'a> Panel<'a> for WalkPanel {
     const NAME: &'static str = "Walk";
 
-    fn new(nao: Arc<Nao>, _value: Option<&Value>) -> Self {
-        let walking_engine = nao.subscribe_value("Control.additional_outputs.walking.engine");
-        let robot_to_walk = nao.subscribe_value("Control.additional_outputs.walking.robot_to_walk");
-        let last_actuated_commands =
-            nao.subscribe_value("Control.additional_outputs.actuated_motor_commands");
-        let robot_to_ground = nao.subscribe_value("Control.main_outputs.robot_to_ground");
-        let zero_moment_point = nao.subscribe_value("Control.main_outputs.zero_moment_point");
+    fn new(context: PanelCreationContext) -> Self {
+        let walking_engine = context
+            .nao
+            .subscribe_value("Control.additional_outputs.walking.engine");
+        let robot_to_walk = context
+            .nao
+            .subscribe_value("Control.additional_outputs.walking.robot_to_walk");
+        let last_actuated_commands = context
+            .nao
+            .subscribe_value("Control.additional_outputs.actuated_motor_commands");
+        let robot_to_ground = context
+            .nao
+            .subscribe_value("Control.main_outputs.robot_to_ground");
+        let zero_moment_point = context
+            .nao
+            .subscribe_value("Control.main_outputs.zero_moment_point");
 
         Self {
             walking_engine,

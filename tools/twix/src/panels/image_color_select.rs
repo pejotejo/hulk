@@ -25,7 +25,7 @@ use types::{
 
 use crate::{
     nao::Nao,
-    panel::Panel,
+    panel::{Panel, PanelCreationContext},
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
 };
@@ -45,17 +45,18 @@ pub struct ImageColorSelectPanel {
     y_axis: Axis,
 }
 
-impl Panel for ImageColorSelectPanel {
+impl<'a> Panel<'a> for ImageColorSelectPanel {
     const NAME: &'static str = "Image Color Select";
 
-    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
-        let cycler = value
+    fn new(context: PanelCreationContext) -> Self {
+        let cycler = context
+            .value
             .and_then(|value| {
                 let string = value.get("cycler")?.as_str()?;
                 VisionCycler::try_from(string).ok()
             })
             .unwrap_or(VisionCycler::Top);
-        let image = nao.subscribe_value(format!(
+        let image = context.nao.subscribe_value(format!(
             "{cycler_path}.main_outputs.image",
             cycler_path = cycler.as_path()
         ));
@@ -64,15 +65,17 @@ impl Panel for ImageColorSelectPanel {
 
         let selection_mask = ColorImage::new([640, 480], Color32::TRANSPARENT);
 
-        let x_axis = value
+        let x_axis = context
+            .value
             .and_then(|value| serde_json::from_value::<Axis>(value.get("x_axis")?.clone()).ok())
             .unwrap_or(Axis::GreenChromaticity);
-        let y_axis = value
+        let y_axis = context
+            .value
             .and_then(|value| serde_json::from_value::<Axis>(value.get("y_axis")?.clone()).ok())
             .unwrap_or(Axis::Luminance);
 
         Self {
-            nao,
+            nao: context.nao,
             image,
             cycler,
             brush_size,

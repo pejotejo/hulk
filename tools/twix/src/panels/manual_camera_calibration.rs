@@ -5,12 +5,11 @@ use eframe::egui::{Response, Slider, Ui, Widget, WidgetText};
 use log::error;
 use nalgebra::Vector3;
 use parameters::directory::Scope;
-use serde_json::Value;
 
 use crate::{
     log_error::LogError,
     nao::Nao,
-    panel::Panel,
+    panel::{Panel, PanelCreationContext},
     panels::{BOTTOM_CAMERA_EXTRINSICS_PATH, TOP_CAMERA_EXTRINSICS_PATH},
     value_buffer::BufferHandle,
 };
@@ -21,16 +20,19 @@ pub struct ManualCalibrationPanel {
     bottom_camera: BufferHandle<Vector3<f32>>,
 }
 
-impl Panel for ManualCalibrationPanel {
+impl<'a> Panel<'a> for ManualCalibrationPanel {
     const NAME: &'static str = "Manual Calibration";
 
-    fn new(nao: Arc<Nao>, _value: Option<&Value>) -> Self {
-        let top_camera = nao.subscribe_value(format!("parameters.{TOP_CAMERA_EXTRINSICS_PATH}"));
-        let bottom_camera =
-            nao.subscribe_value(format!("parameters.{BOTTOM_CAMERA_EXTRINSICS_PATH}"));
+    fn new(context: PanelCreationContext) -> Self {
+        let top_camera = context
+            .nao
+            .subscribe_value(format!("parameters.{TOP_CAMERA_EXTRINSICS_PATH}"));
+        let bottom_camera = context
+            .nao
+            .subscribe_value(format!("parameters.{BOTTOM_CAMERA_EXTRINSICS_PATH}"));
 
         Self {
-            nao,
+            nao: context.nao,
             top_camera,
             bottom_camera,
         }

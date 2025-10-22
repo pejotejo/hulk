@@ -14,16 +14,17 @@ use geometry::{line_segment::LineSegment, rectangle::Rectangle};
 use image::RgbImage;
 use linear_algebra::{distance, point, vector, Point2};
 use projection::camera_matrix::CameraMatrix;
-use serde_json::Value;
 use types::{camera_position::CameraPosition, ycbcr422_image::YCbCr422Image};
 
 use crate::{
     nao::Nao,
-    panel::Panel,
-    panels::camera_calibration::optimization::{
-        DrawnLine, SavedMeasurement, SemiAutomaticCalibrationContext,
+    panel::{Panel, PanelCreationContext},
+    panels::{
+        camera_calibration::optimization::{
+            DrawnLine, SavedMeasurement, SemiAutomaticCalibrationContext,
+        },
+        image::cycler_selector::{VisionCycler, VisionCyclerSelector},
     },
-    panels::image::cycler_selector::{VisionCycler, VisionCyclerSelector},
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
     zoom_and_pan::ZoomAndPanTransform,
@@ -64,16 +65,19 @@ pub struct SemiAutomaticCameraCalibrationPanel {
     optimization: SemiAutomaticCalibrationContext,
 }
 
-impl Panel for SemiAutomaticCameraCalibrationPanel {
+impl<'a> Panel<'a> for SemiAutomaticCameraCalibrationPanel {
     const NAME: &'static str = "Semi-Automatic Camera Calibration";
 
-    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
-        let top_camera =
-            nao.subscribe_value("Control.main_outputs.uncalibrated_camera_matrices.top");
-        let bottom_camera =
-            nao.subscribe_value("Control.main_outputs.uncalibrated_camera_matrices.bottom");
+    fn new(context: PanelCreationContext) -> Self {
+        let top_camera = context
+            .nao
+            .subscribe_value("Control.main_outputs.uncalibrated_camera_matrices.top");
+        let bottom_camera = context
+            .nao
+            .subscribe_value("Control.main_outputs.uncalibrated_camera_matrices.bottom");
 
-        let cycler = value
+        let cycler = context
+            .value
             .and_then(|value| {
                 let string = value.get("cycler")?.as_str()?;
                 VisionCycler::try_from(string).ok()
@@ -83,11 +87,11 @@ impl Panel for SemiAutomaticCameraCalibrationPanel {
 
         let image_buffer = {
             let path = format!("{cycler_path}.main_outputs.image");
-            nao.subscribe_value(path)
+            context.nao.subscribe_value(path)
         };
 
         Self {
-            nao: nao.clone(),
+            nao: context.nao.clone(),
             top_camera,
             bottom_camera,
             image_buffer,
@@ -97,7 +101,7 @@ impl Panel for SemiAutomaticCameraCalibrationPanel {
             user_state: UserState::Idle,
             drawn_lines: Vec::new(),
             saved_measurements: Vec::new(),
-            optimization: SemiAutomaticCalibrationContext::new(nao.clone()),
+            optimization: SemiAutomaticCalibrationContext::new(context.nao.clone()),
         }
     }
 }

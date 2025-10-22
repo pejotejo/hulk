@@ -15,7 +15,7 @@ use types::{
 
 use crate::{
     nao::Nao,
-    panel::Panel,
+    panel::{Panel, PanelCreationContext},
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
 };
@@ -30,11 +30,12 @@ pub struct BallCandidatePanel {
     image: BufferHandle<YCbCr422Image>,
 }
 
-impl Panel for BallCandidatePanel {
+impl<'a> Panel<'a> for BallCandidatePanel {
     const NAME: &'static str = "Ball Candidates";
 
-    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
-        let cycler = value
+    fn new(context: PanelCreationContext) -> Self {
+        let cycler = context
+            .value
             .and_then(|value| {
                 let string = value.get("cycler")?.as_str()?;
                 VisionCycler::try_from(string).ok()
@@ -42,15 +43,18 @@ impl Panel for BallCandidatePanel {
             .unwrap_or(VisionCycler::Top);
 
         let cycler_path = cycler.as_snake_case_path();
-        let ball_radius_enlargement_factor = nao.subscribe_value(format!(
+        let ball_radius_enlargement_factor = context.nao.subscribe_value(format!(
             "parameters.ball_detection.{cycler_path}.ball_radius_enlargement_factor",
         ));
         let cycler_path = cycler.as_path();
-        let ball_candidates =
-            nao.subscribe_value(format!("{cycler_path}.additional_outputs.ball_candidates"));
-        let image = nao.subscribe_value(format!("{cycler_path}.main_outputs.image"));
+        let ball_candidates = context
+            .nao
+            .subscribe_value(format!("{cycler_path}.additional_outputs.ball_candidates"));
+        let image = context
+            .nao
+            .subscribe_value(format!("{cycler_path}.main_outputs.image"));
         Self {
-            nao,
+            nao: context.nao,
             cycler,
             ball_radius_enlargement_factor,
             ball_candidates,

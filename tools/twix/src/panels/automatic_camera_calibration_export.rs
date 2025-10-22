@@ -10,7 +10,12 @@ use communication::messages::TextOrBinary;
 use parameters::directory::Scope;
 use types::primary_state::PrimaryState;
 
-use crate::{log_error::LogError, nao::Nao, panel::Panel, value_buffer::BufferHandle};
+use crate::{
+    log_error::LogError,
+    nao::Nao,
+    panel::{Panel, PanelCreationContext},
+    value_buffer::BufferHandle,
+};
 
 pub const TOP_CAMERA_EXTRINSICS_PATH: &str =
     "camera_matrix_parameters.calibration.correction_in_camera_top";
@@ -29,22 +34,31 @@ pub struct CameraCalibrationExportPanel {
     primary_state: BufferHandle<PrimaryState>,
 }
 
-impl Panel for CameraCalibrationExportPanel {
+impl<'a> Panel<'a> for CameraCalibrationExportPanel {
     const NAME: &'static str = "Camera Calibration Export";
 
-    fn new(nao: Arc<Nao>, _value: Option<&Value>) -> Self {
-        let top_camera = nao.subscribe_value(format!("parameters.{TOP_CAMERA_EXTRINSICS_PATH}"));
-        let bottom_camera =
-            nao.subscribe_value(format!("parameters.{BOTTOM_CAMERA_EXTRINSICS_PATH}"));
-        let body_rotations = nao.subscribe_value(format!("parameters.{ROBOT_BODY_ROTATION_PATH}"));
-        let calibration_corrections =
-            nao.subscribe_json("Control.additional_outputs.last_corrections");
-        let calibration_measurements =
-            nao.subscribe_json("Control.additional_outputs.last_measurements");
-        let primary_state = nao.subscribe_value("Control.main_outputs.primary_state");
+    fn new(context: PanelCreationContext) -> Self {
+        let top_camera = context
+            .nao
+            .subscribe_value(format!("parameters.{TOP_CAMERA_EXTRINSICS_PATH}"));
+        let bottom_camera = context
+            .nao
+            .subscribe_value(format!("parameters.{BOTTOM_CAMERA_EXTRINSICS_PATH}"));
+        let body_rotations = context
+            .nao
+            .subscribe_value(format!("parameters.{ROBOT_BODY_ROTATION_PATH}"));
+        let calibration_corrections = context
+            .nao
+            .subscribe_json("Control.additional_outputs.last_corrections");
+        let calibration_measurements = context
+            .nao
+            .subscribe_json("Control.additional_outputs.last_measurements");
+        let primary_state = context
+            .nao
+            .subscribe_value("Control.main_outputs.primary_state");
 
         Self {
-            nao,
+            nao: context.nao,
             top_camera,
             bottom_camera,
             body_rotations,

@@ -14,7 +14,7 @@ use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
 
 use crate::{
     nao::Nao,
-    panel::Panel,
+    panel::{Panel, PanelCreationContext},
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
     zoom_and_pan::ZoomAndPanTransform,
@@ -58,11 +58,12 @@ fn subscribe_image(
     RawOrJpeg::Raw(nao.subscribe_value(path))
 }
 
-impl Panel for ImagePanel {
+impl<'a> Panel<'a> for ImagePanel {
     const NAME: &'static str = "Image";
 
-    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
-        let cycler = value
+    fn new(context: PanelCreationContext) -> Self {
+        let cycler = context
+            .value
             .and_then(|value| {
                 let string = value.get("cycler")?.as_str()?;
                 VisionCycler::try_from(string).ok()
@@ -70,20 +71,21 @@ impl Panel for ImagePanel {
             .unwrap_or(VisionCycler::Top);
         let cycler_path = cycler.as_path();
 
-        let is_jpeg = value
+        let is_jpeg = context
+            .value
             .and_then(|value| value.get("is_jpeg"))
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
 
-        let image_buffer = subscribe_image(&nao, cycler_path, is_jpeg, false);
+        let image_buffer = subscribe_image(&context.nao, cycler_path, is_jpeg, false);
 
         let overlays = Overlays::new(
-            nao.clone(),
-            value.and_then(|value| value.get("overlays")),
+            context.nao.clone(),
+            context.value.and_then(|value| value.get("overlays")),
             cycler,
         );
         Self {
-            nao,
+            nao: context.nao,
             image_buffer,
             cycler,
             overlays,

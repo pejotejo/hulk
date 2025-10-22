@@ -9,7 +9,12 @@ use serde_json::{to_value, Value};
 
 use types::image_segments::Direction;
 
-use crate::{log_error::LogError, nao::Nao, panel::Panel, value_buffer::BufferHandle};
+use crate::{
+    log_error::LogError,
+    nao::Nao,
+    panel::{Panel, PanelCreationContext},
+    value_buffer::BufferHandle,
+};
 
 use super::image::cycler_selector::{VisionCycler, VisionCyclerSelector};
 
@@ -80,22 +85,22 @@ impl VisionTunerPanel {
     }
 }
 
-impl Panel for VisionTunerPanel {
+impl<'a> Panel<'a> for VisionTunerPanel {
     const NAME: &'static str = "Vision Tuner";
 
-    fn new(nao: Arc<Nao>, _value: Option<&Value>) -> Self {
+    fn new(context: PanelCreationContext) -> Self {
         let cycler = VisionCycler::Top;
 
         let cycler_path = cycler.as_snake_case_path();
-        let horizontal_edge_threshold = nao.subscribe_value(format!(
+        let horizontal_edge_threshold = context.nao.subscribe_value(format!(
             "parameters.image_segmenter.{cycler_path}.horizontal_edge_threshold",
         ));
-        let vertical_edge_threshold = nao.subscribe_value(format!(
+        let vertical_edge_threshold = context.nao.subscribe_value(format!(
             "parameters.image_segmenter.{cycler_path}.vertical_edge_threshold",
         ));
 
         Self {
-            nao,
+            nao: context.nao,
             cycler,
             horizontal_edge_threshold,
             vertical_edge_threshold,

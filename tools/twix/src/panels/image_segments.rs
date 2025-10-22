@@ -18,7 +18,7 @@ use types::{
 
 use crate::{
     nao::Nao,
-    panel::Panel,
+    panel::{Panel, PanelCreationContext},
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
     zoom_and_pan::ZoomAndPanTransform,
@@ -49,27 +49,28 @@ pub struct ImageSegmentsPanel {
     zoom_and_pan: ZoomAndPanTransform,
 }
 
-impl Panel for ImageSegmentsPanel {
+impl<'a> Panel<'a> for ImageSegmentsPanel {
     const NAME: &'static str = "Image Segments";
 
-    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
-        let camera_position = match value.and_then(|value| value.get("camera_position")) {
+    fn new(context: PanelCreationContext) -> Self {
+        let camera_position = match context.value.and_then(|value| value.get("camera_position")) {
             Some(Value::String(string)) if string == "Bottom" => CameraPosition::Bottom,
             _ => CameraPosition::Top,
         };
-        let value_buffer = nao.subscribe_value(format!(
+        let value_buffer = context.nao.subscribe_value(format!(
             "Vision{camera_position:?}.main_outputs.image_segments"
         ));
-        let color_mode = match value.and_then(|value| value.get("color_mode")) {
+        let color_mode = match context.value.and_then(|value| value.get("color_mode")) {
             Some(Value::String(string)) => serde_json::from_str(&format!("\"{string}\"")).unwrap(),
             _ => ColorMode::Original,
         };
-        let use_filtered_segments = value
+        let use_filtered_segments = context
+            .value
             .and_then(|value| value.get("use_filtered_segments"))
             .and_then(|value| value.as_bool())
             .unwrap_or_default();
         Self {
-            nao,
+            nao: context.nao,
             buffer: value_buffer,
             camera_position,
             direction: Direction::Vertical,
