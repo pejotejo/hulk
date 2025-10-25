@@ -250,6 +250,7 @@ impl TwixApp {
                         .wgpu_render_state
                         .clone()
                         .expect("no wgpu render state found"),
+                    egui_context: creation_context.egui_ctx.clone(),
                 })
             }),
             None => DockState::new(vec![SelectablePanel::TextPanel(TextPanel::new(
@@ -260,6 +261,7 @@ impl TwixApp {
                         .wgpu_render_state
                         .clone()
                         .expect("no wgpu render state found"),
+                    egui_context: creation_context.egui_ctx.clone(),
                 },
             ))
             .into()]),
@@ -498,6 +500,7 @@ impl App for TwixApp {
                                     .wgpu_render_state()
                                     .cloned()
                                     .expect("no wgpu render state found"),
+                                egui_context: ui.ctx().clone(),
                             },
                         ) {
                             Ok(panel) => {
@@ -534,6 +537,7 @@ impl App for TwixApp {
                         .wgpu_render_state()
                         .cloned()
                         .expect("no wgpu render state found"),
+                    egui_context: ui.ctx().clone(),
                 }));
                 if let Some((surface_index, node_id)) = self.dock_state.focused_leaf() {
                     let node = &mut self.dock_state[surface_index][node_id];
@@ -563,6 +567,7 @@ impl App for TwixApp {
                         .wgpu_render_state()
                         .cloned()
                         .expect("no wgpu render state found"),
+                    egui_context: ui.ctx().clone(),
                 }));
                 self.dock_state.push_to_focused_leaf(tab.into());
             }
@@ -599,6 +604,7 @@ impl App for TwixApp {
                                 .wgpu_render_state()
                                 .cloned()
                                 .expect("no wgpu render state found"),
+                            egui_context: ui.ctx().clone(),
                         })
                         .unwrap(),
                     ));
@@ -631,6 +637,7 @@ impl App for TwixApp {
                             .wgpu_render_state()
                             .cloned()
                             .expect("no wgpu render state found"),
+                        egui_context: ui.ctx().clone(),
                     },
                 ))
                 .into()]);
@@ -655,6 +662,7 @@ impl App for TwixApp {
                         .wgpu_render_state()
                         .cloned()
                         .expect("no wgpu render state found"),
+                    egui_context: ui.ctx().clone(),
                 }));
                 let index = self.dock_state[surface_index][node_id].tabs_count();
                 self.dock_state[surface_index][node_id].insert_tab(index.into(), tab.into());
