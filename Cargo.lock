@@ -1426,7 +1426,7 @@ dependencies = [
  "bevy_winit 0.15.1",
  "bytemuck",
  "crossbeam-channel",
- "egui 0.31.0",
+ "egui 0.31.1",
  "encase",
  "image",
  "js-sys",
@@ -3993,23 +3993,23 @@ dependencies = [
 
 [[package]]
 name = "ecolor"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "bytemuck",
- "emath 0.31.0",
+ "emath 0.31.1",
  "serde",
 ]
 
 [[package]]
 name = "eframe"
-version = "0.31.0"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba4c50d905804fe9ec4e159fde06b9d38f9440228617ab64a03d7a2091ece63"
+checksum = "d0dfe0859f3fb1bc6424c57d41e10e9093fe938f426b691e42272c2f336d915c"
 dependencies = [
  "ahash",
  "bytemuck",
  "document-features",
- "egui 0.31.0",
+ "egui 0.31.1",
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
@@ -4056,13 +4056,13 @@ dependencies = [
 
 [[package]]
 name = "egui"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "accesskit 0.17.1",
  "ahash",
  "bitflags 2.9.4",
- "emath 0.31.0",
- "epaint 0.31.0",
+ "emath 0.31.1",
+ "epaint 0.31.1",
  "log",
  "nohash-hasher",
  "profiling",
@@ -4072,13 +4072,13 @@ dependencies = [
 
 [[package]]
 name = "egui-wgpu"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "ahash",
  "bytemuck",
  "document-features",
- "egui 0.31.0",
- "epaint 0.31.0",
+ "egui 0.31.1",
+ "epaint 0.31.1",
  "log",
  "profiling",
  "thiserror 1.0.69",
@@ -4090,15 +4090,15 @@ dependencies = [
 
 [[package]]
 name = "egui-winit"
-version = "0.31.0"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace791b367c1f63e6044aef2f3834904509d1d1a6912fd23ebf3f6a9af92cd84"
+checksum = "7d9dfbb78fe4eb9c3a39ad528b90ee5915c252e77bbab9d4ebc576541ab67e13"
 dependencies = [
  "accesskit_winit 0.23.1",
  "ahash",
  "arboard",
  "bytemuck",
- "egui 0.31.0",
+ "egui 0.31.1",
  "log",
  "profiling",
  "raw-window-handle",
@@ -4116,19 +4116,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea7536fb0243aea55c1ca123a41a18253e16520d427a7213da584b9e2cb3973"
 dependencies = [
  "duplicate",
- "egui 0.31.0",
+ "egui 0.31.1",
  "paste",
  "serde",
 ]
 
 [[package]]
 name = "egui_extras"
-version = "0.31.0"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b5cf69510eb3d19211fc0c062fb90524f43fe8e2c012967dcf0e2d81cb040f"
+checksum = "624659a2e972a46f4d5f646557906c55f1cd5a0836eddbe610fdf1afba1b4226"
 dependencies = [
  "ahash",
- "egui 0.31.0",
+ "egui 0.31.1",
  "enum-map",
  "image",
  "log",
@@ -4138,13 +4138,13 @@ dependencies = [
 
 [[package]]
 name = "egui_glow"
-version = "0.31.0"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a53e2374a964c3c793cb0b8ead81bca631f24974bc0b747d1a5622f4e39fdd0"
+checksum = "910906e3f042ea6d2378ec12a6fd07698e14ddae68aed2d819ffe944a73aab9e"
 dependencies = [
  "ahash",
  "bytemuck",
- "egui 0.31.0",
+ "egui 0.31.1",
  "glow 0.16.0",
  "log",
  "memoffset",
@@ -4161,8 +4161,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1794c66fb727dac28dffed2e4b548e5118d1cccc331d368a35411d68725dde71"
 dependencies = [
  "ahash",
- "egui 0.31.0",
- "emath 0.31.1",
+ "egui 0.31.1",
+ "emath 0.31.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4182,7 +4182,7 @@ dependencies = [
 
 [[package]]
 name = "emath"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "bytemuck",
  "serde",
@@ -4411,14 +4411,14 @@ dependencies = [
 
 [[package]]
 name = "epaint"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "ab_glyph",
  "ahash",
  "bytemuck",
- "ecolor 0.31.0",
- "emath 0.31.0",
- "epaint_default_fonts 0.31.0",
+ "ecolor 0.31.1",
+ "emath 0.31.1",
+ "epaint_default_fonts 0.31.1",
  "log",
  "nohash-hasher",
  "parking_lot",
@@ -4434,7 +4434,7 @@ checksum = "66f6ddac3e6ac6fd4c3d48bb8b1943472f8da0f43a4303bcd8a18aa594401c80"
 
 [[package]]
 name = "epaint_default_fonts"
-version = "0.31.0"
+version = "0.31.1"
 
 [[package]]
 name = "equator"
@@ -5586,7 +5586,7 @@ name = "hulk_widgets"
 version = "0.1.0"
 dependencies = [
  "communication",
- "egui 0.31.0",
+ "egui 0.31.1",
  "egui_extras",
  "nucleo-matcher",
 ]
