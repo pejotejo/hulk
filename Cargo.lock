@@ -1440,6 +1440,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_egui"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a3d58a8afdb6100bca50251043a85320391742cae125d559f6cca3a16b84cdd"
+dependencies = [
+ "bevy_app 0.16.1",
+ "bevy_derive 0.16.1",
+ "bevy_ecs 0.16.1",
+ "bevy_input 0.16.1",
+ "bevy_log 0.16.1",
+ "bevy_math 0.16.1",
+ "bevy_platform",
+ "bevy_reflect 0.16.1",
+ "bevy_time 0.16.1",
+ "bevy_window 0.16.1",
+ "bevy_winit 0.16.1",
+ "crossbeam-channel",
+ "egui 0.31.1",
+ "image",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
 name = "bevy_encase_derive"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1650,7 +1677,6 @@ version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd7fc4db9a1793ee71f79abb15e7a8fcfe4e2081e5f18ed91b802bf6cf30e088"
 dependencies = [
- "bevy_a11y 0.15.1",
  "bevy_app 0.15.1",
  "bevy_asset 0.15.1",
  "bevy_color 0.15.2",
@@ -1675,7 +1701,6 @@ dependencies = [
  "bevy_time 0.15.1",
  "bevy_transform 0.15.1",
  "bevy_utils 0.15.3",
- "bevy_window 0.15.1",
 ]
 
 [[package]]
@@ -1888,12 +1913,12 @@ dependencies = [
 
 [[package]]
 name = "bevy_panorbit_camera"
-version = "0.23.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e22224619230504b7a439ba05df41e4e364b848e1cf336c60bb9e44fd38c273"
+checksum = "ca6e15e297754d0bcb7665620c390c4f05665d4ac4ac91b4b5d3c66b9fe1f0e6"
 dependencies = [
- "bevy 0.15.1",
- "bevy_egui 0.33.0",
+ "bevy 0.16.1",
+ "bevy_egui 0.34.1",
 ]
 
 [[package]]
@@ -10354,6 +10379,7 @@ dependencies = [
  "argument_parsers",
  "ball_filter",
  "bevy 0.16.1",
+ "bevy_panorbit_camera",
  "bincode",
  "buffered_watch",
  "calibration",
