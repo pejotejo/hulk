@@ -50,7 +50,6 @@ members = [
   "crates/vision",
   "crates/walking_engine",
   "crates/zed", 
-  "crates/motion",
   "tools/annotato",
   "tools/camera_matrix_extractor",
   "tools/depp",
