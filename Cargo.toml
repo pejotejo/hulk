@@ -49,7 +49,8 @@ members = [
   "crates/types",
   "crates/vision",
   "crates/walking_engine",
-  "crates/zed",
+  "crates/zed", 
+  "crates/motion",
   "tools/annotato",
   "tools/camera_matrix_extractor",
   "tools/depp",
@@ -60,6 +61,7 @@ members = [
   "tools/twix",
   "tools/vista",
   "tools/widget_gallery",
+
 ]
 resolver = "2"
 # services are built independently by yocto
