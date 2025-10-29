@@ -6267,6 +6267,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "motion"
+version = "0.1.0"
+dependencies = [
+ "types",
+]
+
+[[package]]
 name = "motionfile"
 version = "0.1.0"
 dependencies = [
