@@ -87,12 +87,12 @@ impl<T> IntoIterator for LegJoints<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         [
-            self.hip_roll,
             self.hip_pitch,
+            self.hip_roll,
             self.hip_yaw,
             self.knee,
-            self.ankle_down,
             self.ankle_up,
+            self.ankle_down,
         ]
         .into_iter()
     }
