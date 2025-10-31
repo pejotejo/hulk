@@ -5858,6 +5858,8 @@ dependencies = [
  "axum",
  "booster",
  "bytes",
+ "color-eyre",
+ "futures",
  "log",
  "pyo3",
  "pyo3-async-runtimes",
