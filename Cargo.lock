@@ -4019,9 +4019,10 @@ dependencies = [
 [[package]]
 name = "ecolor"
 version = "0.31.1"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
 dependencies = [
  "bytemuck",
- "emath 0.31.1",
+ "emath 0.31.1 (git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e)",
  "serde",
 ]
 
@@ -4082,11 +4083,12 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.31.1"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
 dependencies = [
  "accesskit 0.17.1",
  "ahash",
  "bitflags 2.9.4",
- "emath 0.31.1",
+ "emath 0.31.1 (git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e)",
  "epaint 0.31.1",
  "log",
  "nohash-hasher",
@@ -4098,6 +4100,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.31.1"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -4208,16 +4211,17 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.31.1"
-dependencies = [
- "bytemuck",
- "serde",
-]
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e4cadcff7a5353ba72b7fea76bf2122b5ebdbc68e8155aa56dfdea90083fe1b"
 
 [[package]]
 name = "emath"
 version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e4cadcff7a5353ba72b7fea76bf2122b5ebdbc68e8155aa56dfdea90083fe1b"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
+dependencies = [
+ "bytemuck",
+ "serde",
+]
 
 [[package]]
 name = "encase"
@@ -4437,12 +4441,13 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.31.1"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
 dependencies = [
  "ab_glyph",
  "ahash",
  "bytemuck",
  "ecolor 0.31.1",
- "emath 0.31.1",
+ "emath 0.31.1 (git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e)",
  "epaint_default_fonts 0.31.1",
  "log",
  "nohash-hasher",
@@ -4460,6 +4465,7 @@ checksum = "66f6ddac3e6ac6fd4c3d48bb8b1943472f8da0f43a4303bcd8a18aa594401c80"
 [[package]]
 name = "epaint_default_fonts"
 version = "0.31.1"
+source = "git+https://github.com/HULKs/egui/?rev=7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e#7a3a88dcbb46a24d49a2388b2d9c8a6a273a9d4e"
 
 [[package]]
 name = "equator"
