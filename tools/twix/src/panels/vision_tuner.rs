@@ -5,7 +5,7 @@ use communication::messages::TextOrBinary;
 use eframe::egui::{Response, Slider, Ui, Widget};
 use log::error;
 use parameters::directory::Scope;
-use serde_json::{to_value, Value};
+use serde_json::to_value;
 
 use types::image_segments::Direction;
 
