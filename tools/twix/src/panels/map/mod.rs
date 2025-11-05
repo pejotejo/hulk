@@ -107,9 +107,7 @@ impl<'a> Panel<'a> for MapPanel {
         let feet_detection = EnabledLayer::new(context.nao.clone(), context.value, false);
         let ball_filter = EnabledLayer::new(context.nao.clone(), context.value, false);
         let obstacle_filter = EnabledLayer::new(context.nao.clone(), context.value, false);
-        let walking = EnabledLayer::new(context.nao.clone(), context.value, false);
         let localization = EnabledLayer::new(context.nao.clone(), context.value, false);
-        let planned_steps = EnabledLayer::new(context.nao.clone(), context.value, false);
 
         let field_dimensions = context.nao.subscribe_value("parameters.field_dimensions");
         let ground_to_field = context

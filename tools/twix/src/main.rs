@@ -46,7 +46,7 @@ use visuals::Visuals;
 
 use crate::{
     panel::PanelCreationContext,
-    panels::{MujocoSimulatorPanel, WalkPanel},
+    panels::{MujocoSimulatorPanel},
 };
 
 mod change_buffer;

@@ -56,7 +56,7 @@ impl RemotePanel {
 
     fn update_step(&self, step: Value) {
         self.nao.write(
-            "parameters.remote_controll_parameters.walk",
+            "parameters.remote_control_parameters.walk",
             TextOrBinary::Text(step),
         )
     }
