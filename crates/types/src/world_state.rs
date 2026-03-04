@@ -8,7 +8,7 @@ use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 
 use crate::{
     field_dimensions::Side, filtered_game_controller_state::FilteredGameControllerState,
-    primary_state::PrimaryState,
+    primary_state::PrimaryState, roles::Role,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PathSerialize, PathIntrospect)]
@@ -96,4 +96,5 @@ impl BallState {
 pub struct RobotState {
     pub ground_to_field: Option<Isometry2<Ground, Field>>,
     pub primary_state: PrimaryState,
+    pub role: Role,
 }

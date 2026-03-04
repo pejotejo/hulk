@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use context_attribute::context;
 use framework::MainOutput;
 use types::{
-    filtered_game_controller_state::FilteredGameControllerState,
-    primary_state::PrimaryState,
-    world_state::{BallState, RobotState, WorldState},
+    filtered_game_controller_state::FilteredGameControllerState, primary_state::PrimaryState, roles::Role, world_state::{BallState, RobotState, WorldState}
 };
 
 #[derive(Deserialize, Serialize)]
@@ -24,6 +22,7 @@ pub struct CycleContext {
         Input<Option<FilteredGameControllerState>, "filtered_game_controller_state?">,
     ground_to_field: Input<Option<Isometry2<Ground, Field>>, "ground_to_field?">,
     primary_state: Input<PrimaryState, "primary_state">,
+    role: Input<Role, "role">,
     rule_ball: Input<Option<BallState>, "rule_ball_state?">,
 }
 
@@ -42,6 +41,7 @@ impl WorldStateComposer {
         let robot: RobotState = RobotState {
             ground_to_field: context.ground_to_field.copied(),
             primary_state: *context.primary_state,
+            role: *context.role,
         };
 
         let world_state = WorldState {
