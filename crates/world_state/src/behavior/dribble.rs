@@ -54,7 +54,7 @@ pub fn execute(
             left_arm: ArmMotion::Swing,
             right_arm: ArmMotion::Swing,
         };
-        return Some(command);
+        return Some(command); // TODO
     }
 
     if let Some(FilteredGameControllerState {

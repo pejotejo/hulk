@@ -14,3 +14,4 @@ pub mod walk_to_ball;
 pub mod walk_to_kick_off;
 pub mod walk_to_penalty_kick;
 pub mod walk_to_pose;
+pub mod lost_ball;

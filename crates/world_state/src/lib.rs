@@ -3,6 +3,7 @@ pub mod ball_projector;
 pub mod ball_state_composer;
 pub mod behavior;
 pub mod camera_matrix_calculator;
+pub mod dribble_path_planner;
 pub mod fake_localization;
 pub mod game_controller_filter;
 pub mod game_controller_state_filter;

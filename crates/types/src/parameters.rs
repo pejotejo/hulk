@@ -10,7 +10,7 @@ use linear_algebra::{Point2, Vector2, Vector3};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 
 use crate::{
-    joints::{Joints, head::HeadJoints},
+    joints::{head::HeadJoints, Joints},
     motion_command::{KickVariant, MotionCommand, WalkSpeed},
     step::Step,
 };
@@ -37,6 +37,7 @@ pub struct WhistleDetectionParameters {
     Clone, Debug, Default, Deserialize, Serialize, PathSerialize, PathDeserialize, PathIntrospect,
 )]
 pub struct BehaviorParameters {
+    pub dribbling: DribblingParameters,
     pub injected_motion_command: Option<MotionCommand>,
     pub path_planning: PathPlanningParameters,
     pub remote_control: RemoteControlParameters,

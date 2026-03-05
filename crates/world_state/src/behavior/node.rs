@@ -1,24 +1,30 @@
 use color_eyre::Result;
+use linear_algebra::{Point2, point};
 use serde::{Deserialize, Serialize};
 
 use context_attribute::context;
-use coordinate_systems::Ground;
+use coordinate_systems::{Field, Ground};
 use framework::{AdditionalOutput, MainOutput};
 use types::{
     action::Action,
     ball_position::BallPosition,
+    dribble_path_plan::DribblePathPlan,
     field_dimensions::{FieldDimensions, Side},
     kick_decision::DecisionParameters,
     motion_command::{MotionCommand, WalkSpeed},
-    parameters::{BehaviorParameters, WalkSpeedParameters},
+    parameters::{
+        BehaviorParameters, InWalkKicksParameters, LostBallParameters, WalkSpeedParameters,
+    },
     path_obstacles::PathObstacle,
     primary_state::PrimaryState,
     world_state::WorldState,
 };
 
+use crate::behavior::lost_ball;
+
 use super::{
     defend::defend::{Defend, DefendMode},
-    finish,
+    dribble, finish,
     head::LookAction,
     initial, look_around, penalize, remote_control, safe, stand_during_penalty_kick, stand_up,
     walk_to_ball, walk_to_kick_off, walk_to_penalty_kick,
@@ -28,6 +34,7 @@ use super::{
 #[derive(Deserialize, Serialize)]
 pub struct Behavior {
     last_defender_mode: DefendMode,
+    last_known_ball_position: Point2<Field>,
 }
 
 #[context]
@@ -36,15 +43,18 @@ pub struct CreationContext {}
 #[context]
 pub struct CycleContext {
     ball_position: Input<Option<BallPosition<Ground>>, "ball_position?">,
+    dribble_path_plan: Input<Option<DribblePathPlan>, "dribble_path_plan?">,
     world_state: Input<WorldState, "world_state">,
 
     defend_walk_speed: Parameter<WalkSpeed, "walk_speed.defend">,
     field_dimensions: Parameter<FieldDimensions, "field_dimensions">,
-    kick_decision_parameters: Parameter<DecisionParameters, "kick_selector">,
+    in_walk_kicks: Parameter<InWalkKicksParameters, "in_walk_kicks">, // TODO: kommt durch kick_selector
+    kick_decision_parameters: Parameter<DecisionParameters, "kick_selector">, // TODO: kommt durch kick_selector
+    lost_ball_parameters: Parameter<LostBallParameters, "behavior.lost_ball">,
     parameters: Parameter<BehaviorParameters, "behavior">,
     walk_speed: Parameter<WalkSpeedParameters, "walk_speed">,
 
-    path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">, // TODO
+    path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">, // TODO: kommt durch path_planner
     active_action: AdditionalOutput<Action, "active_action">,
 
     last_motion_command: CyclerState<MotionCommand, "last_motion_command">,
@@ -60,6 +70,7 @@ impl Behavior {
     pub fn new(_context: CreationContext) -> Result<Self> {
         Ok(Self {
             last_defender_mode: DefendMode::Passive,
+            last_known_ball_position: point![0.0, 0.0],
         })
     }
 
@@ -181,6 +192,28 @@ impl Behavior {
                         world_state,
                         context.field_dimensions,
                         &context.world_state.robot.role,
+                    ),
+                    Action::Dribble => dribble::execute(
+                        world_state,
+                        &walk_path_planner,
+                        context.in_walk_kicks,
+                        &context.parameters.dribbling,
+                        context.dribble_path_plan.cloned(),
+                        context.walk_speed.dribble,
+                        context.parameters.dribbling.distance_to_be_aligned,
+                    ),
+
+                    Action::SearchForLostBall => lost_ball::execute(
+                        world_state,
+                        self.last_known_ball_position,
+                        &walk_path_planner,
+                        context.lost_ball_parameters,
+                        &mut context.path_obstacles_output,
+                        context.walk_speed.lost_ball,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
                     ),
 
                     Action::WalkToKickOff => walk_to_kick_off::execute(
