@@ -8,13 +8,16 @@ use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 
 use crate::{
     field_dimensions::Side, filtered_game_controller_state::FilteredGameControllerState,
-    obstacles::Obstacle, primary_state::PrimaryState, roles::Role, rule_obstacles::RuleObstacle,
+    kick_decision::KickDecision, obstacles::Obstacle, primary_state::PrimaryState, roles::Role,
+    rule_obstacles::RuleObstacle,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PathSerialize, PathIntrospect)]
 pub struct WorldState {
     pub ball: Option<BallState>,
     pub filtered_game_controller_state: Option<FilteredGameControllerState>,
+    pub instant_kick_decisions: Option<Vec<KickDecision>>,
+    pub kick_decisions: Option<Vec<KickDecision>>,
     pub obstacles: Vec<Obstacle>,
     pub position_of_interest: Point2<Ground>,
     pub robot: RobotState,
@@ -28,6 +31,8 @@ impl Default for WorldState {
         Self {
             ball: Default::default(),
             filtered_game_controller_state: Default::default(),
+            instant_kick_decisions: Default::default(),
+            kick_decisions: Default::default(),
             obstacles: Default::default(),
             position_of_interest: Point2::origin(),
             robot: Default::default(),

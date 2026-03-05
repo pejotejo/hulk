@@ -30,4 +30,6 @@ pub enum Action {
     StandDuringPenaltyKick,
     StandUp,
     WalkToBall,
+    WalkToKickOff,
+    WalkToPenaltyKick,
 }

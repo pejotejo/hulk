@@ -327,71 +327,71 @@ impl Behavior {
                     // Action::Calibrate => {
                         // calibrate::execute(world_state, *context.use_stand_head_unstiff_calibration)
                     // }
-                    Action::DefendGoal => defend.goal(
-                        &mut context.path_obstacles_output,
-                        *context.defend_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .defender_distance_to_be_aligned,
-                    ),
-                    Action::DefendKickOff => defend.kick_off(
-                        &mut context.path_obstacles_output,
-                        *context.defend_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .defender_distance_to_be_aligned,
-                    ),
-                    Action::DefendLeft => defend.left(
-                        &mut context.path_obstacles_output,
-                        *context.defend_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .defender_distance_to_be_aligned,
-                    ),
-                    Action::DefendRight => defend.right(
-                        &mut context.path_obstacles_output,
-                        *context.defend_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .defender_distance_to_be_aligned,
-                    ),
-                    Action::DefendPenaltyKick => defend.penalty_kick(
-                        &mut context.path_obstacles_output,
-                        *context.defend_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .defender_distance_to_be_aligned,
-                    ),
-                    Action::DefendOpponentCornerKick { side: Side::Left } => defend
-                        .opponent_corner_kick(
-                            &mut context.path_obstacles_output,
-                            *context.defend_walk_speed,
-                            Side::Left,
-                            context
-                                .parameters
-                                .walk_and_stand
-                                .defender_distance_to_be_aligned,
-                        ),
-                    Action::DefendOpponentCornerKick { side: Side::Right } => defend
-                        .opponent_corner_kick(
-                            &mut context.path_obstacles_output,
-                            *context.defend_walk_speed,
-                            Side::Right,
-                            context
-                                .parameters
-                                .walk_and_stand
-                                .defender_distance_to_be_aligned,
-                        ),
-                    Action::Stand => stand::execute(
-                        world_state,
-                        context.field_dimensions,
-                        &context.world_state.robot.role,
-                    ),
+                    // Action::DefendGoal => defend.goal(
+                        // &mut context.path_obstacles_output,
+                        // *context.defend_walk_speed,
+                        // context
+                            // .parameters
+                            // .walk_and_stand
+                            // .defender_distance_to_be_aligned,
+                    // ),
+                    // Action::DefendKickOff => defend.kick_off(
+                        // &mut context.path_obstacles_output,
+                        // *context.defend_walk_speed,
+                        // context
+                            // .parameters
+                            // .walk_and_stand
+                            // .defender_distance_to_be_aligned,
+                    // ),
+                    // Action::DefendLeft => defend.left(
+                        // &mut context.path_obstacles_output,
+                        // *context.defend_walk_speed,
+                        // context
+                            // .parameters
+                            // .walk_and_stand
+                            // .defender_distance_to_be_aligned,
+                    // ),
+                    // Action::DefendRight => defend.right(
+                        // &mut context.path_obstacles_output,
+                        // *context.defend_walk_speed,
+                        // context
+                            // .parameters
+                            // .walk_and_stand
+                            // .defender_distance_to_be_aligned,
+                    // ),
+                    // Action::DefendPenaltyKick => defend.penalty_kick(
+                        // &mut context.path_obstacles_output,
+                        // *context.defend_walk_speed,
+                        // context
+                            // .parameters
+                            // .walk_and_stand
+                            // .defender_distance_to_be_aligned,
+                    // ),
+                    // Action::DefendOpponentCornerKick { side: Side::Left } => defend
+                        // .opponent_corner_kick(
+                            // &mut context.path_obstacles_output,
+                            // *context.defend_walk_speed,
+                            // Side::Left,
+                            // context
+                                // .parameters
+                                // .walk_and_stand
+                                // .defender_distance_to_be_aligned,
+                        // ),
+                    // Action::DefendOpponentCornerKick { side: Side::Right } => defend
+                        // .opponent_corner_kick(
+                            // &mut context.path_obstacles_output,
+                            // *context.defend_walk_speed,
+                            // Side::Right,
+                            // context
+                                // .parameters
+                                // .walk_and_stand
+                                // .defender_distance_to_be_aligned,
+                        // ),
+                    // Action::Stand => stand::execute(
+                        // world_state,
+                        // context.field_dimensions,
+                        // &context.world_state.robot.role,
+                    // ),
                     Action::Dribble => dribble::execute(
                         world_state,
                         &walk_path_planner,
@@ -401,8 +401,8 @@ impl Behavior {
                         *context.dribble_walk_speed,
                         context.parameters.dribbling.distance_to_be_aligned,
                     ),
-                    Action::Jump => jump::execute(world_state),
-                    Action::PrepareJump => prepare_jump::execute(world_state),
+                    // Action::Jump => jump::execute(world_state),
+                    // Action::PrepareJump => prepare_jump::execute(world_state),
                     Action::Search => search::execute(
                         world_state,
                         &walk_path_planner,
@@ -501,31 +501,31 @@ impl Behavior {
                             .walk_and_stand
                             .normal_distance_to_be_aligned,
                     ),
-                    Action::WalkToKickOff => walk_to_kick_off::execute(
-                        world_state,
-                        &walk_and_stand,
-                        &look_action,
-                        &mut context.path_obstacles_output,
-                        context.parameters.role_positions.striker_kickoff_position,
-                        context.kick_decision_parameters.kick_off_angle,
-                        *context.walk_to_kickoff_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .normal_distance_to_be_aligned,
-                    ),
-                    Action::WalkToPenaltyKick => walk_to_penalty_kick::execute(
-                        world_state,
-                        &walk_and_stand,
-                        &look_action,
-                        &mut context.path_obstacles_output,
-                        context.field_dimensions,
-                        *context.walk_to_penalty_kick_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .normal_distance_to_be_aligned,
-                    ),
+                    //Action::WalkToKickOff => walk_to_kick_off::execute(
+                    //    world_state,
+                    //    &walk_and_stand,
+                    //    &look_action,
+                    //    &mut context.path_obstacles_output,
+                    //    context.parameters.role_positions.striker_kickoff_position,
+                    //    context.kick_decision_parameters.kick_off_angle,
+                    //    *context.walk_to_kickoff_walk_speed,
+                    //    context
+                    //        .parameters
+                    //        .walk_and_stand
+                    //        .normal_distance_to_be_aligned,
+                    //),
+                    //Action::WalkToPenaltyKick => walk_to_penalty_kick::execute(
+                    //    world_state,
+                    //    &walk_and_stand,
+                    //    &look_action,
+                    //    &mut context.path_obstacles_output,
+                    //    context.field_dimensions,
+                    //    *context.walk_to_penalty_kick_walk_speed,
+                    //    context
+                    //        .parameters
+                    //        .walk_and_stand
+                    //        .normal_distance_to_be_aligned,
+                    //),
                 }?;
                 Some((action, motion_command))
             })

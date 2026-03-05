@@ -1,4 +1,4 @@
-use color_eyre::Result;
+use color_eyre::{owo_colors::colors::Default, Result};
 use coordinate_systems::{Field, Ground};
 use linear_algebra::{Isometry2, Point2};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use context_attribute::context;
 use framework::MainOutput;
 use types::{
-    filtered_game_controller_state::FilteredGameControllerState, primary_state::PrimaryState, roles::Role, world_state::{BallState, RobotState, WorldState}
+    filtered_game_controller_state::FilteredGameControllerState,
+    primary_state::PrimaryState,
+    roles::Role,
+    world_state::{BallState, RobotState, WorldState},
 };
 
 #[derive(Deserialize, Serialize)]
@@ -21,6 +24,9 @@ pub struct CycleContext {
     filtered_game_controller_state:
         Input<Option<FilteredGameControllerState>, "filtered_game_controller_state?">,
     ground_to_field: Input<Option<Isometry2<Ground, Field>>, "ground_to_field?">,
+    //instant_kick_decisions: Input<Option<Vec<KickDecision>>, "instant_kick_decisions?">,
+
+    //kick_decisions: Input<Option<Vec<KickDecision>>, "kick_decisions?">,
     //obstacles: Input<Vec<Obstacle>, "obstacles">,
     position_of_interest: Input<Point2<Ground>, "position_of_interest">,
     primary_state: Input<PrimaryState, "primary_state">,
@@ -50,6 +56,8 @@ impl WorldStateComposer {
         let world_state = WorldState {
             ball: context.ball.copied(),
             filtered_game_controller_state: context.filtered_game_controller_state.cloned(),
+            instant_kick_decisions: Default::default(),
+            kick_decisions: Default::default(),
             obstacles: Default::default(),
             position_of_interest: *context.position_of_interest,
             robot,

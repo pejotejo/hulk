@@ -10,9 +10,8 @@ use linear_algebra::{Point2, Vector2, Vector3};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 
 use crate::{
-    joints::head::HeadJoints,
-    joints::Joints,
-    motion_command::{KickVariant, MotionCommand},
+    joints::{Joints, head::HeadJoints},
+    motion_command::{KickVariant, MotionCommand, WalkSpeed},
     step::Step,
 };
 
@@ -551,4 +550,15 @@ pub enum ImageReceiverInstance {
     #[default]
     Rectified,
     StereonetDepth,
+}
+
+pub struct WalkSpeedParameters {
+    pub defend: WalkSpeed,
+    pub dribble: WalkSpeed,
+    pub intercept_ball: WalkSpeed,
+    pub lost_ball: WalkSpeed,
+    pub search: WalkSpeed,
+    pub support: WalkSpeed,
+    pub walk_to_kickoff: WalkSpeed,
+    pub walk_to_penalty_kick: WalkSpeed,
 }

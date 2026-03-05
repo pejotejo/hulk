@@ -5,7 +5,15 @@ use context_attribute::context;
 use coordinate_systems::Ground;
 use framework::{AdditionalOutput, MainOutput};
 use types::{
-    action::Action, ball_position::BallPosition, field_dimensions::{FieldDimensions, Side}, motion_command::{MotionCommand, WalkSpeed}, parameters::BehaviorParameters, path_obstacles::PathObstacle, primary_state::PrimaryState, world_state::WorldState
+    action::Action,
+    ball_position::BallPosition,
+    field_dimensions::{FieldDimensions, Side},
+    kick_decision::DecisionParameters,
+    motion_command::{MotionCommand, WalkSpeed},
+    parameters::{BehaviorParameters, WalkSpeedParameters},
+    path_obstacles::PathObstacle,
+    primary_state::PrimaryState,
+    world_state::WorldState,
 };
 
 use super::{
@@ -13,7 +21,7 @@ use super::{
     finish,
     head::LookAction,
     initial, look_around, penalize, remote_control, safe, stand_during_penalty_kick, stand_up,
-    walk_to_ball,
+    walk_to_ball, walk_to_kick_off, walk_to_penalty_kick,
     walk_to_pose::{WalkAndStand, WalkPathPlanner},
 };
 
@@ -32,7 +40,9 @@ pub struct CycleContext {
 
     defend_walk_speed: Parameter<WalkSpeed, "walk_speed.defend">,
     field_dimensions: Parameter<FieldDimensions, "field_dimensions">,
+    kick_decision_parameters: Parameter<DecisionParameters, "kick_selector">,
     parameters: Parameter<BehaviorParameters, "behavior">,
+    walk_speed: Parameter<WalkSpeedParameters, "walk_speed">,
 
     path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">, // TODO
     active_action: AdditionalOutput<Action, "active_action">,
@@ -171,6 +181,32 @@ impl Behavior {
                         world_state,
                         context.field_dimensions,
                         &context.world_state.robot.role,
+                    ),
+
+                    Action::WalkToKickOff => walk_to_kick_off::execute(
+                        world_state,
+                        &walk_and_stand,
+                        &look_action,
+                        &mut context.path_obstacles_output,
+                        context.parameters.role_positions.striker_kickoff_position,
+                        context.kick_decision_parameters.kick_off_angle,
+                        context.walk_speed.walk_to_kickoff,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
+                    ),
+                    Action::WalkToPenaltyKick => walk_to_penalty_kick::execute(
+                        world_state,
+                        &walk_and_stand,
+                        &look_action,
+                        &mut context.path_obstacles_output,
+                        context.field_dimensions,
+                        context.walk_speed.walk_to_penalty_kick,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
                     ),
 
                     Action::WalkToBall => walk_to_ball::execute(
