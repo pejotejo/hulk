@@ -249,7 +249,7 @@ impl Behavior {
                 }?;
                 Some((action, motion_command))
             })
-            .unwrap_or_else(|| panic!("there has to be at least one action available",));
+            .unwrap_or_else(|| panic!("there has to be at least one action available, world_state: {world_state:#?}",));
         context.active_action.fill_if_subscribed(|| *action);
 
         *context.last_motion_command = motion_command.clone();

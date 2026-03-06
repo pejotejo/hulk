@@ -403,23 +403,23 @@ impl Behavior {
                     // ),
                     // Action::Jump => jump::execute(world_state),
                     // Action::PrepareJump => prepare_jump::execute(world_state),
-                    Action::Search => search::execute(
-                        world_state,
-                        &walk_path_planner,
-                        &walk_and_stand,
-                        context.field_dimensions,
-                        &context.parameters.search,
-                        &mut context.path_obstacles_output,
-                        self.previous_role,
-                        self.last_time_role_changed,
-                        self.last_known_ball_position,
-                        *context.search_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .normal_distance_to_be_aligned,
-                        context.cycle_time.start_time,
-                    ),
+                    // Action::Search => search::execute(
+                    //     world_state,
+                    //     &walk_path_planner,
+                    //     &walk_and_stand,
+                    //     context.field_dimensions,
+                    //     &context.parameters.search,
+                    //     &mut context.path_obstacles_output,
+                    //     self.previous_role,
+                    //     self.last_time_role_changed,
+                    //     self.last_known_ball_position,
+                    //     *context.search_walk_speed,
+                    //     context
+                    //         .parameters
+                    //         .walk_and_stand
+                    //         .normal_distance_to_be_aligned,
+                    //     context.cycle_time.start_time,
+                    // ),
                     // Action::SearchForLostBall => lost_ball::execute(
                     //     world_state,
                     //     self.last_known_ball_position,
