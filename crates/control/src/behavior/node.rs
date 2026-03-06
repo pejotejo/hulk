@@ -420,18 +420,18 @@ impl Behavior {
                             .normal_distance_to_be_aligned,
                         context.cycle_time.start_time,
                     ),
-                    Action::SearchForLostBall => lost_ball::execute(
-                        world_state,
-                        self.last_known_ball_position,
-                        &walk_path_planner,
-                        context.lost_ball_parameters,
-                        &mut context.path_obstacles_output,
-                        *context.lost_ball_walk_speed,
-                        context
-                            .parameters
-                            .walk_and_stand
-                            .normal_distance_to_be_aligned,
-                    ),
+                    // Action::SearchForLostBall => lost_ball::execute(
+                    //     world_state,
+                    //     self.last_known_ball_position,
+                    //     &walk_path_planner,
+                    //     context.lost_ball_parameters,
+                    //     &mut context.path_obstacles_output,
+                    //     *context.lost_ball_walk_speed,
+                    //     context
+                    //         .parameters
+                    //         .walk_and_stand
+                    //         .normal_distance_to_be_aligned,
+                    // ),
                     Action::SupportLeft => support::execute(
                         world_state,
                         context.field_dimensions,
