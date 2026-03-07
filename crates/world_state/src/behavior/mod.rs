@@ -12,6 +12,7 @@ pub mod safe;
 pub mod search;
 pub mod stand_during_penalty_kick;
 pub mod stand_up;
+pub mod support;
 pub mod walk_to_ball;
 pub mod walk_to_kick_off;
 pub mod walk_to_penalty_kick;

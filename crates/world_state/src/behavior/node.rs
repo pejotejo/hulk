@@ -1,5 +1,7 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use color_eyre::Result;
-use linear_algebra::{Point2, point};
+use linear_algebra::{point, Point2};
 use serde::{Deserialize, Serialize};
 
 use context_attribute::context;
@@ -8,6 +10,7 @@ use framework::{AdditionalOutput, MainOutput};
 use types::{
     action::Action,
     ball_position::BallPosition,
+    cycle_time::CycleTime,
     dribble_path_plan::DribblePathPlan,
     field_dimensions::{FieldDimensions, Side},
     kick_decision::DecisionParameters,
@@ -17,10 +20,11 @@ use types::{
     },
     path_obstacles::PathObstacle,
     primary_state::PrimaryState,
+    roles::Role,
     world_state::WorldState,
 };
 
-use crate::behavior::lost_ball;
+use crate::behavior::{lost_ball, search, support};
 
 use super::{
     defend::defend::{Defend, DefendMode},
@@ -33,8 +37,10 @@ use super::{
 
 #[derive(Deserialize, Serialize)]
 pub struct Behavior {
+    previous_role: Role,
     last_defender_mode: DefendMode,
     last_known_ball_position: Point2<Field>,
+    last_time_role_changed: SystemTime,
 }
 
 #[context]
@@ -43,6 +49,7 @@ pub struct CreationContext {}
 #[context]
 pub struct CycleContext {
     ball_position: Input<Option<BallPosition<Ground>>, "ball_position?">,
+    cycle_time: Input<CycleTime, "cycle_time">,
     dribble_path_plan: Input<Option<DribblePathPlan>, "dribble_path_plan?">,
     world_state: Input<WorldState, "world_state">,
 
@@ -71,6 +78,8 @@ impl Behavior {
         Ok(Self {
             last_defender_mode: DefendMode::Passive,
             last_known_ball_position: point![0.0, 0.0],
+            last_time_role_changed: UNIX_EPOCH,
+            previous_role: Role::Searcher,
         })
     }
 
@@ -202,7 +211,23 @@ impl Behavior {
                         context.walk_speed.dribble,
                         context.parameters.dribbling.distance_to_be_aligned,
                     ),
-
+                    Action::Search => search::execute(
+                        world_state,
+                        &walk_path_planner,
+                        &walk_and_stand,
+                        context.field_dimensions,
+                        &context.parameters.search,
+                        &mut context.path_obstacles_output,
+                        self.previous_role,
+                        self.last_time_role_changed,
+                        self.last_known_ball_position,
+                        context.walk_speed.search,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
+                        context.cycle_time.start_time,
+                    ),
                     Action::SearchForLostBall => lost_ball::execute(
                         world_state,
                         self.last_known_ball_position,
@@ -210,6 +235,53 @@ impl Behavior {
                         context.lost_ball_parameters,
                         &mut context.path_obstacles_output,
                         context.walk_speed.lost_ball,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
+                    ),
+                    Action::SupportRight => support::execute(
+                        world_state,
+                        context.field_dimensions,
+                        Some(Side::Right),
+                        context
+                            .parameters
+                            .role_positions
+                            .right_midfielder_distance_to_ball,
+                        context
+                            .parameters
+                            .role_positions
+                            .right_midfielder_maximum_x_in_ready_and_when_ball_is_not_free,
+                        context.parameters.role_positions.right_midfielder_minimum_x,
+                        &walk_and_stand,
+                        &look_action,
+                        &mut context.path_obstacles_output,
+                        context.walk_speed.support,
+                        context
+                            .parameters
+                            .walk_and_stand
+                            .normal_distance_to_be_aligned,
+                    ),
+                    Action::SupportStriker => support::execute(
+                        world_state,
+                        context.field_dimensions,
+                        None,
+                        context
+                            .parameters
+                            .role_positions
+                            .striker_supporter_distance_to_ball,
+                        context
+                            .parameters
+                            .role_positions
+                            .striker_supporter_maximum_x_in_ready_and_when_ball_is_not_free,
+                        context
+                            .parameters
+                            .role_positions
+                            .striker_supporter_minimum_x,
+                        &walk_and_stand,
+                        &look_action,
+                        &mut context.path_obstacles_output,
+                        context.walk_speed.support,
                         context
                             .parameters
                             .walk_and_stand
@@ -249,7 +321,11 @@ impl Behavior {
                 }?;
                 Some((action, motion_command))
             })
-            .unwrap_or_else(|| panic!("there has to be at least one action available, world_state: {world_state:#?}",));
+            .unwrap_or_else(|| {
+                panic!(
+                    "there has to be at least one action available, world_state: {world_state:#?}",
+                )
+            });
         context.active_action.fill_if_subscribed(|| *action);
 
         *context.last_motion_command = motion_command.clone();
