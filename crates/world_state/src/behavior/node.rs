@@ -5,12 +5,14 @@ use context_attribute::context;
 use coordinate_systems::Ground;
 use framework::{AdditionalOutput, MainOutput};
 use types::{
-    action::Action, ball_position::BallPosition, motion_command::MotionCommand,
-    parameters::BehaviorParameters, primary_state::PrimaryState, world_state::WorldState,
+    action::Action, ball_position::BallPosition, field_dimensions::FieldDimensions,
+    motion_command::MotionCommand, parameters::BehaviorParameters, path_obstacles::PathObstacle,
+    primary_state::PrimaryState, world_state::WorldState,
 };
 
 use crate::behavior::{
-    finish, initial, look_around, penalize, remote_control, safe, stand_up, walk_to_ball,
+    finish, initial, look_around, penalize, remote_control, safe, stand_up, walk_to_ball_two,
+    walk_to_pose::{WalkAndStand, WalkPathPlanner},
 };
 
 #[derive(Deserialize, Serialize)]
@@ -24,9 +26,11 @@ pub struct CycleContext {
     ball_position: Input<Option<BallPosition<Ground>>, "ball_position?">,
     world_state: Input<WorldState, "world_state">,
 
+    field_dimensions: Parameter<FieldDimensions, "field_dimensions">,
     parameters: Parameter<BehaviorParameters, "behavior">,
 
     active_action: AdditionalOutput<Action, "active_action">,
+    path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">,
 
     last_motion_command: CyclerState<MotionCommand, "last_motion_command">,
 }
@@ -52,7 +56,7 @@ impl Behavior {
         }
 
         let mut actions = vec![
-            Action::Safe,
+            // Action::Safe,
             Action::Finish,
             Action::Penalize,
             Action::Initial,
@@ -65,6 +69,20 @@ impl Behavior {
         if world_state.robot.primary_state == PrimaryState::Playing {
             actions.push(Action::WalkToBall);
         }
+
+        let walk_path_planner = WalkPathPlanner::new(
+            context.field_dimensions,
+            &world_state.obstacles,
+            &context.parameters.path_planning,
+            context.last_motion_command,
+        );
+
+        let walk_and_stand = WalkAndStand::new(
+            world_state,
+            &context.parameters.walk_and_stand,
+            &walk_path_planner,
+            context.last_motion_command,
+        );
 
         let (action, motion_command) = actions
             .iter()
@@ -79,9 +97,10 @@ impl Behavior {
                     Action::RemoteControl => {
                         remote_control::execute(&context.parameters.remote_control)
                     }
-                    Action::WalkToBall => walk_to_ball::execute(
+                    Action::WalkToBall => walk_to_ball_two::execute(
                         context.ball_position.copied(),
-                        context.parameters.walk_with_velocity.clone(),
+                        &mut context.path_obstacles_output,
+                        &walk_and_stand,
                     ),
                 }?;
                 Some((action, motion_command))

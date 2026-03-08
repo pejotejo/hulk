@@ -329,6 +329,29 @@
         "turn": 0.0
       },
       "enable": false
+    },
+    "walk_and_stand": {
+      "hysteresis": [0.1, 0.1],
+      "target_reached_thresholds": [0.02, 0.05],
+      "hybrid_align_distance": 0.95,
+      "normal_distance_to_be_aligned": 0.05,
+      "defender_distance_to_be_aligned": 1.05,
+      "defender_hysteresis": [0.5, 0.5],
+      "supporter_hysteresis": [0.5, 0.5]
+    },
+    "path_planning": {
+      "robot_radius_at_hip_height": 0.15,
+      "robot_radius_at_foot_height": 0.2,
+      "minimum_robot_radius_at_foot_height": 0.11,
+      "ball_obstacle_radius": 0.05,
+      "field_border_weight": 0.15,
+      "line_walking_speed": 0.25,
+      "arc_walking_speed": 0.2,
+      "rotation_penalty_factor": 0.4,
+      "half_rotation": {
+        "nanos": 0,
+        "secs": 3
+      }
     }
   },
   "field_dimensions": {

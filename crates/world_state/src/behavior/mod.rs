@@ -8,3 +8,4 @@ pub mod safe;
 pub mod stand_up;
 pub mod walk_to_ball;
 pub mod walk_to_pose;
+pub mod walk_to_ball_two;
