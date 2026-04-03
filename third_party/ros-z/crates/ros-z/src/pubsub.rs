@@ -25,7 +25,7 @@ use std::sync::Mutex;
 /// (synchronous) or [`async_publish`](ZPub::async_publish) (async).
 ///
 /// Create a publisher via [`ZNode::create_pub`](crate::node::ZNode::create_pub).
-pub struct ZPub<T: ZMessage, S: ZSerializer> {
+pub struct ZPub<T: ZMessage, S: ZSerializer = <T as ZMessage>::Serdes> {
     pub entity: EndpointEntity,
     // TODO: replace this with the sample sn
     sn: AtomicUsize,
@@ -886,7 +886,7 @@ where
     }
 }
 
-pub struct ZSub<T: ZMessage, Q, S: ZDeserializer> {
+pub struct ZSub<T: ZMessage, Q = Sample, S: ZDeserializer = <T as ZMessage>::Serdes> {
     pub entity: EndpointEntity,
     pub queue: Option<Arc<BoundedQueue<Q>>>,
     _inner: zenoh::pubsub::Subscriber<()>,
