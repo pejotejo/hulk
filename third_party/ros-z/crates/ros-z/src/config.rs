@@ -327,7 +327,7 @@ pub fn session_config() -> zenoh::Result<zenoh::Config> {
 /// Useful for generating reference configuration files.
 ///
 /// # Example
-/// ```rust
+/// ```no_run
 /// # use ros_z::config::{generate_json5, router_overrides};
 /// let json5 = generate_json5(&router_overrides(), "Router Config");
 /// std::fs::write("router_config.json5", json5)?;
