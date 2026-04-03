@@ -1037,10 +1037,7 @@ fn generate_schema_base_field_type_tokens(
             let nested_type =
                 generate_base_type_tokens_with_context(field_type, source_package, ctx);
             quote! {
-                ::ros_z::dynamic::FieldType::Message(
-                    <#nested_type as ::ros_z::MessageTypeInfo>::message_schema()
-                        .expect("generated nested message schema must be available")
-                )
+                <#nested_type as ::ros_z::FieldTypeInfo>::field_type()
             }
         }
     }
@@ -1588,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_schema_for_nested_message_uses_message_schema_hook() {
+    fn test_generate_schema_for_nested_message_uses_field_type_info_hook() {
         let msg = ResolvedMessage {
             parsed: ParsedMessage {
                 name: "StampedPoint".to_string(),
@@ -1619,9 +1616,8 @@ mod tests {
         let tokens = generate_message_impl_with_context(&msg, &ctx).unwrap();
         let code = tokens.to_string();
 
-        assert!(code.contains("FieldType :: Message"));
-        assert!(code.contains("MessageTypeInfo"));
-        assert!(code.contains("message_schema"));
+        assert!(code.contains("FieldTypeInfo"));
+        assert!(code.contains("field_type"));
         assert!(code.contains("geometry_msgs :: Point"));
     }
 }

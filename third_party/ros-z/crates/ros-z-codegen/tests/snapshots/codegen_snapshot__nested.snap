@@ -1,5 +1,6 @@
 ---
 source: crates/ros-z-codegen/tests/codegen_snapshot.rs
+assertion_line: 89
 expression: format_tokens(tokens)
 ---
 #[derive(Debug, Clone, Default, ::serde::Serialize, ::serde::Deserialize)]
@@ -37,10 +38,7 @@ impl ::ros_z::MessageTypeInfo for Nested {
                         )
                         .field(
                             "basic_types_value",
-                            ::ros_z::dynamic::FieldType::Message(
-                                <super::test_interface_files::BasicTypes as ::ros_z::MessageTypeInfo>::message_schema()
-                                    .expect("generated nested message schema must be available"),
-                            ),
+                            <super::test_interface_files::BasicTypes as ::ros_z::FieldTypeInfo>::field_type(),
                         )
                         .build()
                         .expect("generated message schema must be valid")

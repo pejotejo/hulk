@@ -27,6 +27,7 @@
 - [Cross-Distro Bridge](./chapters/bridge.md)
 - [Message Generation](./chapters/message_generation.md)
   - [Custom Messages](./chapters/custom_messages.md)
+  - [Schema Generation And Discovery](./chapters/schema_generation.md)
   - [Protobuf Serialization](./chapters/protobuf.md)
 
 # Tools

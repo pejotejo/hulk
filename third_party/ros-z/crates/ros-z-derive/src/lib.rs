@@ -265,6 +265,12 @@ fn impl_message_type_info_for_struct(
 
             #message_type_hash_impl
 
+            fn field_type() -> ::ros_z::dynamic::FieldType {
+                ::ros_z::dynamic::FieldType::Message(
+                    <Self as ::ros_z::ExtendedMessageTypeInfo>::extended_message_schema(),
+                )
+            }
+
             fn message_schema() -> Option<::std::sync::Arc<::ros_z::dynamic::MessageSchema>> {
                 let schema = <Self as ::ros_z::ExtendedMessageTypeInfo>::extended_message_schema();
                 if schema.uses_extended_types() {
@@ -362,6 +368,10 @@ fn impl_message_type_info_for_enum(
             }
 
             #message_type_hash_impl
+
+            fn field_type() -> ::ros_z::dynamic::FieldType {
+                ::ros_z::dynamic::FieldType::Enum(Self::__ros_z_enum_schema())
+            }
 
             fn message_schema() -> Option<::std::sync::Arc<::ros_z::dynamic::MessageSchema>> {
                 None
@@ -606,10 +616,7 @@ fn generate_standard_message_field_type_tokens(ty: &Type) -> syn::Result<TokenSt
                     })
                 }
                 _ => Ok(quote! {
-                    ::ros_z::dynamic::FieldType::Message(
-                        <#ty as ::ros_z::MessageTypeInfo>::message_schema()
-                            .expect("derived nested message schema must be available")
-                    )
+                    <#ty as ::ros_z::FieldTypeInfo>::field_type()
                 }),
             }
         }
@@ -737,7 +744,7 @@ fn generate_message_field_type_tokens(ty: &Type) -> syn::Result<TokenStream2> {
                     })
                 }
                 _ => Ok(quote! {
-                    <#ty as ::ros_z::ExtendedMessageTypeInfo>::extended_field_type()
+                    <#ty as ::ros_z::FieldTypeInfo>::field_type()
                 }),
             }
         }

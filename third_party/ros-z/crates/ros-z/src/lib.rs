@@ -69,6 +69,8 @@ pub mod graph;
 pub mod lifecycle;
 /// Typed message wrappers and helpers.
 pub mod msg;
+#[cfg(feature = "nalgebra")]
+mod nalgebra_field_type_info;
 /// ROS 2 node creation and management.
 pub mod node;
 /// Convenience re-exports for common ros-z types.
@@ -107,7 +109,7 @@ pub mod parameter;
 pub use attachment::GidArray;
 pub use entity::{TypeHash, TypeInfo};
 pub use extended_schema::ExtendedMessageTypeInfo;
-pub use ros_msg::{ActionTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo};
+pub use ros_msg::{ActionTypeInfo, FieldTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo};
 pub use ros_z_derive::{ExtendedMessageTypeInfo, MessageTypeInfo};
 pub use zbuf::ZBuf;
 pub use zenoh::Result;

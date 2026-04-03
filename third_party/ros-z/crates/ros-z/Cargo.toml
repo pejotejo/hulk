@@ -29,6 +29,7 @@ event-listener = { workspace = true }
 slab = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+nalgebra = { workspace = true, features = ["serde-serialize"], optional = true }
 dashmap = "5.5"
 prost = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
@@ -71,6 +72,7 @@ python = ["pyo3"]
 rmw = []
 # Dynamic message schema loading from .msg files (optional)
 dynamic-schema-loader = ["ros-z-codegen"]
+nalgebra = ["dep:nalgebra"]
 
 # Key expression format selection
 # rmw-zenoh: Compatible with rmw_zenoh_cpp (domain/topic/type/hash format)

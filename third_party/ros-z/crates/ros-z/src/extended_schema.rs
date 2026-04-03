@@ -10,7 +10,7 @@ pub trait ExtendedMessageTypeInfo: crate::MessageTypeInfo {
     fn extended_message_schema() -> Arc<MessageSchema>;
 
     fn extended_field_type() -> FieldType {
-        FieldType::Message(Self::extended_message_schema())
+        <Self as crate::MessageTypeInfo>::field_type()
     }
 }
 

@@ -1,5 +1,9 @@
 use crate::entity::{TypeHash, TypeInfo};
 
+pub trait FieldTypeInfo {
+    fn field_type() -> crate::dynamic::FieldType;
+}
+
 /// Trait for ROS messages that provides message metadata
 /// This trait supports both compile-time (static) and runtime (dynamic) type information.
 ///
@@ -47,6 +51,14 @@ pub trait MessageTypeInfo {
         None
     }
 
+    /// Returns the runtime field shape used when this type is nested inside another schema.
+    fn field_type() -> crate::dynamic::FieldType {
+        crate::dynamic::FieldType::Message(
+            Self::message_schema()
+                .expect("nested message fields require MessageTypeInfo::message_schema()"),
+        )
+    }
+
     /// Register any non-standard schema discovery hooks for this type on the node.
     ///
     /// Core ros-z keeps the standard type-description path separate, so the
@@ -88,6 +100,12 @@ pub trait MessageTypeInfo {
 
 /// Backward compatibility alias for existing code
 pub trait WithTypeInfo: MessageTypeInfo {}
+
+impl<T: MessageTypeInfo> FieldTypeInfo for T {
+    fn field_type() -> crate::dynamic::FieldType {
+        <T as MessageTypeInfo>::field_type()
+    }
+}
 
 /// Trait for ROS service types that provides service-level type information
 /// This trait supports both compile-time (static) and runtime (dynamic) type information.
