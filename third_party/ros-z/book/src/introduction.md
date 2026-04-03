@@ -96,10 +96,10 @@ ros-z covers the core ROS 2 communication primitives. The following are **not ye
 
 | Feature | Status | Alternative |
 |---------|--------|-------------|
-| **Parameter server** | Not implemented | Use environment variables or custom config |
-| **Lifecycle nodes** | Not implemented | Manage node state in application code |
+| **Parameter server** | ROS 2-compatible node parameters available | Use custom config for richer robotics overlays |
+| **Lifecycle nodes** | Implemented | Use lifecycle support where it fits your application |
 | **tf2** | Not implemented | Publish transforms directly on topics |
-| **Simulation time** | Not implemented | Use wall clock |
+| **Simulation time** | Implemented | Use `ZClock` and simulated time helpers |
 | **rosbag2 recording** | Not implemented | Record via native Zenoh tools or `ros2 bag` on the ROS 2 side |
 | **wait_for_service / wait_for_action** | Not implemented | Poll manually with a retry loop |
 | **Component nodes** | Not implemented | Run as separate executables |

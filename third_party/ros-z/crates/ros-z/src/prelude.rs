@@ -40,8 +40,8 @@ pub use crate::action::ZAction;
 
 /// Trait bounds for custom messages and services.
 pub use crate::{
-    ExtendedMessageTypeInfo,
     ros_msg::{ActionTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo},
+    ExtendedMessageTypeInfo,
 };
 
 /// Type identity helpers for custom message definitions.
@@ -66,4 +66,4 @@ pub use crate::lifecycle::{
 };
 
 /// Time and clock support.
-pub use crate::time::{ClockKind, ZClock, ZDuration, ZInterval, ZSleep, ZTime};
+pub use crate::time::{ClockKind, ZClock, ZDuration, ZInterval, ZSleep, ZTime, ZTimer};

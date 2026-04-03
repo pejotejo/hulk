@@ -272,6 +272,15 @@ impl ZClock {
             next_deadline: self.now().saturating_add(period),
         }
     }
+
+    /// Create a reusable timer tied to this clock.
+    ///
+    /// Unlike [`ZInterval`], a [`ZTimer`] exposes convenience methods to inspect
+    /// and reset its cadence, making it a better fit for long-lived robotics
+    /// tasks that need explicit periodic scheduling.
+    pub fn timer(&self, period: impl Into<ZDuration>) -> ZTimer {
+        ZTimer::new(self.clone(), period)
+    }
 }
 
 pub struct ZSleep(Pin<Box<dyn Future<Output = ()> + Send>>);
@@ -294,6 +303,48 @@ pub struct ZInterval {
 }
 
 impl ZInterval {
+    pub async fn tick(&mut self) -> ZTime {
+        self.clock.sleep_until(self.next_deadline).await;
+        let fired_at = self.next_deadline;
+        self.next_deadline = self.next_deadline.saturating_add(self.period);
+        fired_at
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ZTimer {
+    clock: ZClock,
+    period: ZDuration,
+    next_deadline: ZTime,
+}
+
+impl ZTimer {
+    pub fn new(clock: ZClock, period: impl Into<ZDuration>) -> Self {
+        let period = period.into();
+        Self {
+            next_deadline: clock.now().saturating_add(period),
+            clock,
+            period,
+        }
+    }
+
+    pub fn period(&self) -> ZDuration {
+        self.period
+    }
+
+    pub fn deadline(&self) -> ZTime {
+        self.next_deadline
+    }
+
+    pub fn reset(&mut self) {
+        self.next_deadline = self.clock.now().saturating_add(self.period);
+    }
+
+    pub fn set_period(&mut self, period: impl Into<ZDuration>) {
+        self.period = period.into();
+        self.reset();
+    }
+
     pub async fn tick(&mut self) -> ZTime {
         self.clock.sleep_until(self.next_deadline).await;
         let fired_at = self.next_deadline;
@@ -337,6 +388,32 @@ mod tests {
 
         clock.advance(ZDuration::from_millis(10)).unwrap();
         waiter.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn simulated_ztimer_follows_simulated_time() {
+        let clock = ZClock::simulated(ZTime::zero());
+        let mut timer = clock.timer(ZDuration::from_millis(10));
+
+        let waiter = tokio::spawn(async move { timer.tick().await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        clock.advance(ZDuration::from_millis(10)).unwrap();
+        let tick = waiter.await.unwrap();
+        assert_eq!(tick, ZTime::from_unix_nanos(10_000_000));
+    }
+
+    #[test]
+    fn ztimer_reset_uses_current_clock_time() {
+        let clock = ZClock::simulated(ZTime::zero());
+        let mut timer = clock.timer(ZDuration::from_secs(2));
+        assert_eq!(timer.deadline(), ZTime::from_unix_nanos(2_000_000_000));
+
+        clock.advance(ZDuration::from_secs(5)).unwrap();
+        timer.reset();
+
+        assert_eq!(timer.deadline(), ZTime::from_unix_nanos(7_000_000_000));
     }
 
     #[tokio::test]

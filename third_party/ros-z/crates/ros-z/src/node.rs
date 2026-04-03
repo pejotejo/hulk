@@ -471,6 +471,14 @@ impl ZNode {
         ZCacheBuilder::new(sub_builder, capacity)
     }
 
+    /// Create a periodic timer tied to this node's clock.
+    ///
+    /// This is a thin convenience wrapper around [`crate::time::ZClock::timer`]
+    /// so node code can express periodic work directly from the node handle.
+    pub fn create_timer(&self, period: impl Into<crate::time::ZDuration>) -> crate::time::ZTimer {
+        self.clock.timer(period)
+    }
+
     /// Create a service for the given service name
     /// If T is a tuple (Req, Resp) where both implement WithTypeInfo, type information will be automatically populated
     ///

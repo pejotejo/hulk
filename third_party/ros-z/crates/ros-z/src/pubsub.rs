@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::{marker::PhantomData, sync::Arc};
 
+use std::future::Future;
+
 use tracing::{debug, trace, warn};
 use zenoh::liveliness::LivelinessToken;
 use zenoh::{Result, Session, Wait, sample::Sample};
@@ -308,6 +310,18 @@ where
     T: ZMessage + 'static,
     S: for<'a> ZSerializer<Input<'a> = &'a T> + 'static,
 {
+    /// Return the number of matched subscribers currently visible in the graph.
+    pub fn subscriber_count(&self) -> usize {
+        self.graph
+            .get_entities_by_topic(EntityKind::Subscription, &self.entity.topic)
+            .len()
+    }
+
+    /// Return whether at least one subscriber is currently matched.
+    pub fn has_subscribers(&self) -> bool {
+        self.subscriber_count() > 0
+    }
+
     /// Wait until at least `count` subscribers are matched on this publisher's topic,
     /// or until `timeout` elapses.
     ///
@@ -448,6 +462,24 @@ where
         put_builder.wait()
     }
 
+    /// Publish a lazily constructed message only when a subscriber is matched.
+    ///
+    /// The closure is only executed when at least one subscriber is currently
+    /// visible in the ROS graph, which makes this useful for expensive debug
+    /// data that should be computed on demand.
+    pub fn publish_if_subscribed<F>(&self, build: F) -> Result<bool>
+    where
+        F: FnOnce() -> T,
+    {
+        if !self.has_subscribers() {
+            return Ok(false);
+        }
+
+        let message = build();
+        self.publish(&message)?;
+        Ok(true)
+    }
+
     /// Serialize and publish `msg` on the topic. Yields to the async executor
     /// while the put is in progress, making this safe to call from within
     /// a Tokio task without blocking the thread.
@@ -480,6 +512,21 @@ where
             put_builder = put_builder.attachment(self.new_attachment());
         }
         put_builder.await
+    }
+
+    /// Async variant of [`publish_if_subscribed`](Self::publish_if_subscribed).
+    pub async fn async_publish_if_subscribed<F, Fut>(&self, build: F) -> Result<bool>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = T>,
+    {
+        if !self.has_subscribers() {
+            return Ok(false);
+        }
+
+        let message = build().await;
+        self.async_publish(&message).await?;
+        Ok(true)
     }
 
     /// Publish pre-serialized data directly
@@ -1006,6 +1053,18 @@ where
     T: ZMessage,
     S: for<'a> ZDeserializer<Input<'a> = &'a [u8]>,
 {
+    /// Return the number of matched publishers currently visible in the graph.
+    pub fn publisher_count(&self) -> usize {
+        self.graph
+            .get_entities_by_topic(EntityKind::Publisher, &self.entity.topic)
+            .len()
+    }
+
+    /// Return whether at least one publisher is currently matched.
+    pub fn has_publishers(&self) -> bool {
+        self.publisher_count() > 0
+    }
+
     /// Receive and deserialize the next message (aligned with ROS behavior)
     #[tracing::instrument(name = "recv", skip(self), fields(
         topic = %self.entity.topic,
