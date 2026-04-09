@@ -13,6 +13,7 @@ path = "src/main.rs"
 clap = { workspace = true, features = ["derive"] }
 color-eyre = "0.6"
 ros-z = { path = "../ros-z", features = ["ros2dds"] }
+ros-z-config = { path = "../ros-z-config" }
 ros-z-protocol = { path = "../ros-z-protocol", features = ["ros2dds"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

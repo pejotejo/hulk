@@ -3181,6 +3181,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "ros-z",
+ "ros-z-config",
  "ros-z-protocol",
  "serde",
  "serde_json",

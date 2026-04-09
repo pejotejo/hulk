@@ -36,6 +36,14 @@ pub enum ParameterValueTypeArg {
     NotSet,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
+pub enum ConfigScopeArg {
+    Default,
+    Location,
+    #[default]
+    Robot,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "rosz")]
 #[command(about = "Scriptable command-line companion to ros-z")]
@@ -90,6 +98,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ParamCommand,
     },
+    /// Remote config operations
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,11 +135,77 @@ pub enum ParamCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Fetch the full effective config snapshot for a node
+    Snapshot {
+        #[arg(long)]
+        node: String,
+    },
+    /// Fetch one effective config value by path
+    Get {
+        path: String,
+        #[arg(long)]
+        node: String,
+    },
+    /// Set one JSON value at a config path
+    Set {
+        path: String,
+        value: String,
+        #[arg(long)]
+        node: String,
+        #[arg(long, value_enum, default_value_t = ConfigScopeArg::Robot)]
+        scope: ConfigScopeArg,
+        #[arg(long)]
+        expected_revision: Option<u64>,
+    },
+    /// Reset one scope-local override
+    Reset {
+        path: String,
+        #[arg(long)]
+        node: String,
+        #[arg(long, value_enum, default_value_t = ConfigScopeArg::Robot)]
+        scope: ConfigScopeArg,
+        #[arg(long)]
+        expected_revision: Option<u64>,
+    },
+    /// Reload config overlays from disk
+    Reload {
+        #[arg(long)]
+        node: String,
+    },
+    /// List metadata-backed config paths
+    Paths {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        prefix: Vec<String>,
+        #[arg(long)]
+        depth: Option<u64>,
+        #[arg(long)]
+        writable_only: bool,
+    },
+    /// Fetch config metadata for one or more paths
+    Metadata {
+        #[arg(long)]
+        node: String,
+        paths: Vec<String>,
+    },
+    /// Watch config change events for a node
+    Watch {
+        #[arg(long)]
+        node: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::{Backend, Cli, Command, ListTarget, ParamCommand, ParameterValueTypeArg};
+    use super::{
+        Backend, Cli, Command, ConfigCommand, ConfigScopeArg, ListTarget, ParamCommand,
+        ParameterValueTypeArg,
+    };
 
     #[test]
     fn parses_echo_command_with_defaults() {
@@ -208,6 +287,103 @@ mod tests {
                     assert!(atomic);
                 }
                 other => panic!("unexpected param command: {other:?}"),
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_config_set_with_scope_and_revision() {
+        let cli = Cli::parse_from([
+            "rosz",
+            "config",
+            "set",
+            "threshold",
+            "0.72",
+            "--node",
+            "/vision/ball_detector",
+            "--scope",
+            "location",
+            "--expected-revision",
+            "4",
+        ]);
+
+        match cli.command {
+            Command::Config { command } => match command {
+                ConfigCommand::Set {
+                    path,
+                    value,
+                    node,
+                    scope,
+                    expected_revision,
+                } => {
+                    assert_eq!(path, "threshold");
+                    assert_eq!(value, "0.72");
+                    assert_eq!(node, "/vision/ball_detector");
+                    assert_eq!(scope, ConfigScopeArg::Location);
+                    assert_eq!(expected_revision, Some(4));
+                }
+                other => panic!("unexpected config command: {other:?}"),
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_config_paths_with_repeated_prefixes() {
+        let cli = Cli::parse_from([
+            "rosz",
+            "config",
+            "paths",
+            "--node",
+            "/motion/walk_publisher",
+            "--prefix",
+            "linear",
+            "--prefix",
+            "publish",
+            "--depth",
+            "1",
+            "--writable-only",
+        ]);
+
+        match cli.command {
+            Command::Config { command } => match command {
+                ConfigCommand::Paths {
+                    node,
+                    prefix,
+                    depth,
+                    writable_only,
+                } => {
+                    assert_eq!(node, "/motion/walk_publisher");
+                    assert_eq!(prefix, vec!["linear", "publish"]);
+                    assert_eq!(depth, Some(1));
+                    assert!(writable_only);
+                }
+                other => panic!("unexpected config command: {other:?}"),
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_config_metadata_with_variadic_paths() {
+        let cli = Cli::parse_from([
+            "rosz",
+            "config",
+            "metadata",
+            "--node",
+            "/motion/walk_publisher",
+            "linear_x",
+            "publish_hz",
+        ]);
+
+        match cli.command {
+            Command::Config { command } => match command {
+                ConfigCommand::Metadata { node, paths } => {
+                    assert_eq!(node, "/motion/walk_publisher");
+                    assert_eq!(paths, vec!["linear_x", "publish_hz"]);
+                }
+                other => panic!("unexpected config command: {other:?}"),
             },
             other => panic!("unexpected command: {other:?}"),
         }

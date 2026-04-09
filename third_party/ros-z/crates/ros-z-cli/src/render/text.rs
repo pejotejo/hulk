@@ -2,6 +2,10 @@ use ros_z::graph::GraphSnapshot;
 
 use crate::{
     model::{
+        config::{
+            ConfigMetadataFieldView, ConfigMetadataView, ConfigMutationView, ConfigPathsView,
+            ConfigSnapshotView, ConfigValueView, ConfigWatchEventView,
+        },
         echo::EchoHeader,
         graph::{NodeSummary, ServiceSummary, TopicSummary},
         info::{EndpointSummary, NamedType, NodeInfo, ServiceInfo, TopicInfo},
@@ -10,6 +14,8 @@ use crate::{
     },
     support::nodes::fully_qualified_node_name,
 };
+
+use color_eyre::eyre::Result;
 
 pub fn print_topic_summaries(topics: &[TopicSummary]) {
     let name_width = column_width(topics.iter().map(|topic| topic.name.as_str()));
@@ -153,6 +159,100 @@ pub fn print_parameter_set(view: &ParameterSetView) {
     println!("Updated: {}", view.successful);
 }
 
+pub fn print_config_snapshot(view: &ConfigSnapshotView) -> Result<()> {
+    println!("Node: {}", view.node);
+    println!("Revision: {}", view.revision);
+    println!(
+        "Committed At: {}.{:09}",
+        view.committed_at.sec, view.committed_at.nanosec
+    );
+    println!("Location: {}", view.location);
+    println!("Robot: {}", view.robot);
+    println!("Effective:");
+    println!("{}", serde_json::to_string_pretty(&view.effective)?);
+    print_overlay_summary("Default Overlay", &view.overlays.default)?;
+    print_overlay_summary("Location Overlay", &view.overlays.location)?;
+    print_overlay_summary("Robot Overlay", &view.overlays.robot)?;
+    Ok(())
+}
+
+pub fn print_config_value(view: &ConfigValueView) -> Result<()> {
+    println!("Node: {}", view.node);
+    println!("Path: {}", view.path);
+    println!("Revision: {}", view.revision);
+    println!("Source Scope: {}", view.effective_source_scope);
+    println!("Value: {}", serde_json::to_string(&view.value)?);
+    Ok(())
+}
+
+pub fn print_config_mutation(view: &ConfigMutationView) {
+    println!("Node: {}", view.node);
+    println!("Operation: {}", view.operation);
+    if let Some(path) = &view.path {
+        println!("Path: {path}");
+    }
+    if let Some(scope) = &view.target_scope {
+        println!("Target Scope: {scope}");
+    }
+    println!("Committed Revision: {}", view.committed_revision);
+    println!("Successful: {}", view.successful);
+    if view.changed_paths.is_empty() {
+        println!("Changed Paths: 0");
+    } else {
+        println!("Changed Paths ({})", view.changed_paths.len());
+        for path in &view.changed_paths {
+            println!("{path}");
+        }
+    }
+}
+
+pub fn print_config_paths(view: &ConfigPathsView) {
+    println!("Node: {}", view.node);
+    println!("Revision: {}", view.revision);
+    println!("Depth: {}", view.depth);
+    println!("Writable Only: {}", view.writable_only);
+    if !view.prefixes.is_empty() {
+        println!("Prefixes: {}", view.prefixes.join(", "));
+    }
+    if view.paths.is_empty() {
+        println!("Paths: 0");
+        return;
+    }
+
+    println!("Paths ({})", view.paths.len());
+    for path in &view.paths {
+        println!("{path}");
+    }
+}
+
+pub fn print_config_metadata(view: &ConfigMetadataView) {
+    println!("Node: {}", view.node);
+    println!("Revision: {}", view.revision);
+    if !view.requested_paths.is_empty() {
+        println!("Requested Paths: {}", view.requested_paths.join(", "));
+    }
+    if view.metadata.is_empty() {
+        println!("Metadata: 0");
+        return;
+    }
+
+    println!("Metadata ({})", view.metadata.len());
+    for field in &view.metadata {
+        print_config_metadata_field(field);
+    }
+}
+
+pub fn print_config_watch_event(view: &ConfigWatchEventView) {
+    println!(
+        "config {} rev {} -> {} source={} paths={}",
+        view.node,
+        view.previous_revision,
+        view.revision,
+        view.source,
+        view.changed_paths.join(", ")
+    );
+}
+
 pub fn print_echo_header(header: &EchoHeader) {
     println!("Topic: {}", header.topic);
     println!("Type: {}", header.type_name);
@@ -223,4 +323,46 @@ fn print_named_type_section(label: &str, entries: &[NamedType]) {
 
 fn column_width<'a>(values: impl Iterator<Item = &'a str>) -> usize {
     values.map(str::len).max().unwrap_or(0)
+}
+
+fn print_config_metadata_field(field: &ConfigMetadataFieldView) {
+    println!(
+        "{}  type={} writable={} source={}",
+        field.path, field.type_name, field.writable, field.effective_source_scope
+    );
+    if !field.description.is_empty() {
+        println!("  doc: {}", field.description);
+    }
+    if !field.allowed_scopes.is_empty() {
+        println!("  scopes: {}", field.allowed_scopes.join(", "));
+    }
+    if field.min.is_some() || field.max.is_some() {
+        println!(
+            "  range: {}..{}",
+            field
+                .min
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-inf".to_string()),
+            field
+                .max
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "+inf".to_string())
+        );
+    }
+}
+
+fn print_overlay_summary(label: &str, value: &serde_json::Value) -> Result<()> {
+    let pretty = serde_json::to_string_pretty(value)?;
+    let line_count = pretty.lines().count();
+    if pretty.len() <= 400 && line_count <= 12 {
+        println!("{label}:");
+        println!("{pretty}");
+    } else {
+        println!(
+            "{label}: large JSON overlay ({} bytes, {} lines, use --json for full content)",
+            pretty.len(),
+            line_count
+        );
+    }
+    Ok(())
 }

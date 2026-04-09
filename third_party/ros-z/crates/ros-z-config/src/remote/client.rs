@@ -1,8 +1,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use ros_z::{
-    Builder,
-    ServiceTypeInfo,
+    Builder, ServiceTypeInfo,
     msg::{ZMessage, ZService},
     node::ZNode,
     pubsub::ZSub,
@@ -13,15 +12,14 @@ use ros_z::{
 use crate::{
     ConfigError, ConfigScope,
     remote::types::{
-        GetNodeConfigMetadataRequest, GetNodeConfigMetadataResponse,
-        GetNodeConfigMetadataSrv, GetNodeConfigSnapshotRequest, GetNodeConfigSnapshotResponse,
-        GetNodeConfigSnapshotSrv, GetNodeConfigValueRequest, GetNodeConfigValueResponse,
-        GetNodeConfigValueSrv, ListNodeConfigPathsRequest, ListNodeConfigPathsResponse,
-        ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigWriteJson, ReloadNodeConfigRequest,
-        ReloadNodeConfigResponse, ReloadNodeConfigSrv, ResetNodeConfigRequest,
-        ResetNodeConfigResponse, ResetNodeConfigSrv, SetNodeConfigAtomicallyRequest,
-        SetNodeConfigAtomicallyResponse, SetNodeConfigAtomicallySrv, SetNodeConfigRequest,
-        SetNodeConfigResponse, SetNodeConfigSrv,
+        GetNodeConfigMetadataRequest, GetNodeConfigMetadataResponse, GetNodeConfigMetadataSrv,
+        GetNodeConfigSnapshotRequest, GetNodeConfigSnapshotResponse, GetNodeConfigSnapshotSrv,
+        GetNodeConfigValueRequest, GetNodeConfigValueResponse, GetNodeConfigValueSrv,
+        ListNodeConfigPathsRequest, ListNodeConfigPathsResponse, ListNodeConfigPathsSrv,
+        NodeConfigEvent, NodeConfigWriteJson, ReloadNodeConfigRequest, ReloadNodeConfigResponse,
+        ReloadNodeConfigSrv, ResetNodeConfigRequest, ResetNodeConfigResponse, ResetNodeConfigSrv,
+        SetNodeConfigAtomicallyRequest, SetNodeConfigAtomicallyResponse,
+        SetNodeConfigAtomicallySrv, SetNodeConfigRequest, SetNodeConfigResponse, SetNodeConfigSrv,
     },
 };
 
@@ -258,14 +256,16 @@ mod tests {
     fn builds_absolute_service_and_event_names() {
         let ctx = ZContextBuilder::default().build().expect("build ctx");
         let node = Arc::new(ctx.create_node("tester").build().expect("build node"));
-        let client =
-            RemoteConfigClient::new(node, "/vision/ball_detector").expect("build client");
+        let client = RemoteConfigClient::new(node, "/vision/ball_detector").expect("build client");
 
         assert_eq!(
             client.service_name("get_snapshot"),
             "/vision/ball_detector/config/get_snapshot"
         );
-        assert_eq!(client.service_name("set"), "/vision/ball_detector/config/set");
+        assert_eq!(
+            client.service_name("set"),
+            "/vision/ball_detector/config/set"
+        );
         assert_eq!(client.events_topic(), "/vision/ball_detector/config/events");
     }
 }

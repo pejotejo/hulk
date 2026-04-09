@@ -21,6 +21,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::List { target } => commands::list::run(&app, output_mode, target).await,
         Command::Watch => commands::watch::run(&app, output_mode).await,
         Command::Graph => commands::graph::run(&app, output_mode).await,
+        Command::Config { command } => commands::config::run(&app, output_mode, command).await,
         Command::Echo {
             topic,
             count,

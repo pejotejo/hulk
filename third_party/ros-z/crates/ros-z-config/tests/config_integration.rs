@@ -1,14 +1,14 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
     sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
 };
 
 use ros_z::{Builder, context::ZContextBuilder};
 use ros_z_config::{
     ConfigMetadata, ConfigScope, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv,
-    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigExt, NodeConfigEvent,
+    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigExt,
     RemoteConfigClient, SetNodeConfigSrv,
 };
 use serde::{Deserialize, Serialize};
@@ -267,7 +267,12 @@ async fn metadata_local_and_remote_work_when_enabled() -> TestResult {
 
     let remote_metadata = remote_client.get_metadata(Vec::new()).await?;
     assert!(remote_metadata.success);
-    assert!(remote_metadata.metadata.iter().any(|entry| entry.path == "linear_x"));
+    assert!(
+        remote_metadata
+            .metadata
+            .iter()
+            .any(|entry| entry.path == "linear_x")
+    );
 
     Ok(())
 }
@@ -288,11 +293,8 @@ async fn remote_client_round_trips_and_receives_events() -> TestResult {
         .build()?;
     let _config = server_node.bind_config::<VisionConfig>()?;
 
-    let client_node = std::sync::Arc::new(
-        ctx.create_node("tester")
-            .with_namespace("tools")
-            .build()?,
-    );
+    let client_node =
+        std::sync::Arc::new(ctx.create_node("tester").with_namespace("tools").build()?);
     let client = RemoteConfigClient::new(client_node, "/motion/walk_publisher")?;
 
     let snapshot = client.get_snapshot().await?;

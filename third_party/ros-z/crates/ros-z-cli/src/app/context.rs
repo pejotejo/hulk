@@ -12,6 +12,7 @@ use ros_z::{
     node::ZNode,
     parameter::{ParameterClient, ParameterTarget},
 };
+use ros_z_config::RemoteConfigClient;
 
 use crate::{
     cli::Backend,
@@ -109,6 +110,10 @@ impl AppContext {
 
     pub fn parameter_client(&self, target: ParameterTarget) -> Result<ParameterClient> {
         ParameterClient::new(Arc::clone(&self.node), target).map_err(display_error)
+    }
+
+    pub fn config_client(&self, target_fqn: &str) -> Result<RemoteConfigClient> {
+        RemoteConfigClient::new(Arc::clone(&self.node), target_fqn).map_err(display_error)
     }
 
     pub fn shutdown(&self) -> Result<()> {
