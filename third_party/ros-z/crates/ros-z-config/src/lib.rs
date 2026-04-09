@@ -163,6 +163,7 @@ pub use bootstrap::{BootstrapFile, ConfigFilePatterns, NodeConfigPaths, Resolved
 pub use error::{ConfigError, Result};
 pub use metadata::{ConfigFieldMetadata, ConfigMetadata};
 pub use node_config::{ConfigJsonWrite, NodeConfig, NodeConfigExt, ValidateHook};
+pub use remote::RemoteConfigClient;
 pub use remote::types::*;
 pub use ros_z_derive::ConfigMetadata;
 pub use scope::ConfigScope;

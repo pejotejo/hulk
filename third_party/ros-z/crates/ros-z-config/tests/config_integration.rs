@@ -1,13 +1,15 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 use ros_z::{Builder, context::ZContextBuilder};
 use ros_z_config::{
     ConfigMetadata, ConfigScope, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv,
-    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigExt, SetNodeConfigSrv,
+    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigExt, NodeConfigEvent,
+    RemoteConfigClient, SetNodeConfigSrv,
 };
 use serde::{Deserialize, Serialize};
 
@@ -252,6 +254,72 @@ async fn metadata_local_and_remote_work_when_enabled() -> TestResult {
     assert!(meta_response.success);
     assert_eq!(meta_response.metadata.len(), 1);
     assert_eq!(meta_response.metadata[0].path, "linear_x");
+
+    let remote_client_node = std::sync::Arc::new(
+        ctx.create_node("tester_remote_client")
+            .with_namespace("tools")
+            .build()?,
+    );
+    let remote_client = RemoteConfigClient::new(remote_client_node, "/motion/walk_publisher")?;
+    let remote_paths = remote_client.list_paths(Vec::new(), 0, false).await?;
+    assert!(remote_paths.success);
+    assert!(remote_paths.paths.contains(&"linear_x".to_string()));
+
+    let remote_metadata = remote_client.get_metadata(Vec::new()).await?;
+    assert!(remote_metadata.success);
+    assert!(remote_metadata.metadata.iter().any(|entry| entry.path == "linear_x"));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn remote_client_round_trips_and_receives_events() -> TestResult {
+    let root = temp_config_root();
+    write_file(
+        &root,
+        "default/motion/walk_publisher.json5",
+        r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
+    );
+
+    let ctx = build_ctx(&root, "remote-client")?;
+    let server_node = ctx
+        .create_node("walk_publisher")
+        .with_namespace("motion")
+        .build()?;
+    let _config = server_node.bind_config::<VisionConfig>()?;
+
+    let client_node = std::sync::Arc::new(
+        ctx.create_node("tester")
+            .with_namespace("tools")
+            .build()?,
+    );
+    let client = RemoteConfigClient::new(client_node, "/motion/walk_publisher")?;
+
+    let snapshot = client.get_snapshot().await?;
+    assert!(snapshot.success);
+    assert!(snapshot.value_json.contains("threshold"));
+
+    let value = client.get_value("threshold").await?;
+    assert!(value.success);
+    assert_eq!(value.value_json, "0.5");
+
+    let events = client.subscribe_events()?;
+    assert!(events.wait_for_publisher(1, Duration::from_secs(5)).await);
+
+    let set = client
+        .set_json(
+            "threshold",
+            &serde_json::json!(0.9),
+            ConfigScope::Robot,
+            None,
+        )
+        .await?;
+    assert!(set.success);
+    assert!(set.changed_paths.contains(&"threshold".to_string()));
+
+    let event: NodeConfigEvent = events.async_recv().await?;
+    assert_eq!(event.node_fqn, "/motion/walk_publisher");
+    assert!(event.changed_paths.contains(&"threshold".to_string()));
 
     Ok(())
 }
