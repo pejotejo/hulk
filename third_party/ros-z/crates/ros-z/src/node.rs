@@ -447,7 +447,7 @@ impl ZNode {
     /// ```rust,ignore
     /// use ros_z::prelude::*;
     /// use ros_z_msgs::sensor_msgs::Imu;
-    /// use std::time::{Duration, SystemTime};
+    /// use std::time::Duration;
     ///
     /// let ctx = ZContextBuilder::default().build()?;
     /// let node = ctx.create_node("cache_demo").build()?;
@@ -456,7 +456,7 @@ impl ZNode {
     /// let cache = node.create_cache::<Imu>("/imu/data", 200).build()?;
     ///
     /// // Pull messages from the last 100 ms
-    /// let now = SystemTime::now();
+    /// let now = ZTime::from_wallclock(std::time::SystemTime::now());
     /// let msgs = cache.get_interval(now - Duration::from_millis(100), now);
     /// ```
     pub fn create_cache<T>(&self, topic: &str, capacity: usize) -> ZCacheBuilder<T, T::Serdes>

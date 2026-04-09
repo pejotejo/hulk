@@ -71,6 +71,7 @@ This example demonstrates subscribing to messages from a topic. The subscriber r
 - **Testable Design**: Returns received messages for verification
 - **Bounded Operation**: Optional `max_count` and `timeout` parameters
 - **QoS Configuration**: Uses `KeepLast(10)` for message buffering
+- **Time Context**: `*_with_metadata()` returns `Received<T>` with `transport_time` and `source_time`
 
 **Running the subscriber:**
 
@@ -126,8 +127,9 @@ let subscriber = node
     .create_sub::<RosString>("topic_name")
     .build()?;
 
-while let Ok(msg) = subscriber.recv() {
-    println!("Received: {}", msg.data);
+while let Ok(received) = subscriber.recv_with_metadata() {
+    println!("Received: {}", received.data);
+    println!("transport={:?} source={:?}", received.transport_time, received.source_time);
 }
 ```
 

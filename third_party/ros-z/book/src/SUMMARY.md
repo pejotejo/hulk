@@ -8,6 +8,7 @@
 
 # Core Concepts
 
+- [Time Model](./chapters/time.md)
 - [Pub/Sub](./chapters/pubsub.md)
 - [Services](./chapters/services.md)
 - [Actions](./chapters/actions.md)

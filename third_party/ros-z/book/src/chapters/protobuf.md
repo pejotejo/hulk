@@ -214,8 +214,15 @@ let sub = node
     .build()?;
 
 loop {
-    let msg = sub.recv()?;
-    println!("Received: x={}, y={}, z={}", msg.x, msg.y, msg.z);
+    let received = sub.recv_with_metadata()?;
+    println!(
+        "Received: x={}, y={}, z={} (transport={:?}, source={:?})",
+        received.x,
+        received.y,
+        received.z,
+        received.transport_time,
+        received.source_time,
+    );
 }
 ```
 

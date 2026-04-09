@@ -68,9 +68,10 @@ let pub = node.create_pub::<Vector3>("vector")
 zpub.publish(&msg)?;
 zpub.async_publish(&msg).await?;
 
-// Subscribers: sync and async receiving
-let msg = zsub.recv()?;
-let msg = zsub.async_recv().await?;
+// Subscribers: sync and async receiving with metadata
+let received = zsub.recv_with_metadata()?;
+let received = zsub.async_recv_with_metadata().await?;
+println!("transport={:?} source={:?}", received.transport_time, received.source_time);
 ```
 
 **Callback or Polling Style for Subscribers:**
@@ -85,7 +86,7 @@ let sub = node.create_sub::<RosString>("topic")
 // Polling style - receive messages on demand
 let sub = node.create_sub::<RosString>("topic").build()?;
 while let Ok(msg) = sub.recv() {
-    println!("Received: {}", msg);
+    println!("Received: {}", msg.data);
 }
 ```
 
@@ -99,7 +100,7 @@ ros-z covers the core ROS 2 communication primitives. The following are **not ye
 | **Parameter server** | ROS 2-compatible node parameters available | Use custom config for richer robotics overlays |
 | **Lifecycle nodes** | Implemented | Use lifecycle support where it fits your application |
 | **tf2** | Not implemented | Publish transforms directly on topics |
-| **Simulation time** | Implemented | Use `ZClock` and simulated time helpers |
+| **Logical time** | Implemented | Use `ZClock` wallclock/logical helpers |
 | **rosbag2 recording** | Not implemented | Record via native Zenoh tools or `ros2 bag` on the ROS 2 side |
 | **wait_for_service / wait_for_action** | Not implemented | Poll manually with a retry loop |
 | **Component nodes** | Not implemented | Run as separate executables |
