@@ -83,6 +83,16 @@ pub fn derive_into_py_message(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Derive macro for generating config field metadata.
+#[proc_macro_derive(ConfigMetadata, attributes(config))]
+pub fn derive_config_metadata(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match impl_config_metadata(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
 fn impl_message_type_info(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
@@ -473,7 +483,7 @@ fn impl_from_py_message(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .iter()
         .map(|f| {
             let field_name = f.ident.as_ref().unwrap();
-            let field_name_str = field_name_to_attr(field_name);
+            let field_name_str = field_ident_to_config_path(field_name);
             let field_type = &f.ty;
             let use_zbuf = parse_ros_msg_args(&f.attrs)?.zbuf;
             generate_field_extraction(field_name, &field_name_str, field_type, use_zbuf)
@@ -516,7 +526,7 @@ fn impl_into_py_message(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .iter()
         .map(|f| {
             let field_name = f.ident.as_ref().unwrap();
-            let field_name_str = field_name_to_attr(field_name);
+            let field_name_str = field_ident_to_config_path(field_name);
             let field_type = &f.ty;
             let use_zbuf = parse_ros_msg_args(&f.attrs)?.zbuf;
             generate_field_construction(field_name, &field_name_str, field_type, use_zbuf)
@@ -546,7 +556,7 @@ fn generate_standard_message_field_schema_tokens(field: &syn::Field) -> syn::Res
         .ident
         .as_ref()
         .ok_or_else(|| syn::Error::new_spanned(field, "named fields are required"))?;
-    let field_name_str = field_name_to_attr(field_name);
+    let field_name_str = field_ident_to_config_path(field_name);
     let field_type = generate_standard_message_field_type_tokens(&field.ty)?;
 
     Ok(quote! {
@@ -660,7 +670,7 @@ fn generate_message_field_schema_tokens(field: &syn::Field) -> syn::Result<Token
         .ident
         .as_ref()
         .ok_or_else(|| syn::Error::new_spanned(field, "named fields are required"))?;
-    let field_name_str = field_name_to_attr(field_name);
+    let field_name_str = field_ident_to_config_path(field_name);
     let field_type = generate_message_field_type_tokens(&field.ty)?;
 
     Ok(quote! {
@@ -1177,11 +1187,223 @@ fn is_u8_type(ty: &Type) -> bool {
     false
 }
 
-fn field_name_to_attr(ident: &Ident) -> String {
+fn field_ident_to_config_path(ident: &Ident) -> String {
     let name = ident.to_string();
     if let Some(stripped) = name.strip_prefix("r#") {
         stripped.to_string()
     } else {
         name
+    }
+}
+
+fn impl_config_metadata(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+
+    let Data::Struct(data) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            input,
+            "ConfigMetadata derive only supports structs",
+        ));
+    };
+
+    let Fields::Named(fields) = &data.fields else {
+        return Err(syn::Error::new_spanned(
+            input,
+            "ConfigMetadata derive only supports named structs",
+        ));
+    };
+
+    let field_entries = fields
+        .named
+        .iter()
+        .map(generate_config_metadata_field_tokens)
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(quote! {
+        impl ::ros_z_config::ConfigMetadata for #name {
+            fn config_metadata() -> ::std::vec::Vec<::ros_z_config::ConfigFieldMetadata> {
+                let mut fields = ::std::vec::Vec::new();
+                #(#field_entries)*
+                fields
+            }
+        }
+    })
+}
+
+fn generate_config_metadata_field_tokens(field: &syn::Field) -> syn::Result<TokenStream2> {
+    let field_ident = field
+        .ident
+        .as_ref()
+        .ok_or_else(|| syn::Error::new_spanned(field, "expected named field"))?;
+    let field_name = field_ident_to_config_path(field_ident);
+    let field_name_lit = LitStr::new(&field_name, field_ident.span());
+    let field_ty = &field.ty;
+
+    let attrs = parse_config_attrs(&field.attrs)?;
+    let description = attrs
+        .doc
+        .unwrap_or_else(|| extract_doc_comment(&field.attrs));
+    let description_lit = LitStr::new(&description, field_ident.span());
+    let writable = attrs.writable;
+    let min_tokens = option_f64_tokens(attrs.min);
+    let max_tokens = option_f64_tokens(attrs.max);
+
+    if is_leaf_config_type(field_ty) {
+        Ok(quote! {
+            fields.push(::ros_z_config::ConfigFieldMetadata {
+                path: #field_name_lit.to_string(),
+                type_name: ::std::string::String::from(::std::any::type_name::<#field_ty>()),
+                description: #description_lit.to_string(),
+                writable: #writable,
+                allowed_scopes: ::std::vec![
+                    ::ros_z_config::ConfigScope::Default,
+                    ::ros_z_config::ConfigScope::Location,
+                    ::ros_z_config::ConfigScope::Robot,
+                ],
+                min: #min_tokens,
+                max: #max_tokens,
+            });
+        })
+    } else {
+        Ok(quote! {
+            fields.extend(<#field_ty as ::ros_z_config::ConfigMetadata>::config_metadata_prefixed(#field_name_lit));
+        })
+    }
+}
+
+#[derive(Default)]
+struct ConfigAttrs {
+    doc: Option<String>,
+    writable: bool,
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
+fn parse_config_attrs(attrs: &[Attribute]) -> syn::Result<ConfigAttrs> {
+    let mut parsed = ConfigAttrs {
+        writable: true,
+        ..ConfigAttrs::default()
+    };
+
+    for attr in attrs {
+        if !attr.path().is_ident("config") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("doc") {
+                let value = meta.value()?.parse::<LitStr>()?;
+                parsed.doc = Some(value.value());
+                return Ok(());
+            }
+
+            if meta.path.is_ident("writable") {
+                let value = meta.value()?.parse::<Expr>()?;
+                parsed.writable = parse_bool_expr(&value)?;
+                return Ok(());
+            }
+
+            if meta.path.is_ident("min") {
+                let value = meta.value()?.parse::<Expr>()?;
+                parsed.min = Some(parse_f64_expr(&value)?);
+                return Ok(());
+            }
+
+            if meta.path.is_ident("max") {
+                let value = meta.value()?.parse::<Expr>()?;
+                parsed.max = Some(parse_f64_expr(&value)?);
+                return Ok(());
+            }
+
+            Err(meta
+                .error("unsupported config attribute, expected one of: doc, writable, min, max"))
+        })?;
+    }
+
+    Ok(parsed)
+}
+
+fn extract_doc_comment(attrs: &[Attribute]) -> String {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            syn::Meta::NameValue(meta) => match &meta.value {
+                Expr::Lit(expr) => match &expr.lit {
+                    syn::Lit::Str(value) => Some(value.value().trim().to_string()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn parse_bool_expr(expr: &Expr) -> syn::Result<bool> {
+    match expr {
+        Expr::Lit(expr_lit) => match &expr_lit.lit {
+            syn::Lit::Bool(value) => Ok(value.value),
+            _ => Err(syn::Error::new_spanned(expr, "expected boolean literal")),
+        },
+        _ => Err(syn::Error::new_spanned(expr, "expected boolean literal")),
+    }
+}
+
+fn parse_f64_expr(expr: &Expr) -> syn::Result<f64> {
+    match expr {
+        Expr::Lit(expr_lit) => match &expr_lit.lit {
+            syn::Lit::Float(value) => value.base10_parse::<f64>(),
+            syn::Lit::Int(value) => value.base10_parse::<f64>(),
+            _ => Err(syn::Error::new_spanned(expr, "expected numeric literal")),
+        },
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
+            Ok(-parse_f64_expr(&unary.expr)?)
+        }
+        _ => Err(syn::Error::new_spanned(expr, "expected numeric literal")),
+    }
+}
+
+fn option_f64_tokens(value: Option<f64>) -> TokenStream2 {
+    match value {
+        Some(value) => quote!(::std::option::Option::Some(#value)),
+        None => quote!(::std::option::Option::None),
+    }
+}
+
+fn is_leaf_config_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => {
+            let Some(last) = type_path.path.segments.last() else {
+                return true;
+            };
+            matches!(
+                last.ident.to_string().as_str(),
+                "bool"
+                    | "String"
+                    | "str"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "usize"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "isize"
+                    | "f32"
+                    | "f64"
+                    | "Option"
+                    | "Vec"
+                    | "HashMap"
+                    | "BTreeMap"
+                    | "PathBuf"
+            )
+        }
+        Type::Array(_) => true,
+        _ => true,
     }
 }

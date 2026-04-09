@@ -9,6 +9,7 @@ use crate::{
     Builder, ServiceTypeInfo, WithTypeInfo,
     action::{client::ZActionClientBuilder, server::ZActionServerBuilder},
     cache::ZCacheBuilder,
+    context::RuntimeConfigInputs,
     context::{GlobalCounter, RemapRules},
     dynamic::{
         DiscoveredTopicSchema, DynPubBuilder, DynSubBuilder, DynamicMessage, DynamicSerdeCdrSerdes,
@@ -48,6 +49,8 @@ pub struct ZNode {
     pub(crate) clock: crate::time::ZClock,
     pub(crate) shm_config: Option<Arc<crate::shm::ShmConfig>>,
     pub(crate) keyexpr_format: ros_z_protocol::KeyExprFormat,
+    runtime_config_inputs: RuntimeConfigInputs,
+    config_binding_state: Arc<parking_lot::Mutex<bool>>,
     /// Optional type description service for this node.
     /// Enabled via `ZNodeBuilder::with_type_description_service()`.
     /// The service uses callback mode and requires no background task.
@@ -80,6 +83,7 @@ pub struct ZNodeBuilder {
     pub(crate) clock: crate::time::ZClock,
     pub(crate) shm_config: Option<Arc<crate::shm::ShmConfig>>,
     pub(crate) keyexpr_format: ros_z_protocol::KeyExprFormat,
+    pub(crate) runtime_config_inputs: RuntimeConfigInputs,
     /// Whether to enable the type description service for this node.
     pub(crate) enable_type_desc_service: bool,
     /// Whether to enable the extended type description service for this node.
@@ -304,6 +308,8 @@ impl Builder for ZNodeBuilder {
             clock: self.clock,
             shm_config: self.shm_config,
             keyexpr_format: self.keyexpr_format,
+            runtime_config_inputs: self.runtime_config_inputs,
+            config_binding_state: Arc::new(parking_lot::Mutex::new(false)),
             type_desc_service,
             extended_type_desc_service,
             parameter_service,
@@ -775,6 +781,17 @@ impl ZNode {
     /// Get a reference to the underlying Zenoh session.
     pub fn session(&self) -> &Arc<Session> {
         &self.session
+    }
+
+    /// Access config-related startup inputs inherited from the context.
+    pub fn runtime_config_inputs(&self) -> &RuntimeConfigInputs {
+        &self.runtime_config_inputs
+    }
+
+    /// Internal coordination state used by external configuration subsystems.
+    #[doc(hidden)]
+    pub fn config_binding_state(&self) -> &Arc<parking_lot::Mutex<bool>> {
+        &self.config_binding_state
     }
 
     /// Access this node's clock.

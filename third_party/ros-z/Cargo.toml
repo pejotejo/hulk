@@ -8,6 +8,7 @@ homepage = "https://github.com/ZettaScaleLabs/ros-z"
 resolver = "2"
 members = [
   "crates/ros-z",
+  "crates/ros-z-config",
   "crates/ros-z-cdr",
   "crates/ros-z-codegen",
   "crates/ros-z-derive",
@@ -31,6 +32,7 @@ default-members = ["crates/ros-z", "crates/ros-z-codegen"]
 [workspace.dependencies]
 # Workspace members
 ros-z = { version = "*", path = "crates/ros-z" }
+ros-z-config = { version = "*", path = "crates/ros-z-config" }
 ros-z-codegen = { version = "*", path = "crates/ros-z-codegen" }
 ros-z-protocol = { version = "*", path = "crates/ros-z-protocol" }
 rmw-zenoh-rs = { version = "*", path = "crates/rmw-zenoh-rs" }

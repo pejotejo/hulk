@@ -40,8 +40,16 @@ fn publisher_and_subscriber_expose_match_counts() {
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
-        assert!(publisher.wait_for_subscription(1, Duration::from_secs(5)).await);
-        assert!(subscriber.wait_for_publisher(1, Duration::from_secs(5)).await);
+        assert!(
+            publisher
+                .wait_for_subscription(1, Duration::from_secs(5))
+                .await
+        );
+        assert!(
+            subscriber
+                .wait_for_publisher(1, Duration::from_secs(5))
+                .await
+        );
     });
 
     assert!(publisher.has_subscribers());
@@ -83,8 +91,16 @@ fn publish_if_subscribed_only_builds_when_needed() {
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
-        assert!(publisher.wait_for_subscription(1, Duration::from_secs(5)).await);
-        assert!(subscriber.wait_for_publisher(1, Duration::from_secs(5)).await);
+        assert!(
+            publisher
+                .wait_for_subscription(1, Duration::from_secs(5))
+                .await
+        );
+        assert!(
+            subscriber
+                .wait_for_publisher(1, Duration::from_secs(5))
+                .await
+        );
     });
 
     let result = publisher

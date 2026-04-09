@@ -3209,6 +3209,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ros-z-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "json5",
+ "parking_lot",
+ "ros-z",
+ "ros-z-derive",
+ "ros-z-msgs",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zenoh",
+]
+
+[[package]]
 name = "ros-z-console"
 version = "0.1.0"
 dependencies = [

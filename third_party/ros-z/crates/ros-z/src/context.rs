@@ -23,6 +23,18 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
+/// Config-related startup inputs carried from the context builder into nodes.
+///
+/// These are intentionally plain values so external crates can build richer
+/// subsystems on top of `ros-z` without creating dependency cycles back into the
+/// core crate.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeConfigInputs {
+    pub config_root: Option<PathBuf>,
+    pub location: Option<String>,
+    pub robot: Option<String>,
+}
+
 /// Remapping rules for ROS names
 #[derive(Debug, Clone, Default)]
 pub struct RemapRules {
@@ -78,6 +90,7 @@ pub struct ZContextBuilder {
     shm_config: Option<Arc<crate::shm::ShmConfig>>,
     keyexpr_format: ros_z_protocol::KeyExprFormat,
     clock: Option<ZClock>,
+    runtime_config_inputs: RuntimeConfigInputs,
 }
 
 impl ZContextBuilder {
@@ -296,6 +309,24 @@ impl ZContextBuilder {
     /// Inject a pre-configured clock.
     pub fn with_clock(mut self, clock: ZClock) -> Self {
         self.clock = Some(clock);
+        self
+    }
+
+    /// Set the config root used by external configuration subsystems.
+    pub fn with_config_root<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.runtime_config_inputs.config_root = Some(path.into());
+        self
+    }
+
+    /// Set the active deployment location used by external configuration subsystems.
+    pub fn with_location<S: Into<String>>(mut self, location: S) -> Self {
+        self.runtime_config_inputs.location = Some(location.into());
+        self
+    }
+
+    /// Set the active robot identity used by external configuration subsystems.
+    pub fn with_robot<S: Into<String>>(mut self, robot: S) -> Self {
+        self.runtime_config_inputs.robot = Some(robot.into());
         self
     }
 
@@ -544,6 +575,7 @@ impl Builder for ZContextBuilder {
             shm_config: builder.shm_config,
             keyexpr_format: builder.keyexpr_format,
             clock: builder.clock.unwrap_or_default(),
+            runtime_config_inputs: builder.runtime_config_inputs,
         })
     }
 }
@@ -574,6 +606,7 @@ pub struct ZContext {
     pub(crate) shm_config: Option<Arc<crate::shm::ShmConfig>>,
     pub(crate) keyexpr_format: ros_z_protocol::KeyExprFormat,
     pub(crate) clock: ZClock,
+    runtime_config_inputs: RuntimeConfigInputs,
 }
 
 impl std::fmt::Debug for ZContext {
@@ -619,6 +652,7 @@ impl ZContext {
             shm_config: self.shm_config.clone(),
             keyexpr_format: self.keyexpr_format,
             clock: self.clock.clone(),
+            runtime_config_inputs: self.runtime_config_inputs.clone(),
             enable_type_desc_service: false,
             enable_extended_type_desc_service: false,
             enable_parameters: true,
@@ -642,5 +676,10 @@ impl ZContext {
     /// Access the context clock used by nodes and runtime helpers.
     pub fn clock(&self) -> &ZClock {
         &self.clock
+    }
+
+    /// Access config-related startup inputs carried by this context.
+    pub fn runtime_config_inputs(&self) -> &RuntimeConfigInputs {
+        &self.runtime_config_inputs
     }
 }
