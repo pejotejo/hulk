@@ -1,7 +1,7 @@
 //! ZCache consumer — ExtractorStamp (application-level timestamp).
 //!
 //! The stamp extractor reads the message payload as `"msg-<seq>"` and maps it
-//! to a logical [`SystemTime`].  In real sensor-fusion code you would read
+//! to a logical [`ros_z::time::ZTime`]. In real sensor-fusion code you would read
 //! `header.stamp` instead.
 //!
 //! ## Usage
@@ -16,9 +16,9 @@
 //! cargo run --example z_cache_app_stamp
 //! ```
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use ros_z::{Builder, Result, context::ZContextBuilder};
+use ros_z::{Builder, Result, time::ZTime};
 use ros_z_msgs::std_msgs::String as RosString;
 
 pub async fn run(
@@ -29,8 +29,8 @@ pub async fn run(
 ) -> Result<()> {
     let node = ctx.create_node("cache_consumer_app").build()?;
 
-    // Extractor reads the sequence number from the payload as seconds since
-    // UNIX_EPOCH.  For real data: read header.stamp.
+    // Extractor reads the sequence number from the payload as logical seconds
+    // since timeline zero. For real data: read header.stamp.
     let cache = node
         .create_cache::<RosString>(&topic, capacity)
         .with_stamp(|msg: &RosString| {
@@ -40,7 +40,7 @@ pub async fn run(
                 .next_back()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
-            SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+            ZTime::from_nanos((secs as i64) * 1_000_000_000)
         })
         .build()?;
 
@@ -61,7 +61,7 @@ pub async fn run(
         );
 
         // Find the message whose logical timestamp is closest to t=5s.
-        let target = SystemTime::UNIX_EPOCH + Duration::from_secs(5);
+        let target = ZTime::from_nanos(5_000_000_000);
         let nearest = cache.get_nearest(target);
         println!(
             "[cache/app] nearest to t=5s: {}",
@@ -84,6 +84,6 @@ pub async fn run(
 #[tokio::main]
 async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("error");
-    let ctx = ZContextBuilder::default().build()?;
+    let ctx = ros_z::context::ZContextBuilder::default().build()?;
     run(ctx, "/cache_demo".into(), 20, 0).await
 }

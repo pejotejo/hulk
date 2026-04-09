@@ -9,11 +9,11 @@
 //! Two indexing strategies are available, selected at build time:
 //!
 //! - **[`ZenohStamp`](crate::cache::ZenohStamp)** (default) — indexes by the
-//!   Zenoh transport timestamp (`uhlc::Timestamp` → `SystemTime`). Zero-config;
+//!   Zenoh transport timestamp (`uhlc::Timestamp` → [`crate::time::ZTime`]). Zero-config;
 //!   works for any message type as long as timestamping is enabled in the Zenoh
 //!   config (already enabled in the ros-z default config).
 //! - **[`ExtractorStamp`](crate::cache::ExtractorStamp)** — indexes by a
-//!   user-supplied closure that extracts a `SystemTime` from each deserialized
+//!   user-supplied closure that extracts a [`crate::time::ZTime`] from each deserialized
 //!   message. Required for `header.stamp` / sensor capture time alignment.
 //!
 //! # Example
@@ -21,7 +21,7 @@
 //! ```rust,ignore
 //! use ros_z::prelude::*;
 //! use ros_z_msgs::sensor_msgs::Imu;
-//! use std::time::{Duration, SystemTime};
+//! use std::time::Duration;
 //!
 //! let ctx = ZContextBuilder::default().build()?;
 //! let node = ctx.create_node("cache_demo").build()?;
@@ -29,51 +29,53 @@
 //! // Zero-config: indexed by Zenoh transport timestamp
 //! let cache = node.create_cache::<Imu>("/imu/data", 200).build()?;
 //!
-//! let now = SystemTime::now();
+//! let now = ZTime::from_wallclock(std::time::SystemTime::now());
 //! let window = cache.get_interval(now - Duration::from_millis(100), now);
 //!
 //! // Application timestamp: indexed by header.stamp
 //! let cache = node
 //!     .create_cache::<Imu>("/imu/data", 200)
 //!     .with_stamp(|msg: &Imu| {
-//!         let sec = msg.header.stamp.sec as u64;
-//!         let nsec = msg.header.stamp.nanosec;
-//!         SystemTime::UNIX_EPOCH + Duration::new(sec, nsec)
+//!         let nanos = (msg.header.stamp.sec as i64 * 1_000_000_000)
+//!             + i64::from(msg.header.stamp.nanosec);
+//!         ZTime::from_nanos(nanos)
 //!     })
 //!     .build()?;
 //! ```
 
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::SystemTime;
-
-use parking_lot::RwLock;
 use tracing::{debug, warn};
-use zenoh::Result;
 use zenoh::liveliness::LivelinessToken;
+use zenoh::Result;
 
-use crate::Builder;
 use crate::msg::{SerdeCdrSerdes, ZDeserializer, ZMessage};
 use crate::pubsub::ZSubBuilder;
+use crate::time::ZTime;
+use crate::Builder;
 
 // ---------------------------------------------------------------------------
 // Stamp strategy markers
 // ---------------------------------------------------------------------------
 
-/// Index by the Zenoh transport timestamp (`uhlc::Timestamp` → `SystemTime`).
+/// Index by the Zenoh transport timestamp (`uhlc::Timestamp` → [`crate::time::ZTime`]).
 ///
 /// This is the default stamp strategy. It works for any message type without
 /// any configuration. If the incoming [`zenoh::sample::Sample`] carries no
 /// timestamp (timestamping disabled on the peer), the cache falls back to
-/// `SystemTime::now()` at receive time and logs a one-time warning.
+/// the current wallclock time at receive time and logs a one-time warning.
 pub struct ZenohStamp;
 
 /// Index by an application-supplied extractor closure.
 ///
 /// The closure receives a reference to the deserialized message and returns a
-/// `SystemTime` representing its logical timestamp (e.g. `header.stamp`).
-pub struct ExtractorStamp<T, F: Fn(&T) -> SystemTime>(pub(crate) F, pub(crate) PhantomData<T>);
+/// `ZTime` representing its logical timestamp (e.g. `header.stamp`).
+pub struct ExtractorStamp<T, F, O>(pub(crate) F, pub(crate) PhantomData<(T, O)>)
+where
+    F: Fn(&T) -> O,
+    O: Into<ZTime>;
 
 // ---------------------------------------------------------------------------
 // CacheInner — shared mutable state
@@ -82,7 +84,7 @@ pub struct ExtractorStamp<T, F: Fn(&T) -> SystemTime>(pub(crate) F, pub(crate) P
 /// Internal cache storage — public for benchmarks only.
 #[doc(hidden)]
 pub struct CacheInner<T> {
-    pub entries: BTreeMap<SystemTime, Arc<T>>,
+    pub entries: BTreeMap<ZTime, Arc<T>>,
     capacity: usize,
     /// Guards against logging the missing-timestamp warning more than once.
     warned_no_ts: bool,
@@ -97,7 +99,7 @@ impl<T> CacheInner<T> {
         }
     }
 
-    pub fn insert(&mut self, stamp: SystemTime, msg: T) {
+    pub fn insert(&mut self, stamp: ZTime, msg: T) {
         self.entries.insert(stamp, Arc::new(msg));
         // Evict the oldest entry when over capacity.
         while self.entries.len() > self.capacity {
@@ -137,11 +139,17 @@ impl<T: ZMessage> ZCache<T> {
     ///
     /// ```rust,ignore
     /// let window = cache.get_interval(
-    ///     SystemTime::now() - Duration::from_millis(100),
-    ///     SystemTime::now(),
+    ///     ZTime::from_wallclock(std::time::SystemTime::now()) - Duration::from_millis(100),
+    ///     ZTime::from_wallclock(std::time::SystemTime::now()),
     /// );
     /// ```
-    pub fn get_interval(&self, t_start: SystemTime, t_end: SystemTime) -> Vec<Arc<T>> {
+    pub fn get_interval<TStart, TEnd>(&self, t_start: TStart, t_end: TEnd) -> Vec<Arc<T>>
+    where
+        TStart: Into<ZTime>,
+        TEnd: Into<ZTime>,
+    {
+        let t_start = t_start.into();
+        let t_end = t_end.into();
         if t_start > t_end {
             return Vec::new();
         }
@@ -159,9 +167,13 @@ impl<T: ZMessage> ZCache<T> {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let latest = cache.get_before(SystemTime::now());
+    /// let latest = cache.get_before(ZTime::from_wallclock(std::time::SystemTime::now()));
     /// ```
-    pub fn get_before(&self, t: SystemTime) -> Option<Arc<T>> {
+    pub fn get_before<TStamp>(&self, t: TStamp) -> Option<Arc<T>>
+    where
+        TStamp: Into<ZTime>,
+    {
+        let t = t.into();
         let inner = self.inner.read();
         inner
             .entries
@@ -178,7 +190,11 @@ impl<T: ZMessage> ZCache<T> {
     /// ```rust,ignore
     /// let next = cache.get_after(camera_timestamp);
     /// ```
-    pub fn get_after(&self, t: SystemTime) -> Option<Arc<T>> {
+    pub fn get_after<TStamp>(&self, t: TStamp) -> Option<Arc<T>>
+    where
+        TStamp: Into<ZTime>,
+    {
+        let t = t.into();
         let inner = self.inner.read();
         inner.entries.range(t..).next().map(|(_, v)| Arc::clone(v))
     }
@@ -195,7 +211,11 @@ impl<T: ZMessage> ZCache<T> {
     /// ```rust,ignore
     /// let nearest_imu = cache.get_nearest(camera_stamp);
     /// ```
-    pub fn get_nearest(&self, t: SystemTime) -> Option<Arc<T>> {
+    pub fn get_nearest<TStamp>(&self, t: TStamp) -> Option<Arc<T>>
+    where
+        TStamp: Into<ZTime>,
+    {
+        let t = t.into();
         let inner = self.inner.read();
         if inner.entries.is_empty() {
             return None;
@@ -216,8 +236,8 @@ impl<T: ZMessage> ZCache<T> {
             (None, Some((_, v))) => Some(v),
             (Some((_, v)), None) => Some(v),
             (Some((kb, vb)), Some((ka, va))) => {
-                let dist_before = t.duration_since(kb).unwrap_or_default();
-                let dist_after = ka.duration_since(t).unwrap_or_default();
+                let dist_before = t.duration_since(kb);
+                let dist_after = ka.duration_since(t);
                 // On a tie prefer earlier (before) timestamp.
                 if dist_after < dist_before {
                     Some(va)
@@ -230,12 +250,12 @@ impl<T: ZMessage> ZCache<T> {
     }
 
     /// Timestamp of the oldest cached message, or `None` if empty.
-    pub fn oldest_stamp(&self) -> Option<SystemTime> {
+    pub fn oldest_stamp(&self) -> Option<ZTime> {
         self.inner.read().entries.keys().next().copied()
     }
 
     /// Timestamp of the newest cached message, or `None` if empty.
-    pub fn newest_stamp(&self) -> Option<SystemTime> {
+    pub fn newest_stamp(&self) -> Option<ZTime> {
         self.inner.read().entries.keys().next_back().copied()
     }
 
@@ -282,11 +302,12 @@ impl<T: ZMessage, S> ZCacheBuilder<T, S, ZenohStamp> {
     /// Switch to application-level timestamp extraction.
     ///
     /// The extractor receives a reference to the deserialized message and
-    /// returns a `SystemTime` representing its logical timestamp (e.g.
+    /// returns a `ZTime` representing its logical timestamp (e.g.
     /// `header.stamp`).
-    pub fn with_stamp<F>(self, extractor: F) -> ZCacheBuilder<T, S, ExtractorStamp<T, F>>
+    pub fn with_stamp<F, O>(self, extractor: F) -> ZCacheBuilder<T, S, ExtractorStamp<T, F, O>>
     where
-        F: Fn(&T) -> SystemTime + Send + Sync + 'static,
+        F: Fn(&T) -> O + Send + Sync + 'static,
+        O: Into<ZTime> + 'static,
     {
         ZCacheBuilder {
             sub_builder: self.sub_builder,
@@ -308,9 +329,10 @@ impl<T: ZMessage, S> ZCacheBuilder<T, S, ZenohStamp> {
     }
 }
 
-impl<T: ZMessage, S, F> ZCacheBuilder<T, S, ExtractorStamp<T, F>>
+impl<T: ZMessage, S, F, O> ZCacheBuilder<T, S, ExtractorStamp<T, F, O>>
 where
-    F: Fn(&T) -> SystemTime + Send + Sync + 'static,
+    F: Fn(&T) -> O + Send + Sync + 'static,
+    O: Into<ZTime> + 'static,
 {
     /// Maximum number of messages to retain. Oldest are evicted when full.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
@@ -351,19 +373,19 @@ where
                 match S::deserialize(&payload) {
                     Ok(msg) => {
                         let stamp = match sample.timestamp() {
-                            Some(ts) => ts.get_time().to_system_time(),
+                            Some(ts) => ZTime::from_wallclock(ts.get_time().to_system_time()),
                             None => {
                                 let mut guard = inner_cb.write();
                                 if !guard.warned_no_ts {
                                     warn!(
                                         "[CACHE] Incoming sample has no Zenoh timestamp; \
-                                         falling back to SystemTime::now(). \
+                                         falling back to current wallclock time. \
                                          Enable timestamping in the Zenoh config to avoid this."
                                     );
                                     guard.warned_no_ts = true;
                                 }
                                 drop(guard);
-                                SystemTime::now()
+                                ZTime::from_wallclock(std::time::SystemTime::now())
                             }
                         };
                         inner_cb.write().insert(stamp, msg);
@@ -385,11 +407,12 @@ where
 // Builder impl — ExtractorStamp variant
 // ---------------------------------------------------------------------------
 
-impl<T, S, F> Builder for ZCacheBuilder<T, S, ExtractorStamp<T, F>>
+impl<T, S, F, O> Builder for ZCacheBuilder<T, S, ExtractorStamp<T, F, O>>
 where
     T: ZMessage + Send + Sync + 'static,
     S: for<'a> ZDeserializer<Input<'a> = &'a [u8], Output = T> + 'static,
-    F: Fn(&T) -> SystemTime + Send + Sync + 'static,
+    F: Fn(&T) -> O + Send + Sync + 'static,
+    O: Into<ZTime> + 'static,
 {
     type Output = ZCache<T>;
 
@@ -407,7 +430,7 @@ where
                 let payload = sample.payload().to_bytes();
                 match S::deserialize(&payload) {
                     Ok(msg) => {
-                        let stamp = extractor(&msg);
+                        let stamp = extractor(&msg).into();
                         inner_cb.write().insert(stamp, msg);
                     }
                     Err(e) => tracing::error!("[CACHE] Failed to deserialize message: {}", e),

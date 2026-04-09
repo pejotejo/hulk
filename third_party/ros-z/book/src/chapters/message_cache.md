@@ -11,7 +11,7 @@
 ```rust,ignore
 use ros_z::prelude::*;
 use ros_z_msgs::sensor_msgs::Imu;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 let ctx = ZContextBuilder::default().build()?;
 let node = ctx.create_node("cache_node").build()?;
@@ -20,7 +20,7 @@ let node = ctx.create_node("cache_node").build()?;
 let cache = node.create_cache::<Imu>("/imu/data", 200).build()?;
 
 // Query the last 100 ms.
-let now = SystemTime::now();
+let now = ZTime::from_wallclock(std::time::SystemTime::now());
 let window = cache.get_interval(now - Duration::from_millis(100), now);
 println!("Messages in window: {}", window.len());
 ```
@@ -40,7 +40,7 @@ Two indexing strategies are available and selected at **compile time** via the t
 
 ### ZenohStamp (default)
 
-No configuration needed. The cache reads the `uhlc::Timestamp` that the Zenoh transport attaches to every published sample and converts it to `SystemTime`. If timestamping is disabled on the peer, the cache falls back to `SystemTime::now()` at receive time and logs a one-time warning.
+No configuration needed. The cache reads the `uhlc::Timestamp` that the Zenoh transport attaches to every published sample and converts it to `ZTime`. If timestamping is disabled on the peer, the cache falls back to the current wallclock time at receive time and logs a one-time warning.
 
 ```rust,ignore
 use ros_z::prelude::*;
@@ -51,26 +51,26 @@ let cache = node.create_cache::<LaserScan>("/scan", 100).build()?;
 
 ### ExtractorStamp (application-level)
 
-Supply a closure that extracts a `SystemTime` from the deserialized message. Use this when you need messages aligned by their logical capture time rather than network arrival time — the classic sensor fusion use case.
+Supply a closure that extracts a `ZTime` from the deserialized message. Use this when you need messages aligned by their logical capture time rather than network arrival time.
 
 ```rust,ignore
 use ros_z::prelude::*;
 use ros_z_msgs::sensor_msgs::Imu;
-use std::time::{Duration, SystemTime};
 
 let cache = node
     .create_cache::<Imu>("/imu/data", 200)
     .with_stamp(|msg: &Imu| {
         // Read header.stamp from the message.
-        SystemTime::UNIX_EPOCH
-            + Duration::new(msg.header.stamp.sec as u64, msg.header.stamp.nanosec)
+        let nanos = (msg.header.stamp.sec as i64 * 1_000_000_000)
+            + i64::from(msg.header.stamp.nanosec);
+        ZTime::from_nanos(nanos)
     })
     .build()?;
 ```
 
 ## Query API
 
-All query methods take and return `SystemTime` values and return clones of the stored messages. They are safe to call from multiple threads.
+All query methods take and return `ZTime` values and return clones of the stored messages. They are safe to call from multiple threads.
 
 ### `get_interval(t_start, t_end) -> Vec<T>`
 
@@ -78,8 +78,8 @@ Returns all messages with timestamp in `[t_start, t_end]`, inclusive, ordered by
 
 ```rust,ignore
 let msgs = cache.get_interval(
-    SystemTime::now() - Duration::from_millis(500),
-    SystemTime::now(),
+    ZTime::from_wallclock(std::time::SystemTime::now()) - Duration::from_millis(500),
+    ZTime::from_wallclock(std::time::SystemTime::now()),
 );
 ```
 
@@ -88,7 +88,7 @@ let msgs = cache.get_interval(
 The most recent message with timestamp ≤ `t`. Returns `None` if the cache is empty or all messages are strictly after `t`.
 
 ```rust,ignore
-let latest = cache.get_before(SystemTime::now());
+let latest = cache.get_before(ZTime::from_wallclock(std::time::SystemTime::now()));
 ```
 
 ### `get_after(t) -> Option<T>`
@@ -111,8 +111,8 @@ let imu = imu_cache.get_nearest(camera_stamp);
 ### Introspection
 
 ```rust,ignore
-cache.oldest_stamp()   // Option<SystemTime> — timestamp of the oldest entry
-cache.newest_stamp()   // Option<SystemTime> — timestamp of the newest entry
+cache.oldest_stamp()   // Option<ZTime> — timestamp of the oldest entry
+cache.newest_stamp()   // Option<ZTime> — timestamp of the newest entry
 cache.len()            // usize — number of messages currently stored
 cache.is_empty()       // bool
 cache.clear()          // remove all messages

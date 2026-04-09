@@ -16,9 +16,9 @@
 //! cargo run --example z_cache_zenoh_stamp
 //! ```
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use ros_z::{Builder, Result, context::ZContextBuilder};
+use ros_z::{Builder, Result, time::ZTime};
 use ros_z_msgs::std_msgs::String as RosString;
 
 pub async fn run(
@@ -44,7 +44,7 @@ pub async fn run(
     let window = Duration::from_millis(window_ms);
     let mut i = 0usize;
     loop {
-        let now = SystemTime::now();
+        let now = ZTime::from_wallclock(std::time::SystemTime::now());
         let msgs = cache.get_interval(now - window, now);
         let newest = cache.get_before(now);
 
@@ -68,6 +68,6 @@ pub async fn run(
 #[tokio::main]
 async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("error");
-    let ctx = ZContextBuilder::default().build()?;
+    let ctx = ros_z::context::ZContextBuilder::default().build()?;
     run(ctx, "/cache_demo".into(), 20, 500, 0).await
 }

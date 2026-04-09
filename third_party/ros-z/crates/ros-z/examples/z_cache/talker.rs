@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use ros_z::{Builder, Result, context::ZContextBuilder};
+use ros_z::{Builder, Result};
 use ros_z_msgs::std_msgs::String as RosString;
 
 pub async fn run(ctx: ros_z::context::ZContext, topic: String, count: usize) -> Result<()> {
@@ -40,6 +40,6 @@ pub async fn run(ctx: ros_z::context::ZContext, topic: String, count: usize) -> 
 #[tokio::main]
 async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("error");
-    let ctx = ZContextBuilder::default().build()?;
+    let ctx = ros_z::context::ZContextBuilder::default().build()?;
     run(ctx, "/cache_demo".into(), 0).await
 }
