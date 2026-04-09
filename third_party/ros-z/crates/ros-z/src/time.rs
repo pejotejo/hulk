@@ -1,6 +1,7 @@
 use std::{
     fmt,
     future::Future,
+    ops::{Add, Sub},
     pin::Pin,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -8,12 +9,6 @@ use std::{
 
 use parking_lot::Mutex;
 use tokio::sync::Notify;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClockKind {
-    System,
-    Simulated,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ZDuration(Duration);
@@ -50,16 +45,22 @@ impl From<ZDuration> for Duration {
     }
 }
 
+/// A clock-relative instant used throughout ros-z.
+///
+/// `ZTime` is intentionally generic: it represents an instant on some clock's
+/// timeline and only becomes wallclock time when interpreted through a
+/// wallclock-backed [`ZClock`] or converted with [`ZTime::from_wallclock`] /
+/// [`ZTime::to_wallclock`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ZTime {
-    since_epoch: Duration,
+    since_origin: Duration,
 }
 
 impl fmt::Debug for ZTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ZTime")
-            .field("secs", &self.since_epoch.as_secs())
-            .field("nanos", &self.since_epoch.subsec_nanos())
+            .field("secs", &self.since_origin.as_secs())
+            .field("nanos", &self.since_origin.subsec_nanos())
             .finish()
     }
 }
@@ -67,44 +68,106 @@ impl fmt::Debug for ZTime {
 impl ZTime {
     pub fn zero() -> Self {
         Self {
-            since_epoch: Duration::ZERO,
+            since_origin: Duration::ZERO,
         }
     }
 
-    pub fn from_system_time(time: SystemTime) -> Self {
-        let since_epoch = time.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
-        Self { since_epoch }
+    /// Convert a wallclock timestamp into a `ZTime` instant.
+    pub fn from_wallclock(time: SystemTime) -> Self {
+        let since_origin = time.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
+        Self { since_origin }
     }
 
-    pub fn from_unix_nanos(nanos: i64) -> Self {
+    #[deprecated(note = "use ZTime::from_wallclock instead")]
+    pub fn from_system_time(time: SystemTime) -> Self {
+        Self::from_wallclock(time)
+    }
+
+    /// Construct a `ZTime` from a raw nanosecond count on the active timeline.
+    pub fn from_nanos(nanos: i64) -> Self {
         let nanos = u64::try_from(nanos).unwrap_or_default();
         Self {
-            since_epoch: Duration::from_nanos(nanos),
+            since_origin: Duration::from_nanos(nanos),
         }
     }
 
-    pub fn to_system_time(self) -> SystemTime {
-        UNIX_EPOCH + self.since_epoch
+    #[deprecated(note = "use ZTime::from_nanos instead")]
+    pub fn from_unix_nanos(nanos: i64) -> Self {
+        Self::from_nanos(nanos)
     }
 
+    /// Interpret this instant as wallclock time.
+    pub fn to_wallclock(self) -> SystemTime {
+        UNIX_EPOCH + self.since_origin
+    }
+
+    #[deprecated(note = "use ZTime::to_wallclock instead")]
+    pub fn to_system_time(self) -> SystemTime {
+        self.to_wallclock()
+    }
+
+    /// Return the raw nanosecond position of this instant on its timeline.
+    pub fn as_nanos(self) -> i64 {
+        self.since_origin.as_nanos().min(i64::MAX as u128) as i64
+    }
+
+    #[deprecated(note = "use ZTime::as_nanos instead")]
     pub fn as_unix_nanos(self) -> i64 {
-        self.since_epoch.as_nanos().min(i64::MAX as u128) as i64
+        self.as_nanos()
     }
 
     pub fn saturating_add(self, duration: ZDuration) -> Self {
         Self {
-            since_epoch: self.since_epoch.saturating_add(duration.0),
+            since_origin: self.since_origin.saturating_add(duration.0),
         }
     }
 
     pub fn saturating_sub(self, duration: ZDuration) -> Self {
         Self {
-            since_epoch: self.since_epoch.saturating_sub(duration.0),
+            since_origin: self.since_origin.saturating_sub(duration.0),
         }
     }
 
     pub fn duration_since(self, earlier: ZTime) -> ZDuration {
-        ZDuration(self.since_epoch.saturating_sub(earlier.since_epoch))
+        ZDuration(self.since_origin.saturating_sub(earlier.since_origin))
+    }
+}
+
+impl From<SystemTime> for ZTime {
+    fn from(value: SystemTime) -> Self {
+        Self::from_wallclock(value)
+    }
+}
+
+impl Add<ZDuration> for ZTime {
+    type Output = Self;
+
+    fn add(self, rhs: ZDuration) -> Self::Output {
+        self.saturating_add(rhs)
+    }
+}
+
+impl Add<Duration> for ZTime {
+    type Output = Self;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        self.saturating_add(rhs.into())
+    }
+}
+
+impl Sub<ZDuration> for ZTime {
+    type Output = Self;
+
+    fn sub(self, rhs: ZDuration) -> Self::Output {
+        self.saturating_sub(rhs)
+    }
+}
+
+impl Sub<Duration> for ZTime {
+    type Output = Self;
+
+    fn sub(self, rhs: Duration) -> Self::Output {
+        self.saturating_sub(rhs.into())
     }
 }
 
@@ -116,15 +179,15 @@ impl Default for ZTime {
 
 #[derive(Debug)]
 pub enum ClockError {
-    NotSimulated,
+    NotLogical,
     TimeWentBackwards,
 }
 
 impl fmt::Display for ClockError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClockError::NotSimulated => write!(f, "clock is not simulated"),
-            ClockError::TimeWentBackwards => write!(f, "simulated time cannot move backwards"),
+            ClockError::NotLogical => write!(f, "clock is not logical"),
+            ClockError::TimeWentBackwards => write!(f, "logical time cannot move backwards"),
         }
     }
 }
@@ -137,70 +200,71 @@ pub struct ZClock {
 }
 
 enum ClockInner {
-    System,
-    Simulated(SimulatedClockState),
+    Wallclock,
+    Logical(LogicalClockState),
 }
 
-struct SimulatedClockState {
+struct LogicalClockState {
     now: Mutex<ZTime>,
     notify: Notify,
 }
 
 impl fmt::Debug for ZClock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self.inner.as_ref() {
+            ClockInner::Wallclock => "Wallclock",
+            ClockInner::Logical(_) => "Logical",
+        };
+
         f.debug_struct("ZClock")
-            .field("kind", &self.kind())
+            .field("kind", &kind)
             .finish_non_exhaustive()
     }
 }
 
 impl Default for ZClock {
     fn default() -> Self {
-        Self::system()
+        Self::wallclock()
     }
 }
 
 impl ZClock {
-    pub fn system() -> Self {
+    pub fn wallclock() -> Self {
         Self {
-            inner: Arc::new(ClockInner::System),
+            inner: Arc::new(ClockInner::Wallclock),
         }
     }
 
-    pub fn simulated(start: ZTime) -> Self {
+    #[deprecated(note = "use ZClock::wallclock instead")]
+    pub fn system() -> Self {
+        Self::wallclock()
+    }
+
+    pub fn logical(start: ZTime) -> Self {
         Self {
-            inner: Arc::new(ClockInner::Simulated(SimulatedClockState {
+            inner: Arc::new(ClockInner::Logical(LogicalClockState {
                 now: Mutex::new(start),
                 notify: Notify::new(),
             })),
         }
     }
 
-    pub fn from_kind(kind: ClockKind) -> Self {
-        match kind {
-            ClockKind::System => Self::system(),
-            ClockKind::Simulated => Self::simulated(ZTime::zero()),
-        }
-    }
-
-    pub fn kind(&self) -> ClockKind {
-        match self.inner.as_ref() {
-            ClockInner::System => ClockKind::System,
-            ClockInner::Simulated(_) => ClockKind::Simulated,
-        }
+    #[deprecated(note = "use ZClock::logical instead")]
+    pub fn simulated(start: ZTime) -> Self {
+        Self::logical(start)
     }
 
     pub fn now(&self) -> ZTime {
         match self.inner.as_ref() {
-            ClockInner::System => ZTime::from_system_time(SystemTime::now()),
-            ClockInner::Simulated(state) => *state.now.lock(),
+            ClockInner::Wallclock => ZTime::from_wallclock(SystemTime::now()),
+            ClockInner::Logical(state) => *state.now.lock(),
         }
     }
 
     pub fn set_time(&self, time: ZTime) -> Result<(), ClockError> {
         match self.inner.as_ref() {
-            ClockInner::System => Err(ClockError::NotSimulated),
-            ClockInner::Simulated(state) => {
+            ClockInner::Wallclock => Err(ClockError::NotLogical),
+            ClockInner::Logical(state) => {
                 let mut current = state.now.lock();
                 if time < *current {
                     return Err(ClockError::TimeWentBackwards);
@@ -214,8 +278,8 @@ impl ZClock {
 
     pub fn advance(&self, delta: ZDuration) -> Result<ZTime, ClockError> {
         match self.inner.as_ref() {
-            ClockInner::System => Err(ClockError::NotSimulated),
-            ClockInner::Simulated(state) => {
+            ClockInner::Wallclock => Err(ClockError::NotLogical),
+            ClockInner::Logical(state) => {
                 let mut current = state.now.lock();
                 *current = current.saturating_add(delta);
                 let now = *current;
@@ -227,13 +291,13 @@ impl ZClock {
 
     pub fn sleep_until(&self, deadline: ZTime) -> ZSleep {
         match self.inner.as_ref() {
-            ClockInner::System => {
+            ClockInner::Wallclock => {
                 let now = SystemTime::now();
-                let deadline = deadline.to_system_time();
+                let deadline = deadline.to_wallclock();
                 let duration = deadline.duration_since(now).unwrap_or(Duration::ZERO);
                 ZSleep(Box::pin(tokio::time::sleep(duration)))
             }
-            ClockInner::Simulated(_) => {
+            ClockInner::Logical(_) => {
                 let clock = self.clone();
                 ZSleep(Box::pin(async move {
                     loop {
@@ -243,8 +307,8 @@ impl ZClock {
                         // fires between the condition check and the first `.await` poll
                         // is not lost.
                         let notified = match clock.inner.as_ref() {
-                            ClockInner::System => unreachable!(),
-                            ClockInner::Simulated(state) => state.notify.notified(),
+                            ClockInner::Wallclock => unreachable!(),
+                            ClockInner::Logical(state) => state.notify.notified(),
                         };
                         tokio::pin!(notified);
                         notified.as_mut().enable();
@@ -358,14 +422,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn system_clock_is_default() {
+    fn wallclock_is_default() {
         let clock = ZClock::default();
-        assert_eq!(clock.kind(), ClockKind::System);
+        assert!(matches!(clock.set_time(ZTime::zero()), Err(ClockError::NotLogical)));
     }
 
     #[tokio::test]
-    async fn simulated_clock_can_advance_manually() {
-        let clock = ZClock::simulated(ZTime::zero());
+    async fn logical_clock_can_advance_manually() {
+        let clock = ZClock::logical(ZTime::zero());
         let mut interval = clock.interval(ZDuration::from_secs(1));
 
         let waiter = tokio::spawn(async move { interval.tick().await });
@@ -374,12 +438,12 @@ mod tests {
 
         clock.advance(ZDuration::from_secs(1)).unwrap();
         let tick = waiter.await.unwrap();
-        assert_eq!(tick, ZTime::from_unix_nanos(1_000_000_000));
+        assert_eq!(tick, ZTime::from_nanos(1_000_000_000));
     }
 
     #[tokio::test]
-    async fn simulated_timer_follows_simulated_time() {
-        let clock = ZClock::simulated(ZTime::zero());
+    async fn logical_sleep_follows_logical_time() {
+        let clock = ZClock::logical(ZTime::zero());
         let sleep = clock.sleep(ZDuration::from_millis(10));
 
         let waiter = tokio::spawn(sleep);
@@ -391,8 +455,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn simulated_ztimer_follows_simulated_time() {
-        let clock = ZClock::simulated(ZTime::zero());
+    async fn logical_ztimer_follows_logical_time() {
+        let clock = ZClock::logical(ZTime::zero());
         let mut timer = clock.timer(ZDuration::from_millis(10));
 
         let waiter = tokio::spawn(async move { timer.tick().await });
@@ -401,27 +465,27 @@ mod tests {
 
         clock.advance(ZDuration::from_millis(10)).unwrap();
         let tick = waiter.await.unwrap();
-        assert_eq!(tick, ZTime::from_unix_nanos(10_000_000));
+        assert_eq!(tick, ZTime::from_nanos(10_000_000));
     }
 
     #[test]
     fn ztimer_reset_uses_current_clock_time() {
-        let clock = ZClock::simulated(ZTime::zero());
+        let clock = ZClock::logical(ZTime::zero());
         let mut timer = clock.timer(ZDuration::from_secs(2));
-        assert_eq!(timer.deadline(), ZTime::from_unix_nanos(2_000_000_000));
+        assert_eq!(timer.deadline(), ZTime::from_nanos(2_000_000_000));
 
         clock.advance(ZDuration::from_secs(5)).unwrap();
         timer.reset();
 
-        assert_eq!(timer.deadline(), ZTime::from_unix_nanos(7_000_000_000));
+        assert_eq!(timer.deadline(), ZTime::from_nanos(7_000_000_000));
     }
 
     #[tokio::test]
-    async fn simulated_sleep_no_lost_wakeup_when_advance_before_poll() {
+    async fn logical_sleep_no_lost_wakeup_when_advance_before_poll() {
         // Regression test: advance the clock past the deadline *before* the sleep
         // future is ever polled.  Without the enable() fix this would hang forever
         // because notify_waiters() fires before the future registers as a waiter.
-        let clock = ZClock::simulated(ZTime::zero());
+        let clock = ZClock::logical(ZTime::zero());
         let sleep = clock.sleep(ZDuration::from_millis(10));
         // Advance BEFORE yielding — the future has not been polled yet.
         clock.advance(ZDuration::from_millis(10)).unwrap();
@@ -456,36 +520,36 @@ mod tests {
     #[test]
     fn ztime_zero_and_default() {
         assert_eq!(ZTime::zero(), ZTime::default());
-        assert_eq!(ZTime::zero().as_unix_nanos(), 0);
+        assert_eq!(ZTime::zero().as_nanos(), 0);
     }
 
     #[test]
-    fn ztime_from_unix_nanos_negative_clamps_to_zero() {
-        assert_eq!(ZTime::from_unix_nanos(-1).as_unix_nanos(), 0);
+    fn ztime_from_nanos_negative_clamps_to_zero() {
+        assert_eq!(ZTime::from_nanos(-1).as_nanos(), 0);
     }
 
     #[test]
-    fn ztime_from_system_time_roundtrip() {
-        let t = ZTime::from_unix_nanos(1_000_000_000);
-        let sys = t.to_system_time();
-        let back = ZTime::from_system_time(sys);
+    fn ztime_from_wallclock_roundtrip() {
+        let t = ZTime::from_nanos(1_000_000_000);
+        let sys = t.to_wallclock();
+        let back = ZTime::from_wallclock(sys);
         assert_eq!(back, t);
     }
 
     #[test]
     fn ztime_saturating_add_sub() {
-        let t = ZTime::from_unix_nanos(5_000_000_000);
+        let t = ZTime::from_nanos(5_000_000_000);
         let d = ZDuration::from_secs(2);
-        assert_eq!(t.saturating_add(d).as_unix_nanos(), 7_000_000_000);
-        assert_eq!(t.saturating_sub(d).as_unix_nanos(), 3_000_000_000);
+        assert_eq!(t.saturating_add(d).as_nanos(), 7_000_000_000);
+        assert_eq!(t.saturating_sub(d).as_nanos(), 3_000_000_000);
         // sub below zero saturates
-        assert_eq!(ZTime::zero().saturating_sub(d).as_unix_nanos(), 0);
+        assert_eq!(ZTime::zero().saturating_sub(d).as_nanos(), 0);
     }
 
     #[test]
     fn ztime_duration_since() {
-        let a = ZTime::from_unix_nanos(5_000_000_000);
-        let b = ZTime::from_unix_nanos(3_000_000_000);
+        let a = ZTime::from_nanos(5_000_000_000);
+        let b = ZTime::from_nanos(3_000_000_000);
         assert_eq!(a.duration_since(b).as_std(), Duration::from_secs(2));
         // saturates to zero when earlier > self
         assert_eq!(b.duration_since(a).as_std(), Duration::ZERO);
@@ -493,81 +557,81 @@ mod tests {
 
     #[test]
     fn ztime_debug_format() {
-        let t = ZTime::from_unix_nanos(1_500_000_000);
+        let t = ZTime::from_nanos(1_500_000_000);
         let s = format!("{:?}", t);
         assert!(s.contains("secs"));
         assert!(s.contains("nanos"));
     }
 
-    // --- ZClock constructors & kind ---
+    // --- ZClock constructors ---
 
     #[test]
-    fn zclock_system_constructor_and_kind() {
-        let c = ZClock::system();
-        assert_eq!(c.kind(), ClockKind::System);
-    }
-
-    #[test]
-    fn zclock_from_kind() {
-        assert_eq!(
-            ZClock::from_kind(ClockKind::System).kind(),
-            ClockKind::System
-        );
-        assert_eq!(
-            ZClock::from_kind(ClockKind::Simulated).kind(),
-            ClockKind::Simulated
-        );
+    fn zclock_wallclock_constructor() {
+        let c = ZClock::wallclock();
+        assert!(matches!(c.set_time(ZTime::zero()), Err(ClockError::NotLogical)));
     }
 
     #[test]
     fn zclock_debug_format() {
-        let s = format!("{:?}", ZClock::system());
+        let s = format!("{:?}", ZClock::wallclock());
         assert!(s.contains("ZClock"));
     }
 
     #[test]
-    fn system_clock_now_is_nonzero() {
-        let t = ZClock::system().now();
-        assert!(t.as_unix_nanos() > 0);
+    #[allow(deprecated)]
+    fn legacy_time_aliases_still_work() {
+        let t = ZTime::from_system_time(SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(t.as_unix_nanos(), 1_000_000_000);
+        assert_eq!(t.to_system_time(), SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(ZTime::from_unix_nanos(5).as_nanos(), 5);
+
+        assert!(matches!(ZClock::system().set_time(ZTime::zero()), Err(ClockError::NotLogical)));
+        assert_eq!(ZClock::simulated(ZTime::zero()).now(), ZTime::zero());
+    }
+
+    #[test]
+    fn wallclock_now_is_nonzero() {
+        let t = ZClock::wallclock().now();
+        assert!(t.as_nanos() > 0);
     }
 
     // --- set_time ---
 
     #[test]
-    fn set_time_advances_simulated_clock() {
-        let clock = ZClock::simulated(ZTime::zero());
-        let t = ZTime::from_unix_nanos(1_000_000_000);
+    fn set_time_advances_logical_clock() {
+        let clock = ZClock::logical(ZTime::zero());
+        let t = ZTime::from_nanos(1_000_000_000);
         clock.set_time(t).unwrap();
         assert_eq!(clock.now(), t);
     }
 
     #[test]
     fn set_time_rejects_backwards() {
-        let clock = ZClock::simulated(ZTime::from_unix_nanos(1_000_000_000));
+        let clock = ZClock::logical(ZTime::from_nanos(1_000_000_000));
         let err = clock.set_time(ZTime::zero()).unwrap_err();
         assert!(matches!(err, ClockError::TimeWentBackwards));
         assert!(!err.to_string().is_empty());
     }
 
     #[test]
-    fn set_time_on_system_clock_errors() {
-        let err = ZClock::system().set_time(ZTime::zero()).unwrap_err();
-        assert!(matches!(err, ClockError::NotSimulated));
+    fn set_time_on_wallclock_errors() {
+        let err = ZClock::wallclock().set_time(ZTime::zero()).unwrap_err();
+        assert!(matches!(err, ClockError::NotLogical));
         assert!(!err.to_string().is_empty());
     }
 
     #[test]
-    fn advance_on_system_clock_errors() {
-        let err = ZClock::system()
+    fn advance_on_wallclock_errors() {
+        let err = ZClock::wallclock()
             .advance(ZDuration::from_secs(1))
             .unwrap_err();
-        assert!(matches!(err, ClockError::NotSimulated));
+        assert!(matches!(err, ClockError::NotLogical));
     }
 
-    // --- system clock sleep (just verify it doesn't block) ---
+    // --- wallclock sleep (just verify it doesn't block) ---
 
     #[tokio::test]
-    async fn system_clock_sleep_zero_completes() {
-        ZClock::system().sleep(ZDuration::default()).await;
+    async fn wallclock_sleep_zero_completes() {
+        ZClock::wallclock().sleep(ZDuration::default()).await;
     }
 }

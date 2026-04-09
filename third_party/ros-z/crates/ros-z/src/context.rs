@@ -1,17 +1,13 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use tracing::{debug, warn};
 use zenoh::{Result, Session, Wait};
 
 use crate::{
-    Builder,
-    entity::normalize_node_namespace,
-    graph::Graph,
-    node::ZNodeBuilder,
-    time::{ClockKind, ZClock},
+    entity::normalize_node_namespace, graph::Graph, node::ZNodeBuilder, time::ZClock, Builder,
 };
 
 #[derive(Debug, Default)]
@@ -294,12 +290,6 @@ impl ZContextBuilder {
     /// Enable Zenoh logging initialization with default level "error"
     pub fn with_logging_enabled(mut self) -> Self {
         self.enable_logging = true;
-        self
-    }
-
-    /// Select the clock kind used by this context and all nodes created from it.
-    pub fn with_clock_kind(mut self, kind: ClockKind) -> Self {
-        self.clock = Some(ZClock::from_kind(kind));
         self
     }
 
