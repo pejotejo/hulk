@@ -51,5 +51,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
     }
 
     config.set_json("linear_x", serde_json::json!(0.25), ConfigScope::Robot)?;
+    if std::env::var_os("ROSZ_CONFIG_EXAMPLE_HOLD").is_some() {
+        std::future::pending::<()>().await;
+    }
     Ok(())
 }
