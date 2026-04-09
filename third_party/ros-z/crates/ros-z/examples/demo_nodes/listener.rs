@@ -53,17 +53,20 @@ pub async fn run_listener(
 
         // Try to receive with a small timeout to allow checking other conditions
         let recv_result = if timeout.is_some() || max_count.is_some() {
-            subscriber.recv_timeout(Duration::from_millis(100))
+            subscriber.recv_timeout_with_metadata(Duration::from_millis(100))
         } else {
             // If no limits, use async_recv
-            subscriber.async_recv().await
+            subscriber.async_recv_with_metadata().await
         };
 
         match recv_result {
-            Ok(msg) => {
+            Ok(received) => {
                 // Log the received message
-                println!("I heard: [{}]", msg.data);
-                received_messages.push(msg.data.clone());
+                println!(
+                    "I heard: [{}] transport={:?} source={:?}",
+                    received.data, received.transport_time, received.source_time
+                );
+                received_messages.push(received.data.clone());
 
                 // Check if we've received enough messages
                 if let Some(max) = max_count

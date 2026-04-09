@@ -3,6 +3,7 @@ use std::time::Duration;
 use std::{marker::PhantomData, sync::Arc};
 
 use std::future::Future;
+use std::ops::Deref;
 
 use tracing::{debug, trace, warn};
 use zenoh::liveliness::LivelinessToken;
@@ -20,8 +21,79 @@ use crate::topic_name;
 
 use crate::msg::{SerdeCdrSerdes, ZDeserializer, ZMessage, ZSerializer};
 use crate::qos::QosProfile;
+use crate::time::ZTime;
 use ros_z_protocol::qos::{QosDurability, QosHistory, QosReliability};
 use std::sync::Mutex;
+
+/// A deserialized message together with the transport and source timestamps seen
+/// by the receiver.
+#[derive(Debug, Clone)]
+pub struct Received<T> {
+    pub message: T,
+    pub transport_time: Option<ZTime>,
+    pub source_time: Option<ZTime>,
+    pub sequence_number: Option<i64>,
+    pub source_gid: Option<GidArray>,
+}
+
+impl<T> Received<T> {
+    fn from_sample(sample: &Sample, message: T) -> Self {
+        let transport_time = sample
+            .timestamp()
+            .map(|ts| ZTime::from_wallclock(ts.get_time().to_system_time()));
+
+        let attachment = match sample.attachment() {
+            Some(raw) => match Attachment::try_from(raw) {
+                Ok(attachment) => Some(attachment),
+                Err(err) => {
+                    warn!("[SUB] Failed to decode attachment metadata: {}", err);
+                    None
+                }
+            },
+            None => None,
+        };
+
+        Self {
+            message,
+            transport_time,
+            source_time: attachment.as_ref().map(Attachment::source_time),
+            sequence_number: attachment.as_ref().map(|att| att.sequence_number),
+            source_gid: attachment.as_ref().map(|att| att.source_gid),
+        }
+    }
+
+    pub fn message(&self) -> &T {
+        &self.message
+    }
+
+    pub fn into_message(self) -> T {
+        self.message
+    }
+}
+
+impl<T> Deref for Received<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.message
+    }
+}
+
+impl<T: PartialEq> PartialEq<T> for Received<T> {
+    fn eq(&self, other: &T) -> bool {
+        self.message == *other
+    }
+}
+
+impl<T: PartialEq> PartialEq for Received<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+            && self.transport_time == other.transport_time
+            && self.source_time == other.source_time
+            && self.sequence_number == other.sequence_number
+            && self.source_gid == other.source_gid
+    }
+}
 
 /// A typed ROS 2-style publisher. Send messages with [`publish`](ZPub::publish)
 /// (synchronous) or [`async_publish`](ZPub::async_publish) (async).
@@ -1065,12 +1137,18 @@ where
         self.publisher_count() > 0
     }
 
-    /// Receive and deserialize the next message (aligned with ROS behavior)
+    /// Receive and deserialize the next message.
+    pub fn recv(&self) -> Result<S::Output> {
+        self.recv_with_metadata().map(Received::into_message)
+    }
+
+    /// Receive and deserialize the next message together with its receive-side
+    /// timing context.
     #[tracing::instrument(name = "recv", skip(self), fields(
         topic = %self.entity.topic,
         payload_len = tracing::field::Empty
     ))]
-    pub fn recv(&self) -> Result<S::Output> {
+    pub fn recv_with_metadata(&self) -> Result<Received<S::Output>> {
         trace!("[SUB] Waiting for message");
 
         let queue = self.queue.as_ref().ok_or_else(|| {
@@ -1082,10 +1160,16 @@ where
         tracing::Span::current().record("payload_len", payload.len());
         debug!("[SUB] Received message");
 
-        S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<S::Output> {
+        self.recv_timeout_with_metadata(timeout)
+            .map(Received::into_message)
+    }
+
+    pub fn recv_timeout_with_metadata(&self, timeout: Duration) -> Result<Received<S::Output>> {
         let queue = self.queue.as_ref().ok_or_else(|| {
             zenoh::Error::from("Subscriber was built with callback, no queue available")
         })?;
@@ -1093,17 +1177,26 @@ where
             .recv_timeout(timeout)
             .ok_or_else(|| zenoh::Error::from("Receive timed out"))?;
         let payload = sample.payload().to_bytes();
-        S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 
     /// Async receive and deserialize the next message
     pub async fn async_recv(&self) -> Result<S::Output> {
+        self.async_recv_with_metadata()
+            .await
+            .map(Received::into_message)
+    }
+
+    /// Async receive and deserialize the next message together with metadata.
+    pub async fn async_recv_with_metadata(&self) -> Result<Received<S::Output>> {
         let queue = self.queue.as_ref().ok_or_else(|| {
             zenoh::Error::from("Subscriber was built with callback, no queue available")
         })?;
         let sample = queue.recv_async().await;
         let payload = sample.payload().to_bytes();
-        S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = S::deserialize(&payload).map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 }
 
@@ -1124,6 +1217,10 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
         payload_len = tracing::field::Empty
     ))]
     pub fn recv(&self) -> Result<crate::dynamic::DynamicMessage> {
+        self.recv_with_metadata().map(Received::into_message)
+    }
+
+    pub fn recv_with_metadata(&self) -> Result<Received<crate::dynamic::DynamicMessage>> {
         let schema = self.dyn_schema.as_ref().ok_or_else(|| {
             zenoh::Error::from(
                 "dyn_schema required for DynamicMessage (use .with_dyn_schema() when building)",
@@ -1141,12 +1238,21 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
         tracing::Span::current().record("payload_len", payload.len());
         debug!("[SUB] Received dynamic message");
 
-        crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
-            .map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
+            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 
     /// Receive a dynamic message with timeout.
     pub fn recv_timeout(&self, timeout: Duration) -> Result<crate::dynamic::DynamicMessage> {
+        self.recv_timeout_with_metadata(timeout)
+            .map(Received::into_message)
+    }
+
+    pub fn recv_timeout_with_metadata(
+        &self,
+        timeout: Duration,
+    ) -> Result<Received<crate::dynamic::DynamicMessage>> {
         let schema = self
             .dyn_schema
             .as_ref()
@@ -1161,12 +1267,19 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
             .ok_or_else(|| zenoh::Error::from("Receive timed out"))?;
         let payload = sample.payload().to_bytes();
 
-        crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
-            .map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
+            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 
     /// Async receive a dynamic message.
     pub async fn async_recv(&self) -> Result<crate::dynamic::DynamicMessage> {
+        self.async_recv_with_metadata()
+            .await
+            .map(Received::into_message)
+    }
+
+    pub async fn async_recv_with_metadata(&self) -> Result<Received<crate::dynamic::DynamicMessage>> {
         let schema = self
             .dyn_schema
             .as_ref()
@@ -1179,12 +1292,18 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
         let sample = queue.recv_async().await;
         let payload = sample.payload().to_bytes();
 
-        crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
-            .map_err(|e| zenoh::Error::from(e.to_string()))
+        let message = crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
+            .map_err(|e| zenoh::Error::from(e.to_string()))?;
+        Ok(Received::from_sample(&sample, message))
     }
 
     /// Try to receive a dynamic message without blocking.
     pub fn try_recv(&self) -> Option<Result<crate::dynamic::DynamicMessage>> {
+        self.try_recv_with_metadata()
+            .map(|result| result.map(Received::into_message))
+    }
+
+    pub fn try_recv_with_metadata(&self) -> Option<Result<Received<crate::dynamic::DynamicMessage>>> {
         let schema = self.dyn_schema.as_ref()?;
         let queue = self.queue.as_ref()?;
 
@@ -1192,6 +1311,7 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
             Some(sample) => {
                 let payload = sample.payload().to_bytes();
                 let result = crate::dynamic::DynamicSerdeCdrSerdes::deserialize((&payload, schema))
+                    .map(|message| Received::from_sample(&sample, message))
                     .map_err(|e| zenoh::Error::from(e.to_string()));
                 Some(result)
             }
@@ -1278,6 +1398,21 @@ mod tests {
         };
         let proto = qos.to_protocol_qos();
         assert_eq!(proto.history, ros_z_protocol::qos::QosHistory::KeepLast(5));
+    }
+
+    #[test]
+    fn received_deref_and_partial_eq_follow_inner_message() {
+        let received = Received {
+            message: vec![1_u8, 2, 3],
+            transport_time: None,
+            source_time: None,
+            sequence_number: None,
+            source_gid: None,
+        };
+
+        assert_eq!(received.len(), 3);
+        assert_eq!(received, vec![1_u8, 2, 3]);
+        assert_eq!(received[1], 2);
     }
 
     #[test]

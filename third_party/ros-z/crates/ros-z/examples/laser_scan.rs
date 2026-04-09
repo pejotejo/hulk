@@ -97,23 +97,28 @@ fn run_subscriber() -> Result<()> {
     println!("Listening for LaserScan messages on /scan...");
 
     loop {
-        let msg = zsub.recv()?;
+        let received = zsub.recv_with_metadata()?;
         println!("Received LaserScan:");
-        println!("  Frame: {}", msg.header.frame_id);
+        println!("  Transport time: {:?}", received.transport_time);
+        println!("  Source time: {:?}", received.source_time);
+        println!("  Frame: {}", received.header.frame_id);
         println!(
             "  Angle range: [{:.2}, {:.2}] rad",
-            msg.angle_min, msg.angle_max
+            received.angle_min, received.angle_max
         );
-        println!("  Angle increment: {:.4} rad", msg.angle_increment);
-        println!("  Range: [{:.2}, {:.2}] m", msg.range_min, msg.range_max);
-        println!("  Number of ranges: {}", msg.ranges.len());
-        println!("  Scan time: {:.3} s", msg.scan_time);
+        println!("  Angle increment: {:.4} rad", received.angle_increment);
+        println!(
+            "  Range: [{:.2}, {:.2}] m",
+            received.range_min, received.range_max
+        );
+        println!("  Number of ranges: {}", received.ranges.len());
+        println!("  Scan time: {:.3} s", received.scan_time);
 
-        if !msg.ranges.is_empty() {
-            let valid_ranges: Vec<f32> = msg
+        if !received.ranges.is_empty() {
+            let valid_ranges: Vec<f32> = received
                 .ranges
                 .iter()
-                .filter(|&&r| r >= msg.range_min && r <= msg.range_max)
+                .filter(|&&r| r >= received.range_min && r <= received.range_max)
                 .copied()
                 .collect();
 

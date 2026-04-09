@@ -9,13 +9,15 @@ fn main() -> Result<()> {
     println!("Listening for BatteryState messages on /battery_status...");
 
     loop {
-        let msg = zsub.recv()?;
+        let received = zsub.recv_with_metadata()?;
         println!("Received BatteryState:");
-        println!("  Voltage: {:.2}V", msg.voltage);
-        println!("  Percentage: {:.1}%", msg.percentage * 100.0);
+        println!("  Transport time: {:?}", received.transport_time);
+        println!("  Source time: {:?}", received.source_time);
+        println!("  Voltage: {:.2}V", received.voltage);
+        println!("  Percentage: {:.1}%", received.percentage * 100.0);
         println!(
             "  Status: {}",
-            match msg.power_supply_status {
+            match received.power_supply_status {
                 BatteryState::POWER_SUPPLY_STATUS_UNKNOWN => "Unknown",
                 BatteryState::POWER_SUPPLY_STATUS_CHARGING => "Charging",
                 BatteryState::POWER_SUPPLY_STATUS_DISCHARGING => "Discharging",
@@ -24,10 +26,10 @@ fn main() -> Result<()> {
                 _ => "Invalid",
             }
         );
-        println!("  Temperature: {:.1}°C", msg.temperature);
-        println!("  Current: {:.2}A", msg.current);
-        println!("  Charge: {:.2}Ah", msg.charge);
-        println!("  Capacity: {:.2}Ah", msg.capacity);
+        println!("  Temperature: {:.1}°C", received.temperature);
+        println!("  Current: {:.2}A", received.current);
+        println!("  Charge: {:.2}Ah", received.charge);
+        println!("  Capacity: {:.2}Ah", received.capacity);
         println!("---");
     }
 }

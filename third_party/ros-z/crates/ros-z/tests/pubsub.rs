@@ -107,6 +107,44 @@ async fn test_multiple_messages() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_recv_with_metadata_preserves_receive_context() {
+    let ctx = ZContextBuilder::default()
+        .build()
+        .expect("Failed to create context");
+    let node = ctx
+        .create_node("metadata_node")
+        .build()
+        .expect("Failed to create node");
+
+    let publisher = node
+        .create_pub::<TestMessage>("/metadata_topic")
+        .build()
+        .unwrap();
+
+    let subscriber = node
+        .create_sub::<TestMessage>("/metadata_topic")
+        .build()
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let msg = TestMessage {
+        data: vec![9, 8, 7],
+        counter: 7,
+    };
+    publisher.publish(&msg).unwrap();
+
+    let received = subscriber
+        .recv_timeout_with_metadata(Duration::from_secs(1))
+        .expect("Failed to receive message with metadata");
+    assert_eq!(received.message, msg);
+    assert!(received.transport_time.is_some());
+    assert!(received.source_time.is_some());
+    assert!(received.sequence_number.is_some());
+    assert!(received.source_gid.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_large_payload() {
     let ctx = ZContextBuilder::default()
         .build()
@@ -143,8 +181,8 @@ async fn test_large_payload() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_simulated_clock_is_used_for_attachment_timestamps() {
-    let clock = ZClock::simulated(ZTime::zero());
+async fn test_logical_clock_is_used_for_attachment_timestamps() {
+    let clock = ZClock::logical(ZTime::zero());
     clock.advance(ZDuration::from_secs(5)).unwrap();
 
     let ctx = ZContextBuilder::default()

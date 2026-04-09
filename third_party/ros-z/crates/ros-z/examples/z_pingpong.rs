@@ -12,7 +12,7 @@ use std::{
 use clap::Parser;
 #[cfg(not(test))]
 use csv::Writer;
-use ros_z::{Builder, Result, ZBuf, context::ZContextBuilder};
+use ros_z::{Builder, Result, ZBuf};
 use ros_z_msgs::std_msgs::ByteMultiArray;
 use zenoh_buffers::buffer::{Buffer, SplitBuffer};
 
@@ -198,7 +198,9 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let ctx = ZContextBuilder::default().with_logging_enabled().build()?;
+    let ctx = ros_z::context::ZContextBuilder::default()
+        .with_logging_enabled()
+        .build()?;
     match args.mode.as_str() {
         "ping" => run_ping(ctx, &args),
         "pong" => run_pong(ctx),
