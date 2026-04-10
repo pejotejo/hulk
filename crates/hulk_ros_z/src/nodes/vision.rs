@@ -23,6 +23,9 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let config = node
         .bind_config_with_metadata_as::<VisionConfig>("vision")
         .into_eyre()?;
+    config
+        .add_validation_hook(Arc::new(validate_vision_config))
+        .into_eyre()?;
 
     let image_sub = node
         .create_sub::<Image>(topics::SENSORS_IMAGE)
@@ -87,4 +90,14 @@ fn is_stale(value: u64, now: u64, max_age_ms: u64) -> bool {
 
 fn timestamp_from_stamp(stamp: &ros_z_msgs::builtin_interfaces::Time) -> u64 {
     (stamp.sec as u64) * 1_000_000_000 + u64::from(stamp.nanosec)
+}
+
+fn validate_vision_config(cfg: &VisionConfig) -> std::result::Result<(), String> {
+    if !cfg.status.publish_hz.is_finite() || cfg.status.publish_hz <= 0.0 {
+        return Err("vision.status.publish_hz must be > 0".to_owned());
+    }
+    if cfg.inputs.max_frame_age_ms == 0 {
+        return Err("vision.inputs.max_frame_age_ms must be > 0".to_owned());
+    }
+    Ok(())
 }

@@ -26,6 +26,9 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let config = node
         .bind_config_with_metadata_as::<SimDriverConfig>("sim_driver")
         .into_eyre()?;
+    config
+        .add_validation_hook(Arc::new(validate_sim_driver_config))
+        .into_eyre()?;
 
     let odom_pub = node
         .create_pub::<OdometryState>(topics::SENSORS_ODOMETRY)
@@ -165,4 +168,26 @@ fn make_camera_info(config: &SimDriverConfig, timestamp_ns: u64) -> CameraInfo {
         distortion_model: "plumb_bob".to_owned(),
         ..CameraInfo::default()
     }
+}
+
+fn validate_sim_driver_config(cfg: &SimDriverConfig) -> std::result::Result<(), String> {
+    if !cfg.timing.publish_hz.is_finite() || cfg.timing.publish_hz <= 0.0 {
+        return Err("sim_driver.timing.publish_hz must be > 0".to_owned());
+    }
+    match cfg.odometry.pattern.as_str() {
+        "stationary" | "straight" | "circle" => {}
+        _ => {
+            return Err(
+                "sim_driver.odometry.pattern must be one of: stationary, straight, circle"
+                    .to_owned(),
+            );
+        }
+    }
+    if cfg.image.width == 0 {
+        return Err("sim_driver.image.width must be > 0".to_owned());
+    }
+    if cfg.image.height == 0 {
+        return Err("sim_driver.image.height must be > 0".to_owned());
+    }
+    Ok(())
 }
