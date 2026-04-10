@@ -10,7 +10,7 @@ use ros_z::{
 };
 
 use crate::{
-    ConfigError, ConfigScope,
+    ConfigError, LayerPath,
     remote::types::{
         GetNodeConfigMetadataRequest, GetNodeConfigMetadataResponse, GetNodeConfigMetadataSrv,
         GetNodeConfigSnapshotRequest, GetNodeConfigSnapshotResponse, GetNodeConfigSnapshotSrv,
@@ -87,12 +87,12 @@ impl RemoteConfigClient {
         .await
     }
 
-    /// Set one JSON value at `path` in `target_scope`.
+    /// Set one JSON value at `path` in `target_layer`.
     pub async fn set_json(
         &self,
         path: impl Into<String>,
         value: &serde_json::Value,
-        target_scope: ConfigScope,
+        target_layer: impl Into<LayerPath>,
         expected_revision: Option<u64>,
     ) -> crate::Result<SetNodeConfigResponse> {
         self.call_service::<SetNodeConfigSrv>(
@@ -100,7 +100,7 @@ impl RemoteConfigClient {
             &SetNodeConfigRequest {
                 path: path.into(),
                 value_json: serialize_json(value)?,
-                target_scope,
+                target_layer: target_layer.into(),
                 expected_revision,
             },
         )
@@ -123,18 +123,18 @@ impl RemoteConfigClient {
         .await
     }
 
-    /// Reset one scope-local override.
+    /// Reset one layer-local override.
     pub async fn reset(
         &self,
         path: impl Into<String>,
-        target_scope: ConfigScope,
+        target_layer: impl Into<LayerPath>,
         expected_revision: Option<u64>,
     ) -> crate::Result<ResetNodeConfigResponse> {
         self.call_service::<ResetNodeConfigSrv>(
             &self.service_name("reset"),
             &ResetNodeConfigRequest {
                 path: path.into(),
-                target_scope,
+                target_layer: target_layer.into(),
                 expected_revision,
             },
         )

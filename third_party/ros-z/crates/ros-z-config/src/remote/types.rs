@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use ros_z::{
+    MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
     entity::{TypeHash, TypeInfo},
     msg::{SerdeCdrSerdes, ZMessage, ZService},
-    MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
 };
 
-use crate::snapshot::ConfigTimestamp;
-use crate::ConfigScope;
+use crate::{ConfigKey, LayerPath, snapshot::ConfigTimestamp};
 
 /// JSON payload embedded as a UTF-8 string inside CDR-encoded wire messages.
 pub type JsonPayload = String;
@@ -26,7 +25,7 @@ pub enum NodeConfigChangeSource {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GetNodeConfigSnapshotRequest {}
 
-/// Full effective config snapshot plus per-scope overlays.
+/// Full effective config snapshot plus per-layer overlays.
 ///
 /// `committed_at` is reported on the node's active clock timeline and is not
 /// guaranteed to be host wallclock time when the node uses a logical clock.
@@ -35,14 +34,12 @@ pub struct GetNodeConfigSnapshotResponse {
     pub success: bool,
     pub message: String,
     pub node_fqn: String,
+    pub config_key: ConfigKey,
     pub revision: u64,
     pub committed_at: ConfigTimestamp,
-    pub location: String,
-    pub robot: String,
+    pub layers: Vec<LayerPath>,
     pub value_json: JsonPayload,
-    pub default_overlay_json: JsonPayload,
-    pub location_overlay_json: JsonPayload,
-    pub robot_overlay_json: JsonPayload,
+    pub layer_overlays_json: Vec<JsonPayload>,
 }
 
 /// Request for the effective value at one field path.
@@ -58,16 +55,16 @@ pub struct GetNodeConfigValueResponse {
     pub message: String,
     pub revision: u64,
     pub path: String,
-    pub effective_source_scope: ConfigScope,
+    pub effective_source_layer: LayerPath,
     pub value_json: JsonPayload,
 }
 
-/// Request to set one JSON value in one target scope.
+/// Request to set one JSON value in one target layer.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SetNodeConfigRequest {
     pub path: String,
     pub value_json: JsonPayload,
-    pub target_scope: ConfigScope,
+    pub target_layer: LayerPath,
     pub expected_revision: Option<u64>,
 }
 
@@ -85,7 +82,7 @@ pub struct SetNodeConfigResponse {
 pub struct NodeConfigWriteJson {
     pub path: String,
     pub value_json: JsonPayload,
-    pub target_scope: ConfigScope,
+    pub target_layer: LayerPath,
 }
 
 /// Request to apply several JSON writes atomically.
@@ -104,11 +101,11 @@ pub struct SetNodeConfigAtomicallyResponse {
     pub changed_paths: Vec<String>,
 }
 
-/// Request to remove one scope-local override.
+/// Request to remove one layer-local override.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResetNodeConfigRequest {
     pub path: String,
-    pub target_scope: ConfigScope,
+    pub target_layer: LayerPath,
     pub expected_revision: Option<u64>,
 }
 
@@ -164,10 +161,9 @@ pub struct NodeConfigFieldMetadataWire {
     pub type_name: String,
     pub description: String,
     pub writable: bool,
-    pub allowed_scopes: Vec<ConfigScope>,
     pub min: Option<f64>,
     pub max: Option<f64>,
-    pub effective_source_scope: ConfigScope,
+    pub effective_source_layer: LayerPath,
 }
 
 /// Response containing metadata for one or more field paths.
@@ -183,7 +179,7 @@ pub struct GetNodeConfigMetadataResponse {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NodeConfigChange {
     pub path: String,
-    pub effective_source_scope: ConfigScope,
+    pub effective_source_layer: LayerPath,
     pub old_value_json: JsonPayload,
     pub new_value_json: JsonPayload,
 }
@@ -192,6 +188,7 @@ pub struct NodeConfigChange {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NodeConfigEvent {
     pub node_fqn: String,
+    pub config_key: ConfigKey,
     pub previous_revision: u64,
     pub revision: u64,
     pub source: NodeConfigChangeSource,

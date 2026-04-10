@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ros_z::{Builder, context::ZContextBuilder};
-use ros_z_config::{ConfigScope, NodeConfigSnapshot, prelude::*};
+use ros_z_config::{NodeConfigSnapshot, prelude::*};
 use ros_z_msgs::geometry_msgs::{Twist, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -27,9 +27,11 @@ struct WalkMonitorConfig {
 #[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ctx = ZContextBuilder::default()
-        .with_config_root("./config")
-        .with_location("lab-a")
-        .with_robot("robot-01")
+        .with_config_layers([
+            "./config/base",
+            "./config/location/lab-a",
+            "./config/robot/robot-01",
+        ])
         .build()?;
 
     let pub_node = ctx
@@ -41,8 +43,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
         .with_namespace("safety")
         .build()?;
 
-    let pub_cfg = pub_node.bind_config::<WalkPublisherConfig>()?;
-    let sub_cfg = sub_node.bind_config::<WalkMonitorConfig>()?;
+    let pub_cfg = pub_node.bind_config_as::<WalkPublisherConfig>("walk_publisher")?;
+    let sub_cfg = sub_node.bind_config_as::<WalkMonitorConfig>("walk_monitor")?;
 
     pub_cfg.add_validation_hook(Arc::new(|cfg: &WalkPublisherConfig| {
         if cfg.publish_hz <= 0.0 {
@@ -95,7 +97,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
         }
     });
 
-    pub_cfg.set_json("linear_x", serde_json::json!(0.25), ConfigScope::Robot)?;
+    pub_cfg.set_json(
+        "linear_x",
+        serde_json::json!(0.25),
+        "./config/robot/robot-01",
+    )?;
 
     std::future::pending::<()>().await;
     Ok(())

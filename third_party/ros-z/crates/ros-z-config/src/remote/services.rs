@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use zenoh::Wait;
 
 use crate::{
-    ConfigError, ConfigFieldMetadata, ConfigScope, NodeConfig,
+    ConfigError, ConfigFieldMetadata, NodeConfig,
     node_config::{CommitOutcome, NodeConfigInner},
     remote::types::*,
 };
@@ -162,14 +162,12 @@ where
         success: true,
         message: String::new(),
         node_fqn: snapshot.node_fqn.clone(),
+        config_key: snapshot.config_key.clone(),
         revision: snapshot.revision,
         committed_at: snapshot.committed_at,
-        location: snapshot.location.clone(),
-        robot: snapshot.robot.clone(),
+        layers: snapshot.layers.clone(),
         value_json: to_json(&snapshot.effective),
-        default_overlay_json: to_json(&snapshot.overlays.default_overlay),
-        location_overlay_json: to_json(&snapshot.overlays.location_overlay),
-        robot_overlay_json: to_json(&snapshot.overlays.robot_overlay),
+        layer_overlays_json: snapshot.layer_overlays.iter().map(to_json).collect(),
     };
     reply(query, &response);
 }
@@ -191,9 +189,9 @@ where
                     message: String::new(),
                     revision: snapshot.revision,
                     path: request.path.clone(),
-                    effective_source_scope: snapshot
-                        .effective_source_scope(&request.path)
-                        .unwrap_or(ConfigScope::Default),
+                    effective_source_layer: snapshot
+                        .effective_source_layer(&request.path)
+                        .unwrap_or_default(),
                     value_json: to_json(&value),
                 },
                 Err(err) => GetNodeConfigValueResponse {
@@ -201,7 +199,7 @@ where
                     message: err.to_string(),
                     revision: snapshot.revision,
                     path: request.path,
-                    effective_source_scope: ConfigScope::Default,
+                    effective_source_layer: String::new(),
                     value_json: "null".to_string(),
                 },
             }
@@ -211,7 +209,7 @@ where
             message,
             revision: 0,
             path: String::new(),
-            effective_source_scope: ConfigScope::Default,
+            effective_source_layer: String::new(),
             value_json: "null".to_string(),
         },
     };
@@ -232,7 +230,7 @@ where
                 &[crate::ConfigJsonWrite {
                     path: request.path,
                     value,
-                    target_scope: request.target_scope,
+                    target_layer: request.target_layer,
                 }],
                 &[],
                 request.expected_revision,
@@ -272,7 +270,7 @@ where
                     Ok(value) => writes.push(crate::ConfigJsonWrite {
                         path: write.path,
                         value,
-                        target_scope: write.target_scope,
+                        target_layer: write.target_layer,
                     }),
                     Err(err) => {
                         parse_error = Some(err.to_string());
@@ -316,7 +314,7 @@ where
     let response = match request {
         Ok(request) => match config.commit(
             &[],
-            &[(request.path, request.target_scope)],
+            &[(request.path, request.target_layer)],
             request.expected_revision,
             NodeConfigChangeSource::RemoteWrite,
         ) {
@@ -434,10 +432,9 @@ where
                 type_name: field.type_name,
                 description: field.description,
                 writable: field.writable,
-                allowed_scopes: field.allowed_scopes,
                 min: field.min,
                 max: field.max,
-                effective_source_scope: snapshot.effective_source_scope(&path).unwrap_or_default(),
+                effective_source_layer: snapshot.effective_source_layer(&path).unwrap_or_default(),
             });
         }
     }

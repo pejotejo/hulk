@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ros_z::{Builder, context::ZContextBuilder};
-use ros_z_config::{ConfigMetadata, ConfigScope, prelude::*};
+use ros_z_config::{ConfigMetadata, prelude::*};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ConfigMetadata)]
@@ -23,9 +23,11 @@ struct WalkPublisherConfig {
 #[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ctx = ZContextBuilder::default()
-        .with_config_root("./config")
-        .with_location("lab-a")
-        .with_robot("robot-01")
+        .with_config_layers([
+            "./config/base",
+            "./config/location/lab-a",
+            "./config/robot/robot-01",
+        ])
         .build()?;
 
     let node = ctx
@@ -33,7 +35,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
         .with_namespace("motion")
         .build()?;
 
-    let config = node.bind_config_with_metadata::<WalkPublisherConfig>()?;
+    let config = node.bind_config_with_metadata_as::<WalkPublisherConfig>("walk_publisher")?;
 
     config.add_validation_hook(Arc::new(|cfg: &WalkPublisherConfig| {
         if cfg.publish_hz <= 0.0 {
@@ -50,7 +52,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
         );
     }
 
-    config.set_json("linear_x", serde_json::json!(0.25), ConfigScope::Robot)?;
+    config.set_json(
+        "linear_x",
+        serde_json::json!(0.25),
+        "./config/robot/robot-01",
+    )?;
     if std::env::var_os("ROSZ_CONFIG_EXAMPLE_HOLD").is_some() {
         std::future::pending::<()>().await;
     }

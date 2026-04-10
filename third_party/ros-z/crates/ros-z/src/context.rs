@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use tracing::{debug, warn};
 use zenoh::{Result, Session, Wait};
 
 use crate::{
-    entity::normalize_node_namespace, graph::Graph, node::ZNodeBuilder, time::ZClock, Builder,
+    Builder, entity::normalize_node_namespace, graph::Graph, node::ZNodeBuilder, time::ZClock,
 };
 
 #[derive(Debug, Default)]
@@ -30,9 +30,7 @@ use serde_json::json;
 /// core crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuntimeConfigInputs {
-    pub config_root: Option<PathBuf>,
-    pub location: Option<String>,
-    pub robot: Option<String>,
+    pub config_layers: Vec<PathBuf>,
 }
 
 /// Remapping rules for ROS names
@@ -312,21 +310,19 @@ impl ZContextBuilder {
         self
     }
 
-    /// Set the config root used by external configuration subsystems.
-    pub fn with_config_root<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        self.runtime_config_inputs.config_root = Some(path.into());
+    /// Append one config layer used by external configuration subsystems.
+    pub fn with_config_layer<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.runtime_config_inputs.config_layers.push(path.into());
         self
     }
 
-    /// Set the active deployment location used by external configuration subsystems.
-    pub fn with_location<S: Into<String>>(mut self, location: S) -> Self {
-        self.runtime_config_inputs.location = Some(location.into());
-        self
-    }
-
-    /// Set the active robot identity used by external configuration subsystems.
-    pub fn with_robot<S: Into<String>>(mut self, robot: S) -> Self {
-        self.runtime_config_inputs.robot = Some(robot.into());
+    /// Replace the active config layers used by external configuration subsystems.
+    pub fn with_config_layers<I, P>(mut self, layers: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.runtime_config_inputs.config_layers = layers.into_iter().map(Into::into).collect();
         self
     }
 
@@ -681,5 +677,46 @@ impl ZContext {
     /// Access config-related startup inputs carried by this context.
     pub fn runtime_config_inputs(&self) -> &RuntimeConfigInputs {
         &self.runtime_config_inputs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Builder;
+
+    #[test]
+    fn context_builder_appends_and_replaces_config_layers() {
+        let builder = ZContextBuilder::default()
+            .with_config_layer("./config/base")
+            .with_config_layer("./config/robot")
+            .with_config_layers(["./config/override"]);
+
+        assert_eq!(
+            builder.runtime_config_inputs.config_layers,
+            vec![PathBuf::from("./config/override")]
+        );
+    }
+
+    #[test]
+    fn node_builder_inherits_and_replaces_config_layers() {
+        let ctx = ZContextBuilder::default()
+            .with_mode("peer")
+            .disable_multicast_scouting()
+            .with_config_layer("./config/base")
+            .build()
+            .unwrap();
+
+        let builder = ctx
+            .create_node("demo")
+            .with_config_layer("./config/robot")
+            .with_config_layers(["./config/override"]);
+
+        assert_eq!(
+            builder.runtime_config_inputs.config_layers,
+            vec![PathBuf::from("./config/override")]
+        );
+
+        ctx.shutdown().unwrap();
     }
 }

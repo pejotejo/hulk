@@ -161,18 +161,17 @@ pub fn print_parameter_set(view: &ParameterSetView) {
 
 pub fn print_config_snapshot(view: &ConfigSnapshotView) -> Result<()> {
     println!("Node: {}", view.node);
+    println!("Config Key: {}", view.config_key);
     println!("Revision: {}", view.revision);
     println!(
         "Committed At: {}.{:09}",
         view.committed_at.sec, view.committed_at.nanosec
     );
-    println!("Location: {}", view.location);
-    println!("Robot: {}", view.robot);
     println!("Effective:");
     println!("{}", serde_json::to_string_pretty(&view.effective)?);
-    print_overlay_summary("Default Overlay", &view.overlays.default)?;
-    print_overlay_summary("Location Overlay", &view.overlays.location)?;
-    print_overlay_summary("Robot Overlay", &view.overlays.robot)?;
+    for (layer, overlay) in view.layers.iter().zip(&view.layer_overlays) {
+        print_overlay_summary(&format!("Layer Overlay [{layer}]"), overlay)?;
+    }
     Ok(())
 }
 
@@ -180,7 +179,7 @@ pub fn print_config_value(view: &ConfigValueView) -> Result<()> {
     println!("Node: {}", view.node);
     println!("Path: {}", view.path);
     println!("Revision: {}", view.revision);
-    println!("Source Scope: {}", view.effective_source_scope);
+    println!("Source Layer: {}", view.effective_source_layer);
     println!("Value: {}", serde_json::to_string(&view.value)?);
     Ok(())
 }
@@ -191,8 +190,8 @@ pub fn print_config_mutation(view: &ConfigMutationView) {
     if let Some(path) = &view.path {
         println!("Path: {path}");
     }
-    if let Some(scope) = &view.target_scope {
-        println!("Target Scope: {scope}");
+    if let Some(layer) = &view.target_layer {
+        println!("Target Layer: {layer}");
     }
     println!("Committed Revision: {}", view.committed_revision);
     println!("Successful: {}", view.successful);
@@ -244,8 +243,9 @@ pub fn print_config_metadata(view: &ConfigMetadataView) {
 
 pub fn print_config_watch_event(view: &ConfigWatchEventView) {
     println!(
-        "config {} rev {} -> {} source={} paths={}",
+        "config {} ({}) rev {} -> {} source={} paths={}",
         view.node,
+        view.config_key,
         view.previous_revision,
         view.revision,
         view.source,
@@ -328,13 +328,10 @@ fn column_width<'a>(values: impl Iterator<Item = &'a str>) -> usize {
 fn print_config_metadata_field(field: &ConfigMetadataFieldView) {
     println!(
         "{}  type={} writable={} source={}",
-        field.path, field.type_name, field.writable, field.effective_source_scope
+        field.path, field.type_name, field.writable, field.effective_source_layer
     );
     if !field.description.is_empty() {
         println!("  doc: {}", field.description);
-    }
-    if !field.allowed_scopes.is_empty() {
-        println!("  scopes: {}", field.allowed_scopes.join(", "));
     }
     if field.min.is_some() || field.max.is_some() {
         println!(

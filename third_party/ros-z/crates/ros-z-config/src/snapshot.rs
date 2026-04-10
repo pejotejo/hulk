@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::watch;
 
-use crate::{merge::ProvenanceMap, scope::ConfigScope};
+use crate::{ConfigKey, LayerPath, ProvenanceMap};
 
 /// Transport-friendly commit timestamp.
 ///
@@ -30,14 +30,6 @@ impl ConfigTimestamp {
     }
 }
 
-/// Raw per-scope overlays stored alongside a committed snapshot.
-#[derive(Debug, Clone)]
-pub struct NodeScopeOverlays {
-    pub default_overlay: Value,
-    pub location_overlay: Value,
-    pub robot_overlay: Value,
-}
-
 /// Immutable committed config state for one node.
 ///
 /// Readers receive snapshots through [`crate::NodeConfig::snapshot`] and
@@ -49,14 +41,14 @@ pub struct NodeScopeOverlays {
 #[derive(Debug, Clone)]
 pub struct NodeConfigSnapshot<T> {
     pub node_fqn: String,
+    pub config_key: ConfigKey,
     pub typed: Arc<T>,
     pub effective: Value,
-    pub overlays: NodeScopeOverlays,
+    pub layers: Vec<LayerPath>,
+    pub layer_overlays: Vec<Value>,
     pub provenance: Arc<ProvenanceMap>,
     pub revision: u64,
     pub committed_at: ConfigTimestamp,
-    pub location: String,
-    pub robot: String,
 }
 
 impl<T> NodeConfigSnapshot<T> {
@@ -65,9 +57,9 @@ impl<T> NodeConfigSnapshot<T> {
         self.typed.as_ref()
     }
 
-    /// Return the scope that currently contributes the effective value at `path`.
-    pub fn effective_source_scope(&self, path: &str) -> Option<ConfigScope> {
-        self.provenance.get(path).copied()
+    /// Return the layer that currently contributes the effective value at `path`.
+    pub fn effective_source_layer(&self, path: &str) -> Option<LayerPath> {
+        self.provenance.get(path).cloned()
     }
 }
 

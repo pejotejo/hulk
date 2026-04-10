@@ -1255,11 +1255,6 @@ fn generate_config_metadata_field_tokens(field: &syn::Field) -> syn::Result<Toke
                 type_name: ::std::string::String::from(::std::any::type_name::<#field_ty>()),
                 description: #description_lit.to_string(),
                 writable: #writable,
-                allowed_scopes: ::std::vec![
-                    ::ros_z_config::ConfigScope::Default,
-                    ::ros_z_config::ConfigScope::Location,
-                    ::ros_z_config::ConfigScope::Robot,
-                ],
                 min: #min_tokens,
                 max: #max_tokens,
             });

@@ -1,5 +1,7 @@
 use std::{fmt, path::PathBuf};
 
+use crate::{ConfigKey, LayerPath};
+
 /// Errors produced by the node-local config subsystem.
 ///
 /// Internal APIs use this typed error surface directly. Remote request/response
@@ -16,6 +18,9 @@ pub enum ConfigError {
     PersistenceError { path: PathBuf, message: String },
     PathError { path: String, reason: String },
     MissingSelection { field: &'static str },
+    EmptyLayerList,
+    InvalidConfigKey { key: ConfigKey },
+    LayerNotActive { layer: LayerPath },
     AlreadyBound { node_fqn: String },
     RemoteError { message: String },
 }
@@ -55,6 +60,11 @@ impl fmt::Display for ConfigError {
             Self::PathError { path, reason } => write!(f, "invalid path '{path}': {reason}"),
             Self::MissingSelection { field } => {
                 write!(f, "missing required config selection: {field}")
+            }
+            Self::EmptyLayerList => write!(f, "config layer list must not be empty"),
+            Self::InvalidConfigKey { key } => write!(f, "invalid config key '{key}'"),
+            Self::LayerNotActive { layer } => {
+                write!(f, "target layer is not active for this node: {layer}")
             }
             Self::AlreadyBound { node_fqn } => {
                 write!(f, "config already bound for node {node_fqn}")

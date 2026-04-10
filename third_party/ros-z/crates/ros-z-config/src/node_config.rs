@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    path::PathBuf,
     sync::{Arc, OnceLock},
 };
 
@@ -11,13 +12,12 @@ use serde_json::Value;
 use tokio::sync::watch;
 
 use crate::{
-    ConfigError, ConfigFieldMetadata, ConfigMetadata, ConfigScope, ConfigTimestamp,
-    NodeConfigPaths, NodeConfigSnapshot, NodeScopeOverlays, ResolvedBootstrap, Result,
-    bootstrap::resolve_bootstrap,
+    ConfigError, ConfigFieldMetadata, ConfigKey, ConfigMetadata, ConfigTimestamp, FieldPath,
+    LayerPath, NodeConfigSnapshot, Result,
     loader::load_json5_object_or_empty,
     merge::{
-        RecursiveDiffEntry, get_value_at_path as get_from_value, merge_overlays,
-        provenance_for_path, recursive_diff, remove_value_at_path, set_value_at_path,
+        RecursiveDiffEntry, get_value_at_path as get_from_value, merge_layers, provenance_for_path,
+        recursive_diff, remove_value_at_path, set_value_at_path,
     },
     persistence::write_pretty_json,
     remote::{
@@ -32,9 +32,9 @@ pub type ValidateHook<T> = Arc<dyn Fn(&T) -> std::result::Result<(), String> + S
 /// One JSON write operation used by [`NodeConfig::set_json_atomically`].
 #[derive(Debug, Clone)]
 pub struct ConfigJsonWrite {
-    pub path: String,
+    pub path: FieldPath,
     pub value: Value,
-    pub target_scope: ConfigScope,
+    pub target_layer: LayerPath,
 }
 
 /// Typed node-local config handle.
@@ -49,9 +49,9 @@ pub struct NodeConfig<T> {
 
 pub struct NodeConfigInner<T> {
     pub(crate) node_fqn: String,
+    pub(crate) config_key: ConfigKey,
+    pub(crate) layers: Vec<PathBuf>,
     clock: ros_z::time::ZClock,
-    bootstrap: ResolvedBootstrap,
-    paths: NodeConfigPaths,
     commit_lock: Mutex<()>,
     hooks: Mutex<Vec<ValidateHook<T>>>,
     current: ArcSwap<NodeConfigSnapshot<T>>,
@@ -69,28 +69,35 @@ impl<T> Drop for NodeConfigInner<T> {
 
 /// Extension methods that bind typed config to a `ros-z` node.
 pub trait NodeConfigExt {
-    /// Bind a typed config handle to the node.
+    /// Bind a typed config handle to the node using `config_key` as the
+    /// filename stem inside the active config layers.
     ///
     /// This is provided by `ros_z_config::prelude::*`, not as an inherent
     /// method on `ros_z::node::ZNode`.
-    fn bind_config<T>(&self) -> Result<NodeConfig<T>>
+    fn bind_config_as<T>(&self, config_key: impl Into<ConfigKey>) -> Result<NodeConfig<T>>
     where
         T: Serialize + DeserializeOwned + Send + Sync + 'static;
 
-    /// Bind a typed config handle with metadata support enabled.
+    /// Bind a typed config handle with metadata support enabled using
+    /// `config_key` as the filename stem inside the active config layers.
     ///
     /// This requires `T` to implement [`crate::ConfigMetadata`], typically via
     /// `#[derive(ros_z_config::ConfigMetadata)]`.
-    fn bind_config_with_metadata<T>(&self) -> Result<NodeConfig<T>>
+    fn bind_config_with_metadata_as<T>(
+        &self,
+        config_key: impl Into<ConfigKey>,
+    ) -> Result<NodeConfig<T>>
     where
         T: Serialize + DeserializeOwned + Send + Sync + ConfigMetadata + 'static;
 }
 
 impl NodeConfigExt for ZNode {
-    fn bind_config<T>(&self) -> Result<NodeConfig<T>>
+    fn bind_config_as<T>(&self, config_key: impl Into<ConfigKey>) -> Result<NodeConfig<T>>
     where
         T: Serialize + DeserializeOwned + Send + Sync + 'static,
     {
+        let config_key = config_key.into();
+        validate_config_key(&config_key)?;
         let mut bound = self.config_binding_state().lock();
         if *bound {
             return Err(ConfigError::AlreadyBound {
@@ -99,7 +106,7 @@ impl NodeConfigExt for ZNode {
         }
         *bound = true;
 
-        match bind_config_inner(self) {
+        match bind_config_inner(self, config_key) {
             Ok(config) => Ok(config),
             Err(err) => {
                 *bound = false;
@@ -108,10 +115,15 @@ impl NodeConfigExt for ZNode {
         }
     }
 
-    fn bind_config_with_metadata<T>(&self) -> Result<NodeConfig<T>>
+    fn bind_config_with_metadata_as<T>(
+        &self,
+        config_key: impl Into<ConfigKey>,
+    ) -> Result<NodeConfig<T>>
     where
         T: Serialize + DeserializeOwned + Send + Sync + ConfigMetadata + 'static,
     {
+        let config_key = config_key.into();
+        validate_config_key(&config_key)?;
         let mut bound = self.config_binding_state().lock();
         if *bound {
             return Err(ConfigError::AlreadyBound {
@@ -120,7 +132,11 @@ impl NodeConfigExt for ZNode {
         }
         *bound = true;
 
-        match bind_config_inner_with_metadata(self, Some(Arc::new(T::config_metadata()))) {
+        match bind_config_inner_with_metadata(
+            self,
+            config_key,
+            Some(Arc::new(T::config_metadata())),
+        ) {
             Ok(config) => Ok(config),
             Err(err) => {
                 *bound = false;
@@ -130,24 +146,28 @@ impl NodeConfigExt for ZNode {
     }
 }
 
-fn bind_config_inner<T>(node: &ZNode) -> Result<NodeConfig<T>>
+fn bind_config_inner<T>(node: &ZNode, config_key: ConfigKey) -> Result<NodeConfig<T>>
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    bind_config_inner_with_metadata(node, None)
+    bind_config_inner_with_metadata(node, config_key, None)
 }
 
 fn bind_config_inner_with_metadata<T>(
     node: &ZNode,
+    config_key: ConfigKey,
     metadata: Option<Arc<Vec<ConfigFieldMetadata>>>,
 ) -> Result<NodeConfig<T>>
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    let bootstrap = resolve_bootstrap(node.runtime_config_inputs())?;
+    let layers = node.runtime_config_inputs().config_layers.clone();
+    if layers.is_empty() {
+        return Err(ConfigError::EmptyLayerList);
+    }
+
     let node_fqn = node_fqn(node);
-    let paths = bootstrap.resolve_node_paths(&node_fqn)?;
-    let snapshot = load_snapshot::<T>(&node_fqn, node.clock(), &bootstrap, &paths, 0)?;
+    let snapshot = load_snapshot::<T>(&node_fqn, &config_key, &layers, node.clock(), 0)?;
     let snapshot = Arc::new(snapshot);
     let (tx, _rx) = watch::channel(snapshot.clone());
 
@@ -155,9 +175,9 @@ where
     let current = ArcSwap::from(snapshot);
     let inner = Arc::new(NodeConfigInner {
         node_fqn: node_fqn.clone(),
+        config_key,
+        layers,
         clock: node.clock().clone(),
-        bootstrap,
-        paths: paths.clone(),
         commit_lock: Mutex::new(()),
         hooks: Mutex::new(Vec::new()),
         current,
@@ -189,43 +209,71 @@ fn node_fqn(node: &ZNode) -> String {
     }
 }
 
+fn validate_config_key(config_key: &str) -> Result<()> {
+    if config_key.is_empty()
+        || !config_key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(ConfigError::InvalidConfigKey {
+            key: config_key.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn layer_path(path: &std::path::Path) -> LayerPath {
+    path.to_string_lossy().into_owned()
+}
+
 fn load_snapshot<T>(
     node_fqn: &str,
+    config_key: &str,
+    layers: &[PathBuf],
     clock: &ros_z::time::ZClock,
-    bootstrap: &ResolvedBootstrap,
-    paths: &NodeConfigPaths,
     revision: u64,
 ) -> Result<NodeConfigSnapshot<T>>
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    let default_overlay = load_json5_object_or_empty(&paths.default)?;
-    let location_overlay = load_json5_object_or_empty(&paths.location)?;
-    let robot_overlay = load_json5_object_or_empty(&paths.robot)?;
+    let layer_overlays = layers
+        .iter()
+        .map(|layer| load_json5_object_or_empty(&layer.join(format!("{config_key}.json5"))))
+        .collect::<Result<Vec<_>>>()?;
+
     snapshot_from_parts(
         node_fqn,
+        config_key,
+        layers,
         clock,
-        bootstrap,
         revision,
-        default_overlay,
-        location_overlay,
-        robot_overlay,
+        layer_overlays,
     )
 }
 
 fn snapshot_from_parts<T>(
     node_fqn: &str,
+    config_key: &str,
+    layers: &[PathBuf],
     clock: &ros_z::time::ZClock,
-    bootstrap: &ResolvedBootstrap,
     revision: u64,
-    default_overlay: Value,
-    location_overlay: Value,
-    robot_overlay: Value,
+    layer_overlays: Vec<Value>,
 ) -> Result<NodeConfigSnapshot<T>>
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    let merged = merge_overlays(&default_overlay, &location_overlay, &robot_overlay)?;
+    let layers = layers
+        .iter()
+        .map(|path| layer_path(path))
+        .collect::<Vec<_>>();
+    let merged = merge_layers(
+        &layers
+            .iter()
+            .cloned()
+            .zip(layer_overlays.iter().cloned())
+            .collect::<Vec<_>>(),
+    )?;
     let typed: T = serde_json::from_value(merged.effective.clone()).map_err(|err| {
         ConfigError::DeserializationError {
             message: err.to_string(),
@@ -234,18 +282,14 @@ where
 
     Ok(NodeConfigSnapshot {
         node_fqn: node_fqn.to_string(),
+        config_key: config_key.to_string(),
         typed: Arc::new(typed),
         effective: merged.effective,
-        overlays: NodeScopeOverlays {
-            default_overlay,
-            location_overlay,
-            robot_overlay,
-        },
+        layers,
+        layer_overlays,
         provenance: Arc::new(merged.provenance),
         revision,
         committed_at: ConfigTimestamp::now_from(clock),
-        location: bootstrap.location.clone(),
-        robot: bootstrap.robot.clone(),
     })
 }
 
@@ -266,13 +310,18 @@ where
         })
     }
 
-    /// Set one path in one target scope using a JSON value.
-    pub fn set_json(&self, path: &str, value: Value, scope: ConfigScope) -> Result<()> {
+    /// Set one path in one target layer using a JSON value.
+    pub fn set_json(
+        &self,
+        path: &str,
+        value: Value,
+        target_layer: impl Into<LayerPath>,
+    ) -> Result<()> {
         self.commit(
             &[ConfigJsonWrite {
                 path: path.to_string(),
                 value,
-                target_scope: scope,
+                target_layer: target_layer.into(),
             }],
             &[],
             None,
@@ -299,15 +348,15 @@ where
         .map(|_| ())
     }
 
-    /// Remove one scope-local override.
+    /// Remove one layer-local override.
     ///
-    /// Reset removes the key from the target scope overlay rather than writing
-    /// `null`. If the key is absent in the target scope, reset succeeds as a
+    /// Reset removes the key from the target layer overlay rather than writing
+    /// `null`. If the key is absent in the target layer, reset succeeds as a
     /// no-op.
-    pub fn reset(&self, path: &str, scope: ConfigScope) -> Result<()> {
+    pub fn reset(&self, path: &str, target_layer: impl Into<LayerPath>) -> Result<()> {
         self.commit(
             &[],
-            &[(path.to_string(), scope)],
+            &[(path.to_string(), target_layer.into())],
             None,
             NodeConfigChangeSource::LocalWrite,
         )
@@ -329,9 +378,9 @@ where
 
         let candidate = load_snapshot::<T>(
             &self.inner.node_fqn,
+            &self.inner.config_key,
+            &self.inner.layers,
             &self.inner.clock,
-            &self.inner.bootstrap,
-            &self.inner.paths,
             current.revision + 1,
         )?;
         self.run_hooks(candidate.typed.as_ref())?;
@@ -411,7 +460,7 @@ where
     pub(crate) fn commit(
         &self,
         writes: &[ConfigJsonWrite],
-        resets: &[(String, ConfigScope)],
+        resets: &[(FieldPath, LayerPath)],
         expected_revision: Option<u64>,
         source: NodeConfigChangeSource,
     ) -> Result<CommitOutcome> {
@@ -426,56 +475,54 @@ where
             });
         }
 
-        let mut default_overlay = current.overlays.default_overlay.clone();
-        let mut location_overlay = current.overlays.location_overlay.clone();
-        let mut robot_overlay = current.overlays.robot_overlay.clone();
+        let mut layer_overlays = current.layer_overlays.clone();
+        let active_layers = self
+            .inner
+            .layers
+            .iter()
+            .map(|path| layer_path(path))
+            .collect::<Vec<_>>();
         let mut touched = BTreeSet::new();
 
         for write in writes {
-            let overlay = match write.target_scope {
-                ConfigScope::Default => &mut default_overlay,
-                ConfigScope::Location => &mut location_overlay,
-                ConfigScope::Robot => &mut robot_overlay,
-            };
+            let index = active_layers
+                .iter()
+                .position(|layer| layer == &write.target_layer)
+                .ok_or_else(|| ConfigError::LayerNotActive {
+                    layer: write.target_layer.clone(),
+                })?;
+            let overlay = &mut layer_overlays[index];
             set_value_at_path(overlay, &write.path, write.value.clone())?;
-            touched.insert(write.target_scope);
+            touched.insert(index);
         }
 
-        for (path, scope) in resets {
-            let overlay = match scope {
-                ConfigScope::Default => &mut default_overlay,
-                ConfigScope::Location => &mut location_overlay,
-                ConfigScope::Robot => &mut robot_overlay,
-            };
+        for (path, target_layer) in resets {
+            let index = active_layers
+                .iter()
+                .position(|layer| layer == target_layer)
+                .ok_or_else(|| ConfigError::LayerNotActive {
+                    layer: target_layer.clone(),
+                })?;
+            let overlay = &mut layer_overlays[index];
             if remove_value_at_path(overlay, path)? {
-                touched.insert(*scope);
+                touched.insert(index);
             }
         }
 
         let candidate = snapshot_from_parts::<T>(
             &self.inner.node_fqn,
+            &self.inner.config_key,
+            &self.inner.layers,
             &self.inner.clock,
-            &self.inner.bootstrap,
             current.revision + 1,
-            default_overlay,
-            location_overlay,
-            robot_overlay,
+            layer_overlays,
         )?;
         self.run_hooks(candidate.typed.as_ref())?;
 
-        for scope in &touched {
-            let (path, value) = match scope {
-                ConfigScope::Default => (
-                    &self.inner.paths.default,
-                    &candidate.overlays.default_overlay,
-                ),
-                ConfigScope::Location => (
-                    &self.inner.paths.location,
-                    &candidate.overlays.location_overlay,
-                ),
-                ConfigScope::Robot => (&self.inner.paths.robot, &candidate.overlays.robot_overlay),
-            };
-            write_pretty_json(path, value)?;
+        for index in &touched {
+            let path = self.inner.layers[*index].join(format!("{}.json5", self.inner.config_key));
+            let value = &candidate.layer_overlays[*index];
+            write_pretty_json(&path, value)?;
         }
 
         let diff = recursive_diff(&current.effective, &candidate.effective);
@@ -503,7 +550,7 @@ where
         let changes = diff
             .into_iter()
             .map(|entry| NodeConfigChange {
-                effective_source_scope: provenance_for_path(&current.provenance, &entry.path)
+                effective_source_layer: provenance_for_path(&current.provenance, &entry.path)
                     .unwrap_or_default(),
                 path: entry.path,
                 old_value_json: serde_json::to_string(&entry.old_value)
@@ -515,6 +562,7 @@ where
 
         let event = NodeConfigEvent {
             node_fqn: self.inner.node_fqn.clone(),
+            config_key: self.inner.config_key.clone(),
             previous_revision: previous.revision,
             revision: current.revision,
             source,
@@ -538,6 +586,7 @@ impl<T> std::fmt::Debug for NodeConfig<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeConfig")
             .field("node_fqn", &self.inner.node_fqn)
+            .field("config_key", &self.inner.config_key)
             .finish_non_exhaustive()
     }
 }

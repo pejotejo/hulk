@@ -2,10 +2,7 @@ use std::collections::BTreeSet;
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use ros_z::graph::Graph;
-use ros_z_config::ConfigScope;
 use serde_json::Value;
-
-use crate::cli::ConfigScopeArg;
 
 pub fn resolve_config_node_fqn(graph: &Graph, selector: &str) -> Result<String> {
     let candidates = sorted_node_fqns(graph);
@@ -34,22 +31,6 @@ pub fn parse_config_json(input: &str) -> Result<Value> {
 
 pub fn config_service_name(node_fqn: &str, suffix: &str) -> String {
     format!("{node_fqn}/config/{suffix}")
-}
-
-pub fn config_scope_name(scope: ConfigScope) -> &'static str {
-    match scope {
-        ConfigScope::Default => "default",
-        ConfigScope::Location => "location",
-        ConfigScope::Robot => "robot",
-    }
-}
-
-pub fn config_scope_arg_to_scope(scope: ConfigScopeArg) -> ConfigScope {
-    match scope {
-        ConfigScopeArg::Default => ConfigScope::Default,
-        ConfigScopeArg::Location => ConfigScope::Location,
-        ConfigScopeArg::Robot => ConfigScope::Robot,
-    }
 }
 
 fn resolve_config_node_fqn_from_candidates(
@@ -93,7 +74,9 @@ fn verify_config_capability_from_services(
         return Ok(());
     }
 
-    bail!("node exists but does not expose config services: {node_fqn} (did it call bind_config?)")
+    bail!(
+        "node exists but does not expose config services: {node_fqn} (did it call bind_config_as?)"
+    )
 }
 
 fn verify_config_metadata_capability_from_services(
@@ -108,7 +91,7 @@ fn verify_config_metadata_capability_from_services(
     }
 
     bail!(
-        "node exposes config services but not metadata services: {node_fqn} (did it call bind_config_with_metadata?)"
+        "node exposes config services but not metadata services: {node_fqn} (did it call bind_config_with_metadata_as?)"
     )
 }
 
@@ -142,12 +125,9 @@ fn fully_qualified_node_name(namespace: &str, name: &str) -> String {
 mod tests {
     use std::collections::BTreeSet;
 
-    use crate::cli::ConfigScopeArg;
-
     use super::{
-        config_scope_arg_to_scope, config_scope_name, config_service_name, parse_config_json,
-        resolve_config_node_fqn_from_candidates, verify_config_capability_from_services,
-        verify_config_metadata_capability_from_services,
+        config_service_name, parse_config_json, resolve_config_node_fqn_from_candidates,
+        verify_config_capability_from_services, verify_config_metadata_capability_from_services,
     };
 
     #[test]
@@ -178,22 +158,6 @@ mod tests {
     fn invalid_json_mentions_string_quoting() {
         let err = parse_config_json("hello").expect_err("must reject invalid JSON");
         assert!(err.to_string().contains("strings must be quoted"));
-    }
-
-    #[test]
-    fn scope_mapping_uses_lowercase_names() {
-        assert_eq!(
-            config_scope_name(config_scope_arg_to_scope(ConfigScopeArg::Default)),
-            "default"
-        );
-        assert_eq!(
-            config_scope_name(config_scope_arg_to_scope(ConfigScopeArg::Location)),
-            "location"
-        );
-        assert_eq!(
-            config_scope_name(config_scope_arg_to_scope(ConfigScopeArg::Robot)),
-            "robot"
-        );
     }
 
     #[test]
@@ -239,6 +203,6 @@ mod tests {
         let err =
             verify_config_metadata_capability_from_services(&services, "/motion/walk_publisher")
                 .expect_err("must reject partial metadata capability");
-        assert!(err.to_string().contains("bind_config_with_metadata"));
+        assert!(err.to_string().contains("bind_config_with_metadata_as"));
     }
 }

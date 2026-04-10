@@ -36,14 +36,6 @@ pub enum ParameterValueTypeArg {
     NotSet,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
-pub enum ConfigScopeArg {
-    Default,
-    Location,
-    #[default]
-    Robot,
-}
-
 #[derive(Debug, Parser)]
 #[command(name = "rosz")]
 #[command(about = "Scriptable command-line companion to ros-z")]
@@ -154,18 +146,18 @@ pub enum ConfigCommand {
         value: String,
         #[arg(long)]
         node: String,
-        #[arg(long, value_enum, default_value_t = ConfigScopeArg::Robot)]
-        scope: ConfigScopeArg,
+        #[arg(long)]
+        layer: String,
         #[arg(long)]
         expected_revision: Option<u64>,
     },
-    /// Reset one scope-local override
+    /// Reset one layer-local override
     Reset {
         path: String,
         #[arg(long)]
         node: String,
-        #[arg(long, value_enum, default_value_t = ConfigScopeArg::Robot)]
-        scope: ConfigScopeArg,
+        #[arg(long)]
+        layer: String,
         #[arg(long)]
         expected_revision: Option<u64>,
     },
@@ -203,8 +195,7 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        Backend, Cli, Command, ConfigCommand, ConfigScopeArg, ListTarget, ParamCommand,
-        ParameterValueTypeArg,
+        Backend, Cli, Command, ConfigCommand, ListTarget, ParamCommand, ParameterValueTypeArg,
     };
 
     #[test]
@@ -293,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_config_set_with_scope_and_revision() {
+    fn parses_config_set_with_layer_and_revision() {
         let cli = Cli::parse_from([
             "rosz",
             "config",
@@ -302,8 +293,8 @@ mod tests {
             "0.72",
             "--node",
             "/vision/ball_detector",
-            "--scope",
-            "location",
+            "--layer",
+            "/tmp/config/location",
             "--expected-revision",
             "4",
         ]);
@@ -314,13 +305,13 @@ mod tests {
                     path,
                     value,
                     node,
-                    scope,
+                    layer,
                     expected_revision,
                 } => {
                     assert_eq!(path, "threshold");
                     assert_eq!(value, "0.72");
                     assert_eq!(node, "/vision/ball_detector");
-                    assert_eq!(scope, ConfigScopeArg::Location);
+                    assert_eq!(layer, "/tmp/config/location");
                     assert_eq!(expected_revision, Some(4));
                 }
                 other => panic!("unexpected config command: {other:?}"),

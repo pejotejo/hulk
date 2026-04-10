@@ -1,5 +1,3 @@
-use crate::scope::ConfigScope;
-
 /// Metadata describing one addressable config field.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigFieldMetadata {
@@ -7,7 +5,6 @@ pub struct ConfigFieldMetadata {
     pub type_name: String,
     pub description: String,
     pub writable: bool,
-    pub allowed_scopes: Vec<ConfigScope>,
     pub min: Option<f64>,
     pub max: Option<f64>,
 }
@@ -26,7 +23,7 @@ impl ConfigFieldMetadata {
 /// Optional metadata provider for config types.
 ///
 /// This trait is only needed when using metadata-enabled bindings through
-/// `bind_config_with_metadata::<T>()`. Ordinary config bindings do not require
+/// `bind_config_with_metadata_as::<T>(...)`. Ordinary config bindings do not require
 /// metadata support.
 pub trait ConfigMetadata {
     /// Return metadata for all addressable fields in the config type.

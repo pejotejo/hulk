@@ -7,9 +7,8 @@ use std::{
 
 use ros_z::{Builder, context::ZContextBuilder};
 use ros_z_config::{
-    ConfigMetadata, ConfigScope, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv,
-    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigExt,
-    RemoteConfigClient, SetNodeConfigSrv,
+    ConfigMetadata, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv, GetNodeConfigValueSrv,
+    ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigExt, RemoteConfigClient, SetNodeConfigSrv,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +38,12 @@ struct MetadataConfig {
     linear_x: f64,
 }
 
+struct TestLayers {
+    base: PathBuf,
+    location: PathBuf,
+    robot: PathBuf,
+}
+
 fn temp_config_root() -> PathBuf {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("ros_z_config_test_{id}"));
@@ -47,61 +52,73 @@ fn temp_config_root() -> PathBuf {
     root
 }
 
-fn write_file(root: &Path, relative: &str, contents: &str) {
-    let path = root.join(relative);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent dirs");
+fn test_layers(root: &Path, suffix: &str) -> TestLayers {
+    TestLayers {
+        base: root.join("base"),
+        location: root.join(format!("location-lab-{suffix}")),
+        robot: root.join(format!("robot-{suffix}")),
     }
-    fs::write(path, contents).expect("write config file");
 }
 
-fn build_ctx(root: &Path, suffix: &str) -> ros_z::Result<ros_z::context::ZContext> {
+fn layer_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn write_layer_file(layer: &Path, config_key: &str, contents: &str) {
+    fs::create_dir_all(layer).expect("create layer dir");
+    fs::write(layer.join(format!("{config_key}.json5")), contents).expect("write config file");
+}
+
+fn build_ctx(layers: &TestLayers) -> ros_z::Result<ros_z::context::ZContext> {
     ZContextBuilder::default()
         .with_domain_id(10_000 + NEXT_ID.fetch_add(1, Ordering::Relaxed))
         .with_mode("peer")
         .disable_multicast_scouting()
-        .with_config_root(root)
-        .with_location(format!("lab-{suffix}"))
-        .with_robot(format!("robot-{suffix}"))
+        .with_config_layers([
+            layers.base.clone(),
+            layers.location.clone(),
+            layers.robot.clone(),
+        ])
         .build()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn bind_merge_set_and_subscribe_work() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "a");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{
             enabled: true,
             threshold: 0.5,
             nested: { count: 1 }
         }"#,
     );
-    write_file(
-        &root,
-        "location/lab-a/vision/ball_detector.json5",
-        r#"{ threshold: 0.8 }"#,
-    );
+    write_layer_file(&layers.location, "ball_detector", r#"{ threshold: 0.8 }"#);
 
-    let ctx = build_ctx(&root, "a")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
 
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     let snapshot = config.snapshot();
     assert!(snapshot.typed().enabled);
     assert_eq!(snapshot.typed().threshold, 0.8);
 
     let mut rx = config.subscribe();
-    config.set_json("nested.count", serde_json::json!(7), ConfigScope::Robot)?;
+    config.set_json(
+        "nested.count",
+        serde_json::json!(7),
+        layer_string(&layers.robot),
+    )?;
     rx.changed().await.expect("watch update");
     let updated = rx.borrow().clone();
     assert_eq!(updated.typed().nested.count, 7);
 
-    let robot_file = fs::read_to_string(root.join("robot/robot-a/vision/ball_detector.json5"))?;
+    let robot_file = fs::read_to_string(layers.robot.join("ball_detector.json5"))?;
     let reparsed: serde_json::Value = json5::from_str(&robot_file)?;
     assert_eq!(reparsed["nested"]["count"], 7);
 
@@ -111,21 +128,22 @@ async fn bind_merge_set_and_subscribe_work() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn second_bind_fails() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "b");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "b")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
 
-    let _config = node.bind_config::<VisionConfig>()?;
+    let _config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     let err = node
-        .bind_config::<VisionConfig>()
+        .bind_config_as::<VisionConfig>("ball_detector")
         .expect_err("second bind must fail");
     assert!(err.to_string().contains("already bound"));
     Ok(())
@@ -134,19 +152,20 @@ async fn second_bind_fails() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn late_validation_hook_validates_current_snapshot() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "c");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 2.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "c")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
 
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     let err = config
         .add_validation_hook(std::sync::Arc::new(|cfg: &VisionConfig| {
             if cfg.threshold > 1.0 {
@@ -163,18 +182,19 @@ async fn late_validation_hook_validates_current_snapshot() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn remote_v1_services_work() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/motion/walk_publisher.json5",
+    let layers = test_layers(&root, "d");
+    write_layer_file(
+        &layers.base,
+        "walk_publisher",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "d")?;
+    let ctx = build_ctx(&layers)?;
     let server_node = ctx
         .create_node("walk_publisher")
         .with_namespace("motion")
         .build()?;
-    let _config = server_node.bind_config::<VisionConfig>()?;
+    let _config = server_node.bind_config_as::<VisionConfig>("walk_publisher")?;
 
     let client_node = ctx.create_node("tester").with_namespace("tools").build()?;
 
@@ -183,6 +203,7 @@ async fn remote_v1_services_work() -> TestResult {
         .build()?;
     let snapshot = snapshot_client.call(&Default::default()).await?;
     assert!(snapshot.success);
+    assert_eq!(snapshot.config_key, "walk_publisher");
     assert!(snapshot.value_json.contains("threshold"));
 
     let set_client = client_node
@@ -192,7 +213,7 @@ async fn remote_v1_services_work() -> TestResult {
         .call(&ros_z_config::SetNodeConfigRequest {
             path: "threshold".into(),
             value_json: "0.9".into(),
-            target_scope: ConfigScope::Robot,
+            target_layer: layer_string(&layers.robot),
             expected_revision: None,
         })
         .await?;
@@ -215,18 +236,19 @@ async fn remote_v1_services_work() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn metadata_local_and_remote_work_when_enabled() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/motion/walk_publisher.json5",
+    let layers = test_layers(&root, "e");
+    write_layer_file(
+        &layers.base,
+        "walk_publisher",
         r#"{ enabled: true, linear_x: 0.2 }"#,
     );
 
-    let ctx = build_ctx(&root, "e")?;
+    let ctx = build_ctx(&layers)?;
     let server_node = ctx
         .create_node("walk_publisher")
         .with_namespace("motion")
         .build()?;
-    let config = server_node.bind_config_with_metadata::<MetadataConfig>()?;
+    let config = server_node.bind_config_with_metadata_as::<MetadataConfig>("walk_publisher")?;
 
     let paths = config.list_paths()?;
     assert!(paths.contains(&"enabled".to_string()));
@@ -280,18 +302,19 @@ async fn metadata_local_and_remote_work_when_enabled() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn remote_client_round_trips_and_receives_events() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/motion/walk_publisher.json5",
+    let layers = test_layers(&root, "remote-client");
+    write_layer_file(
+        &layers.base,
+        "walk_publisher",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "remote-client")?;
+    let ctx = build_ctx(&layers)?;
     let server_node = ctx
         .create_node("walk_publisher")
         .with_namespace("motion")
         .build()?;
-    let _config = server_node.bind_config::<VisionConfig>()?;
+    let _config = server_node.bind_config_as::<VisionConfig>("walk_publisher")?;
 
     let client_node =
         std::sync::Arc::new(ctx.create_node("tester").with_namespace("tools").build()?);
@@ -299,6 +322,7 @@ async fn remote_client_round_trips_and_receives_events() -> TestResult {
 
     let snapshot = client.get_snapshot().await?;
     assert!(snapshot.success);
+    assert_eq!(snapshot.config_key, "walk_publisher");
     assert!(snapshot.value_json.contains("threshold"));
 
     let value = client.get_value("threshold").await?;
@@ -312,7 +336,7 @@ async fn remote_client_round_trips_and_receives_events() -> TestResult {
         .set_json(
             "threshold",
             &serde_json::json!(0.9),
-            ConfigScope::Robot,
+            layer_string(&layers.robot),
             None,
         )
         .await?;
@@ -321,6 +345,7 @@ async fn remote_client_round_trips_and_receives_events() -> TestResult {
 
     let event: NodeConfigEvent = events.async_recv().await?;
     assert_eq!(event.node_fqn, "/motion/walk_publisher");
+    assert_eq!(event.config_key, "walk_publisher");
     assert!(event.changed_paths.contains(&"threshold".to_string()));
 
     Ok(())
@@ -329,29 +354,26 @@ async fn remote_client_round_trips_and_receives_events() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn reset_exposes_lower_scope_and_noop_succeeds() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "f");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
-    write_file(
-        &root,
-        "robot/robot-f/vision/ball_detector.json5",
-        r#"{ threshold: 0.9 }"#,
-    );
+    write_layer_file(&layers.robot, "ball_detector", r#"{ threshold: 0.9 }"#);
 
-    let ctx = build_ctx(&root, "f")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     assert_eq!(config.snapshot().typed().threshold, 0.9);
 
-    config.reset("threshold", ConfigScope::Robot)?;
+    config.reset("threshold", layer_string(&layers.robot))?;
     assert_eq!(config.snapshot().typed().threshold, 0.5);
 
-    config.reset("threshold", ConfigScope::Robot)?;
+    config.reset("threshold", layer_string(&layers.robot))?;
     assert_eq!(config.snapshot().typed().threshold, 0.5);
     Ok(())
 }
@@ -365,21 +387,18 @@ async fn reset_rejects_invalid_config() -> TestResult {
     }
 
     let root = temp_config_root();
-    write_file(
-        &root,
-        "robot/robot-g/vision/ball_detector.json5",
-        r#"{ threshold: 0.9 }"#,
-    );
+    let layers = test_layers(&root, "g");
+    write_layer_file(&layers.robot, "ball_detector", r#"{ threshold: 0.9 }"#);
 
-    let ctx = build_ctx(&root, "g")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<RequiredOnlyConfig>()?;
+    let config = node.bind_config_as::<RequiredOnlyConfig>("ball_detector")?;
 
     let err = config
-        .reset("threshold", ConfigScope::Robot)
+        .reset("threshold", layer_string(&layers.robot))
         .expect_err("reset should fail when it removes required config");
     assert!(
         err.to_string().contains("deserialization") || err.to_string().contains("missing field")
@@ -391,19 +410,20 @@ async fn reset_rejects_invalid_config() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn reload_updates_snapshot_and_preserves_last_good_on_failure() -> TestResult {
     let root = temp_config_root();
-    let path = root.join("default/vision/ball_detector.json5");
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "h");
+    let path = layers.base.join("ball_detector.json5");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "h")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
 
     fs::write(
         &path,
@@ -425,25 +445,26 @@ async fn reload_updates_snapshot_and_preserves_last_good_on_failure() -> TestRes
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn revision_mismatch_rejects_local_atomic_write() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "i");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "i")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
 
     let err = config
         .set_json_atomically(
             vec![ros_z_config::ConfigJsonWrite {
                 path: "threshold".into(),
                 value: serde_json::json!(0.9),
-                target_scope: ConfigScope::Robot,
+                target_layer: layer_string(&layers.robot),
             }],
             Some(999),
         )
@@ -456,18 +477,19 @@ async fn revision_mismatch_rejects_local_atomic_write() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn local_atomic_write_updates_multiple_paths() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "j");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "j")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     let revision = config.snapshot().revision;
 
     config.set_json_atomically(
@@ -475,12 +497,12 @@ async fn local_atomic_write_updates_multiple_paths() -> TestResult {
             ros_z_config::ConfigJsonWrite {
                 path: "threshold".into(),
                 value: serde_json::json!(0.9),
-                target_scope: ConfigScope::Robot,
+                target_layer: layer_string(&layers.robot),
             },
             ros_z_config::ConfigJsonWrite {
                 path: "nested.count".into(),
                 value: serde_json::json!(42),
-                target_scope: ConfigScope::Robot,
+                target_layer: layer_string(&layers.robot),
             },
         ],
         Some(revision),
@@ -495,24 +517,31 @@ async fn local_atomic_write_updates_multiple_paths() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_readers_and_writers_do_not_lose_updates() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "k");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 0 } }"#,
     );
 
-    let ctx = build_ctx(&root, "k")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
+    let robot_layer = layer_string(&layers.robot);
 
     let writer_a = {
         let config = config.clone();
+        let robot_layer = robot_layer.clone();
         tokio::spawn(async move {
             for value in 1..=10u32 {
-                config.set_json("nested.count", serde_json::json!(value), ConfigScope::Robot)?;
+                config.set_json(
+                    "nested.count",
+                    serde_json::json!(value),
+                    robot_layer.clone(),
+                )?;
             }
             Ok::<_, ros_z_config::ConfigError>(())
         })
@@ -520,12 +549,13 @@ async fn concurrent_readers_and_writers_do_not_lose_updates() -> TestResult {
 
     let writer_b = {
         let config = config.clone();
+        let robot_layer = robot_layer.clone();
         tokio::spawn(async move {
             for value in 1..=10u32 {
                 config.set_json(
                     "threshold",
                     serde_json::json!(0.5 + (value as f64 / 10.0)),
-                    ConfigScope::Robot,
+                    robot_layer.clone(),
                 )?;
             }
             Ok::<_, ros_z_config::ConfigError>(())
@@ -557,21 +587,26 @@ async fn concurrent_readers_and_writers_do_not_lose_updates() -> TestResult {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn persistence_round_trip_pretty_json_is_valid_json5() -> TestResult {
     let root = temp_config_root();
-    write_file(
-        &root,
-        "default/vision/ball_detector.json5",
+    let layers = test_layers(&root, "l");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
         r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
     );
 
-    let ctx = build_ctx(&root, "l")?;
+    let ctx = build_ctx(&layers)?;
     let node = ctx
         .create_node("ball_detector")
         .with_namespace("vision")
         .build()?;
-    let config = node.bind_config::<VisionConfig>()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
 
-    config.set_json("threshold", serde_json::json!(0.75), ConfigScope::Robot)?;
-    let written = fs::read_to_string(root.join("robot/robot-l/vision/ball_detector.json5"))?;
+    config.set_json(
+        "threshold",
+        serde_json::json!(0.75),
+        layer_string(&layers.robot),
+    )?;
+    let written = fs::read_to_string(layers.robot.join("ball_detector.json5"))?;
     let reparsed: serde_json::Value = json5::from_str(&written)?;
     assert_eq!(reparsed["threshold"], 0.75);
     Ok(())

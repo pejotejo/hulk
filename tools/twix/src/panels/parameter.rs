@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use eframe::egui::{ComboBox, Response, ScrollArea, TextEdit, Ui, Widget};
 use hulk_widgets::CompletionEdit;
-use ros_z_config::{ConfigScope, NodeConfigFieldMetadataWire};
-use serde_json::{json, Value};
+use ros_z_config::NodeConfigFieldMetadataWire;
+use serde_json::{Value, json};
 
 use crate::{
     panel::{Panel, PanelCreationContext},
@@ -14,12 +14,14 @@ pub struct ParameterPanel {
     robot: Arc<Robot>,
     node_selector: String,
     field_path: String,
-    target_scope: ConfigScope,
+    target_layer: String,
+    available_layers: Vec<String>,
+    config_key: Option<String>,
     field_paths: Vec<String>,
     field_metadata: Option<NodeConfigFieldMetadataWire>,
     parameter_value: String,
     current_revision: Option<u64>,
-    effective_source_scope: Option<ConfigScope>,
+    effective_source_layer: Option<String>,
     metadata_available: bool,
     status_message: Option<String>,
 }
@@ -42,17 +44,19 @@ impl<'a> Panel<'a> for ParameterPanel {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            target_scope: context
+            target_layer: context
                 .value
-                .and_then(|value| value.get("scope"))
+                .and_then(|value| value.get("layer"))
                 .and_then(Value::as_str)
-                .and_then(parse_scope)
-                .unwrap_or(ConfigScope::Robot),
+                .unwrap_or_default()
+                .to_string(),
+            available_layers: Vec::new(),
+            config_key: None,
             field_paths: Vec::new(),
             field_metadata: None,
             parameter_value: String::new(),
             current_revision: None,
-            effective_source_scope: None,
+            effective_source_layer: None,
             metadata_available: false,
             status_message: None,
         };
@@ -65,7 +69,7 @@ impl<'a> Panel<'a> for ParameterPanel {
         json!({
             "node": self.node_selector,
             "field_path": self.field_path,
-            "scope": scope_name(self.target_scope),
+            "layer": self.target_layer,
         })
     }
 }
@@ -74,11 +78,34 @@ impl ParameterPanel {
     fn refresh_node_context(&mut self) {
         self.field_paths.clear();
         self.field_metadata = None;
+        self.available_layers.clear();
+        self.config_key = None;
         self.metadata_available = false;
         self.status_message = None;
 
         if self.node_selector.is_empty() {
             return;
+        }
+
+        match self.robot.get_config_snapshot(&self.node_selector) {
+            Ok(response) if response.success => {
+                self.available_layers = response.layers;
+                self.config_key = Some(response.config_key);
+                if self.target_layer.is_empty()
+                    || !self
+                        .available_layers
+                        .iter()
+                        .any(|layer| layer == &self.target_layer)
+                {
+                    self.target_layer = self.available_layers.last().cloned().unwrap_or_default();
+                }
+            }
+            Ok(response) => {
+                self.status_message = Some(response.message);
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+            }
         }
 
         match self.robot.list_config_paths(&self.node_selector, true) {
@@ -98,7 +125,7 @@ impl ParameterPanel {
     fn refresh_selected_value(&mut self) {
         self.field_metadata = None;
         self.current_revision = None;
-        self.effective_source_scope = None;
+        self.effective_source_layer = None;
 
         if self.node_selector.is_empty() || self.field_path.is_empty() {
             return;
@@ -110,7 +137,7 @@ impl ParameterPanel {
         {
             Ok(response) if response.success => {
                 self.current_revision = Some(response.revision);
-                self.effective_source_scope = Some(response.effective_source_scope);
+                self.effective_source_layer = Some(response.effective_source_layer);
                 self.parameter_value = response.value_json;
                 self.status_message = None;
             }
@@ -154,7 +181,7 @@ impl ParameterPanel {
             &self.node_selector,
             &self.field_path,
             &value,
-            self.target_scope,
+            self.target_layer.clone(),
             expected_revision,
         ) {
             Ok(response) if response.success => {
@@ -177,7 +204,7 @@ impl ParameterPanel {
         match self.robot.reset_config(
             &self.node_selector,
             &self.field_path,
-            self.target_scope,
+            self.target_layer.clone(),
             self.current_revision,
         ) {
             Ok(response) if response.success => {
@@ -240,21 +267,17 @@ impl Widget for &mut ParameterPanel {
                     }
                 }
 
-                ComboBox::from_id_salt(ui.id().with("parameter-scope"))
-                    .selected_text(scope_name(self.target_scope))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.target_scope,
-                            ConfigScope::Default,
-                            "default",
-                        );
-                        ui.selectable_value(
-                            &mut self.target_scope,
-                            ConfigScope::Location,
-                            "location",
-                        );
-                        ui.selectable_value(&mut self.target_scope, ConfigScope::Robot, "robot");
-                    });
+                if self.available_layers.is_empty() {
+                    ui.add(TextEdit::singleline(&mut self.target_layer).hint_text("target layer"));
+                } else {
+                    ComboBox::from_id_salt(ui.id().with("parameter-layer"))
+                        .selected_text(self.target_layer.as_str())
+                        .show_ui(ui, |ui| {
+                            for layer in &self.available_layers {
+                                ui.selectable_value(&mut self.target_layer, layer.clone(), layer);
+                            }
+                        });
+                }
 
                 if ui.button("Refresh").clicked() {
                     self.refresh_node_context();
@@ -264,16 +287,10 @@ impl Widget for &mut ParameterPanel {
 
             if let Some(metadata) = &self.field_metadata {
                 ui.label(format!(
-                    "type={} writable={} source={} scopes={}{}{}",
+                    "type={} writable={} source={}{}{}",
                     metadata.type_name,
                     metadata.writable,
-                    scope_name(metadata.effective_source_scope),
-                    metadata
-                        .allowed_scopes
-                        .iter()
-                        .map(|scope| scope_name(*scope))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    metadata.effective_source_layer,
                     metadata
                         .min
                         .map(|min| format!(" min={min}"))
@@ -291,12 +308,13 @@ impl Widget for &mut ParameterPanel {
             ui.horizontal(|ui| {
                 let can_mutate = !self.node_selector.is_empty()
                     && !self.field_path.is_empty()
-                    && self.current_revision.is_some();
+                    && self.current_revision.is_some()
+                    && !self.target_layer.is_empty();
                 ui.add_enabled_ui(can_mutate, |ui| {
                     if ui.button("Commit").clicked() {
                         self.commit();
                     }
-                    if ui.button("Reset scope").clicked() {
+                    if ui.button("Reset layer").clicked() {
                         self.reset_scope();
                     }
                 });
@@ -304,8 +322,11 @@ impl Widget for &mut ParameterPanel {
                 if let Some(revision) = self.current_revision {
                     ui.label(format!("revision {revision}"));
                 }
-                if let Some(scope) = self.effective_source_scope {
-                    ui.label(format!("source {}", scope_name(scope)));
+                if let Some(layer) = &self.effective_source_layer {
+                    ui.label(format!("source {layer}"));
+                }
+                if let Some(config_key) = &self.config_key {
+                    ui.label(format!("config {config_key}"));
                 }
             });
 
@@ -322,22 +343,5 @@ impl Widget for &mut ParameterPanel {
             }
         })
         .response
-    }
-}
-
-fn parse_scope(scope: &str) -> Option<ConfigScope> {
-    match scope {
-        "default" => Some(ConfigScope::Default),
-        "location" => Some(ConfigScope::Location),
-        "robot" => Some(ConfigScope::Robot),
-        _ => None,
-    }
-}
-
-fn scope_name(scope: ConfigScope) -> &'static str {
-    match scope {
-        ConfigScope::Default => "default",
-        ConfigScope::Location => "location",
-        ConfigScope::Robot => "robot",
     }
 }

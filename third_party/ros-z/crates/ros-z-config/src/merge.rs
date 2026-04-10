@@ -1,10 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::{ConfigError, ConfigScope, Result};
-
-pub(crate) type ProvenanceMap = BTreeMap<String, ConfigScope>;
+use crate::{ConfigError, LayerPath, ProvenanceMap, Result};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RecursiveDiffEntry {
@@ -21,21 +19,13 @@ pub(crate) struct MergedConfig {
     pub provenance: ProvenanceMap,
 }
 
-pub(crate) fn merge_overlays(
-    default: &Value,
-    location: &Value,
-    robot: &Value,
-) -> Result<MergedConfig> {
+pub(crate) fn merge_layers(layers: &[(LayerPath, Value)]) -> Result<MergedConfig> {
     let mut provenance = ProvenanceMap::new();
-    let effective = merge_value("", default, Some(ConfigScope::Default), &mut provenance);
-    let effective = merge_value_into(
-        "",
-        effective,
-        location,
-        ConfigScope::Location,
-        &mut provenance,
-    );
-    let effective = merge_value_into("", effective, robot, ConfigScope::Robot, &mut provenance);
+    let mut effective = Value::Object(Map::new());
+
+    for (layer, overlay) in layers {
+        effective = merge_value_into("", effective, overlay, layer, &mut provenance);
+    }
 
     Ok(MergedConfig {
         effective,
@@ -47,42 +37,42 @@ fn merge_value_into(
     path: &str,
     base: Value,
     overlay: &Value,
-    scope: ConfigScope,
+    layer: &str,
     provenance: &mut ProvenanceMap,
 ) -> Value {
     match (base, overlay) {
         (Value::Object(mut left), Value::Object(right)) => {
             if !path.is_empty() {
-                provenance.insert(path.to_string(), scope);
+                provenance.insert(path.to_string(), layer.to_string());
             }
 
             for key in right.keys() {
                 let child_path = join_path(path, key);
                 let merged = match left.remove(key) {
                     Some(left_value) => {
-                        merge_value_into(&child_path, left_value, &right[key], scope, provenance)
+                        merge_value_into(&child_path, left_value, &right[key], layer, provenance)
                     }
-                    None => merge_value(&child_path, &right[key], Some(scope), provenance),
+                    None => merge_value(&child_path, &right[key], Some(layer), provenance),
                 };
                 left.insert(key.clone(), merged);
             }
 
             Value::Object(left)
         }
-        (_, right) => merge_value(path, right, Some(scope), provenance),
+        (_, right) => merge_value(path, right, Some(layer), provenance),
     }
 }
 
 fn merge_value(
     path: &str,
     value: &Value,
-    scope: Option<ConfigScope>,
+    layer: Option<&str>,
     provenance: &mut ProvenanceMap,
 ) -> Value {
-    if let Some(scope) = scope
+    if let Some(layer) = layer
         && !path.is_empty()
     {
-        provenance.insert(path.to_string(), scope);
+        provenance.insert(path.to_string(), layer.to_string());
     }
 
     match value {
@@ -92,7 +82,7 @@ fn merge_value(
                 let child_path = join_path(path, key);
                 merged.insert(
                     key.clone(),
-                    merge_value(&child_path, child, scope, provenance),
+                    merge_value(&child_path, child, layer, provenance),
                 );
             }
             Value::Object(merged)
@@ -210,8 +200,8 @@ fn diff_value(path: &str, old: &Value, new: &Value, out: &mut RecursiveDiff) {
     }
 }
 
-pub(crate) fn provenance_for_path(provenance: &ProvenanceMap, path: &str) -> Option<ConfigScope> {
-    provenance.get(path).copied()
+pub(crate) fn provenance_for_path(provenance: &ProvenanceMap, path: &str) -> Option<LayerPath> {
+    provenance.get(path).cloned()
 }
 
 fn parse_path(path: &str) -> Result<Vec<&str>> {
@@ -254,25 +244,31 @@ mod tests {
 
     #[test]
     fn merge_prefers_higher_precedence_scalars() {
-        let merged = merge_overlays(
-            &json!({"a": 1, "nested": {"x": 1, "y": 2}}),
-            &json!({"nested": {"x": 9}}),
-            &json!({"a": 5}),
-        )
+        let merged = merge_layers(&[
+            (
+                "./config/base".into(),
+                json!({"a": 1, "nested": {"x": 1, "y": 2}}),
+            ),
+            ("./config/location".into(), json!({"nested": {"x": 9}})),
+            ("./config/robot".into(), json!({"a": 5})),
+        ])
         .unwrap();
 
         assert_eq!(
             merged.effective,
             json!({"a": 5, "nested": {"x": 9, "y": 2}})
         );
-        assert_eq!(merged.provenance.get("a"), Some(&ConfigScope::Robot));
+        assert_eq!(
+            merged.provenance.get("a"),
+            Some(&"./config/robot".to_string())
+        );
         assert_eq!(
             merged.provenance.get("nested.x"),
-            Some(&ConfigScope::Location)
+            Some(&"./config/location".to_string())
         );
         assert_eq!(
             merged.provenance.get("nested.y"),
-            Some(&ConfigScope::Default)
+            Some(&"./config/base".to_string())
         );
     }
 

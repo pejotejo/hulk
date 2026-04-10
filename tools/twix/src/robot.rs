@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeSet,
-    thread,
-    sync::{Arc, Mutex},
     sync::atomic::{AtomicU64, Ordering},
+    sync::{Arc, Mutex},
+    thread,
     time::Duration,
 };
 
@@ -18,13 +18,8 @@ use ros_z::{
     time::ZTime,
 };
 use ros_z_config::{
-    ConfigScope,
-    GetNodeConfigMetadataResponse,
-    GetNodeConfigSnapshotResponse,
-    GetNodeConfigValueResponse,
-    ListNodeConfigPathsResponse,
-    RemoteConfigClient,
-    ResetNodeConfigResponse,
+    GetNodeConfigMetadataResponse, GetNodeConfigSnapshotResponse, GetNodeConfigValueResponse,
+    ListNodeConfigPathsResponse, RemoteConfigClient, ResetNodeConfigResponse,
     SetNodeConfigResponse,
 };
 use serde_json::Value;
@@ -64,7 +59,10 @@ pub struct Robot {
 
 impl Robot {
     pub fn new(endpoint: String, _repository: Option<repository::Repository>) -> Self {
-        let runtime = RuntimeBuilder::new_multi_thread().enable_all().build().unwrap();
+        let runtime = RuntimeBuilder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let (backend_tx, _) = watch::channel(None);
         let (status_tx, _) = watch::channel(BackendConnectionStatus::Disconnected);
 
@@ -119,7 +117,8 @@ impl Robot {
     pub fn disconnect(&self) {
         *self.current_backend.lock().unwrap() = None;
         self.backend_tx.send_replace(None);
-        self.status_tx.send_replace(BackendConnectionStatus::Disconnected);
+        self.status_tx
+            .send_replace(BackendConnectionStatus::Disconnected);
         trigger_callbacks(&self.callbacks);
     }
 
@@ -225,8 +224,7 @@ impl Robot {
         handle
     }
 
-    pub fn subscribe_value<T>(&self, logical_path: impl Into<String>) -> BufferHandle<T>
-    {
+    pub fn subscribe_value<T>(&self, logical_path: impl Into<String>) -> BufferHandle<T> {
         self.subscribe_buffered_value(logical_path, Duration::ZERO)
     }
 
@@ -237,7 +235,9 @@ impl Robot {
     ) -> BufferHandle<T> {
         let logical_path = logical_path.into();
         let (buffer, handle) = Buffer::new(history);
-        buffer.push_error(eyre!(BackendError::UnmappedLogicalPath { path: logical_path }));
+        buffer.push_error(eyre!(BackendError::UnmappedLogicalPath {
+            path: logical_path
+        }));
         handle
     }
 
@@ -331,12 +331,12 @@ impl Robot {
         selector: &str,
         path: &str,
         value: &Value,
-        scope: ConfigScope,
+        layer: String,
         expected_revision: Option<u64>,
     ) -> BackendResult<SetNodeConfigResponse> {
         let client = self.config_client(selector)?;
         self.runtime
-            .block_on(client.set_json(path, value, scope, expected_revision))
+            .block_on(client.set_json(path, value, layer, expected_revision))
             .map_err(|error| BackendError::Operation {
                 operation: "config.set_json",
                 message: error.to_string(),
@@ -347,12 +347,12 @@ impl Robot {
         &self,
         selector: &str,
         path: &str,
-        scope: ConfigScope,
+        layer: String,
         expected_revision: Option<u64>,
     ) -> BackendResult<ResetNodeConfigResponse> {
         let client = self.config_client(selector)?;
         self.runtime
-            .block_on(client.reset(path, scope, expected_revision))
+            .block_on(client.reset(path, layer, expected_revision))
             .map_err(|error| BackendError::Operation {
                 operation: "config.reset",
                 message: error.to_string(),
@@ -428,8 +428,7 @@ async fn subscribe_dynamic_json_loop(
                     operation: "dynamic.subscribe",
                     message: error.to_string(),
                 })
-            })
-        {
+            }) {
             Ok(subscriber) => subscriber,
             Err(error) => {
                 buffer.push_error(eyre!(error));
@@ -494,8 +493,7 @@ async fn subscribe_dynamic_change_loop(
                     operation: "dynamic.subscribe",
                     message: error.to_string(),
                 })
-            })
-        {
+            }) {
             Ok(subscriber) => subscriber,
             Err(error) => {
                 buffer.push_error(eyre!(error));
@@ -597,7 +595,12 @@ fn subscribe_typed_value_loop<T>(
         };
 
         loop {
-            if backend_rx.borrow().as_ref().map(|backend| backend.generation) != Some(generation) {
+            if backend_rx
+                .borrow()
+                .as_ref()
+                .map(|backend| backend.generation)
+                != Some(generation)
+            {
                 break;
             }
             match subscriber.recv_timeout_with_metadata(Duration::from_millis(200)) {
@@ -682,7 +685,12 @@ fn resolve_config_node_selector(
 
     let matches = nodes
         .into_iter()
-        .filter(|node_fqn| node_fqn.rsplit('/').next().is_some_and(|name| name == selector))
+        .filter(|node_fqn| {
+            node_fqn
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name == selector)
+        })
         .collect::<Vec<_>>();
     match matches.as_slice() {
         [] => Err(BackendError::Operation {
@@ -692,7 +700,10 @@ fn resolve_config_node_selector(
         [node_fqn] => Ok(node_fqn.clone()),
         _ => Err(BackendError::Operation {
             operation: "config.resolve_node",
-            message: format!("node name '{selector}' is ambiguous: {}", matches.join(", ")),
+            message: format!(
+                "node name '{selector}' is ambiguous: {}",
+                matches.join(", ")
+            ),
         }),
     }
 }

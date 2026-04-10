@@ -6,40 +6,32 @@ use ros_z_config::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::support::config::config_scope_name;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ConfigSnapshotView {
     pub node: String,
+    pub config_key: String,
     pub revision: u64,
     pub committed_at: ConfigTimestamp,
-    pub location: String,
-    pub robot: String,
     pub effective: Value,
-    pub overlays: ConfigSnapshotOverlaysView,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ConfigSnapshotOverlaysView {
-    pub default: Value,
-    pub location: Value,
-    pub robot: Value,
+    pub layers: Vec<String>,
+    pub layer_overlays: Vec<Value>,
 }
 
 impl ConfigSnapshotView {
     pub fn from_response(response: GetNodeConfigSnapshotResponse) -> Result<Self> {
         Ok(Self {
             node: response.node_fqn,
+            config_key: response.config_key,
             revision: response.revision,
             committed_at: response.committed_at,
-            location: response.location,
-            robot: response.robot,
             effective: parse_json_field("effective config", &response.value_json)?,
-            overlays: ConfigSnapshotOverlaysView {
-                default: parse_json_field("default overlay", &response.default_overlay_json)?,
-                location: parse_json_field("location overlay", &response.location_overlay_json)?,
-                robot: parse_json_field("robot overlay", &response.robot_overlay_json)?,
-            },
+            layers: response.layers,
+            layer_overlays: response
+                .layer_overlays_json
+                .iter()
+                .enumerate()
+                .map(|(index, value)| parse_json_field(&format!("layer overlay {index}"), value))
+                .collect::<Result<Vec<_>>>()?,
         })
     }
 }
@@ -49,7 +41,7 @@ pub struct ConfigValueView {
     pub node: String,
     pub path: String,
     pub revision: u64,
-    pub effective_source_scope: String,
+    pub effective_source_layer: String,
     pub value: Value,
 }
 
@@ -59,7 +51,7 @@ impl ConfigValueView {
             node,
             path: response.path,
             revision: response.revision,
-            effective_source_scope: config_scope_name(response.effective_source_scope).to_string(),
+            effective_source_layer: response.effective_source_layer,
             value: parse_json_field("config value", &response.value_json)?,
         })
     }
@@ -70,7 +62,7 @@ pub struct ConfigMutationView {
     pub node: String,
     pub operation: String,
     pub path: Option<String>,
-    pub target_scope: Option<String>,
+    pub target_layer: Option<String>,
     pub committed_revision: u64,
     pub changed_paths: Vec<String>,
     pub successful: bool,
@@ -81,7 +73,7 @@ impl ConfigMutationView {
         node: String,
         operation: impl Into<String>,
         path: Option<String>,
-        target_scope: Option<String>,
+        target_layer: Option<String>,
         committed_revision: u64,
         changed_paths: Vec<String>,
         successful: bool,
@@ -90,7 +82,7 @@ impl ConfigMutationView {
             node,
             operation: operation.into(),
             path,
-            target_scope,
+            target_layer,
             committed_revision,
             changed_paths,
             successful,
@@ -142,10 +134,9 @@ pub struct ConfigMetadataFieldView {
     pub type_name: String,
     pub description: String,
     pub writable: bool,
-    pub allowed_scopes: Vec<String>,
     pub min: Option<f64>,
     pub max: Option<f64>,
-    pub effective_source_scope: String,
+    pub effective_source_layer: String,
 }
 
 impl ConfigMetadataView {
@@ -166,15 +157,9 @@ impl ConfigMetadataView {
                     type_name: field.type_name,
                     description: field.description,
                     writable: field.writable,
-                    allowed_scopes: field
-                        .allowed_scopes
-                        .into_iter()
-                        .map(|scope| config_scope_name(scope).to_string())
-                        .collect(),
                     min: field.min,
                     max: field.max,
-                    effective_source_scope: config_scope_name(field.effective_source_scope)
-                        .to_string(),
+                    effective_source_layer: field.effective_source_layer,
                 })
                 .collect(),
         }
@@ -184,6 +169,7 @@ impl ConfigMetadataView {
 #[derive(Debug, Clone, Serialize)]
 pub struct ConfigWatchEventView {
     pub node: String,
+    pub config_key: String,
     pub previous_revision: u64,
     pub revision: u64,
     pub source: String,
@@ -194,7 +180,7 @@ pub struct ConfigWatchEventView {
 #[derive(Debug, Clone, Serialize)]
 pub struct ConfigWatchChangeView {
     pub path: String,
-    pub effective_source_scope: String,
+    pub effective_source_layer: String,
     pub old_value: Value,
     pub new_value: Value,
 }
@@ -203,6 +189,7 @@ impl ConfigWatchEventView {
     pub fn from_event(event: NodeConfigEvent) -> Result<Self> {
         Ok(Self {
             node: event.node_fqn,
+            config_key: event.config_key,
             previous_revision: event.previous_revision,
             revision: event.revision,
             source: change_source_name(event.source).to_string(),
@@ -220,7 +207,7 @@ impl ConfigWatchChangeView {
     fn from_change(change: NodeConfigChange) -> Result<Self> {
         Ok(Self {
             path: change.path,
-            effective_source_scope: config_scope_name(change.effective_source_scope).to_string(),
+            effective_source_layer: change.effective_source_layer,
             old_value: parse_json_field("old config value", &change.old_value_json)?,
             new_value: parse_json_field("new config value", &change.new_value_json)?,
         })

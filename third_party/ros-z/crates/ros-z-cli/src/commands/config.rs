@@ -16,9 +16,8 @@ use crate::{
     },
     render::{OutputMode, json, text},
     support::config::{
-        can_resolve_config_node_fqn, config_scope_arg_to_scope, config_scope_name,
-        parse_config_json, resolve_config_node_fqn, verify_config_capability,
-        verify_config_metadata_capability,
+        can_resolve_config_node_fqn, parse_config_json, resolve_config_node_fqn,
+        verify_config_capability, verify_config_metadata_capability,
     },
 };
 
@@ -32,7 +31,7 @@ pub async fn run(app: &AppContext, output_mode: OutputMode, command: ConfigComma
             path,
             value,
             node,
-            scope,
+            layer,
             expected_revision,
         } => {
             render_set(
@@ -41,7 +40,7 @@ pub async fn run(app: &AppContext, output_mode: OutputMode, command: ConfigComma
                 &node,
                 &path,
                 &value,
-                config_scope_arg_to_scope(scope),
+                &layer,
                 expected_revision,
             )
             .await
@@ -49,19 +48,9 @@ pub async fn run(app: &AppContext, output_mode: OutputMode, command: ConfigComma
         ConfigCommand::Reset {
             path,
             node,
-            scope,
+            layer,
             expected_revision,
-        } => {
-            render_reset(
-                app,
-                output_mode,
-                &node,
-                &path,
-                config_scope_arg_to_scope(scope),
-                expected_revision,
-            )
-            .await
-        }
+        } => render_reset(app, output_mode, &node, &path, &layer, expected_revision).await,
         ConfigCommand::Reload { node } => render_reload(app, output_mode, &node).await,
         ConfigCommand::Paths {
             node,
@@ -127,20 +116,20 @@ async fn render_set(
     selector: &str,
     path: &str,
     value: &str,
-    scope: ros_z_config::ConfigScope,
+    layer: &str,
     expected_revision: Option<u64>,
 ) -> Result<()> {
     let (node_fqn, client) = resolve_client(app, selector).await?;
     let parsed = parse_config_json(value)?;
     let response = client
-        .set_json(path, &parsed, scope, expected_revision)
+        .set_json(path, &parsed, layer.to_string(), expected_revision)
         .await?;
     ensure_success(&node_fqn, &format!("set config value at {path}"), &response)?;
     let view = ConfigMutationView::new(
         node_fqn,
         "set",
         Some(path.to_string()),
-        Some(config_scope_name(scope).to_string()),
+        Some(layer.to_string()),
         response.committed_revision,
         response.changed_paths,
         true,
@@ -160,11 +149,13 @@ async fn render_reset(
     output_mode: OutputMode,
     selector: &str,
     path: &str,
-    scope: ros_z_config::ConfigScope,
+    layer: &str,
     expected_revision: Option<u64>,
 ) -> Result<()> {
     let (node_fqn, client) = resolve_client(app, selector).await?;
-    let response = client.reset(path, scope, expected_revision).await?;
+    let response = client
+        .reset(path, layer.to_string(), expected_revision)
+        .await?;
     ensure_success(
         &node_fqn,
         &format!("reset config value at {path}"),
@@ -174,7 +165,7 @@ async fn render_reset(
         node_fqn,
         "reset",
         Some(path.to_string()),
-        Some(config_scope_name(scope).to_string()),
+        Some(layer.to_string()),
         response.committed_revision,
         response.changed_paths,
         true,

@@ -100,6 +100,22 @@ impl ZNodeBuilder {
         self
     }
 
+    /// Append one config layer to the inherited node config layer list.
+    pub fn with_config_layer<P: Into<std::path::PathBuf>>(mut self, path: P) -> Self {
+        self.runtime_config_inputs.config_layers.push(path.into());
+        self
+    }
+
+    /// Replace the inherited node config layer list entirely.
+    pub fn with_config_layers<I, P>(mut self, layers: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<std::path::PathBuf>,
+    {
+        self.runtime_config_inputs.config_layers = layers.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Override SHM configuration for this node (and its publishers).
     ///
     /// This overrides the context-level SHM configuration for all publishers

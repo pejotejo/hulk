@@ -1,4 +1,8 @@
-use std::{fs, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::Parser;
 use color_eyre::eyre::{Result, eyre};
@@ -47,9 +51,11 @@ async fn main() -> Result<()> {
     let ctx = ZContextBuilder::default()
         .with_router_endpoint(args.endpoint)
         .map_err(|error| eyre!(error.to_string()))?
-        .with_config_root(&config_root)
-        .with_location(&args.location)
-        .with_robot(&args.robot)
+        .with_config_layers([
+            config_root.join("base"),
+            config_root.join(format!("location/{}", args.location)),
+            config_root.join(format!("robot/{}", args.robot)),
+        ])
         .build()
         .map_err(|error| eyre!(error.to_string()))?;
     let node = ctx
@@ -57,7 +63,7 @@ async fn main() -> Result<()> {
         .with_namespace("motion")
         .build()
         .map_err(|error| eyre!(error.to_string()))?;
-    let config = node.bind_config_with_metadata::<TwixDemoConfig>()?;
+    let config = node.bind_config_with_metadata_as::<TwixDemoConfig>("twix_demo")?;
 
     config.add_validation_hook(Arc::new(|candidate: &TwixDemoConfig| {
         if candidate.label.trim().is_empty() {
@@ -79,11 +85,8 @@ fn default_config_root() -> PathBuf {
 }
 
 fn seed_config(root: &Path) -> Result<()> {
-    let relative = "default/motion/twix_demo_config.json5";
-    let path = root.join(relative);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let path = root.join("base/twix_demo.json5");
+    fs::create_dir_all(path.parent().expect("base layer parent"))?;
 
     let contents = r#"{
   enabled: true,
