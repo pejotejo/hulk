@@ -22,7 +22,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .build()
         .into_eyre()?;
     let config = node
-        .bind_config_as::<BehaviorConfig>("behavior")
+        .bind_config_with_metadata_as::<BehaviorConfig>("behavior")
         .into_eyre()?;
 
     let state_sub = node
