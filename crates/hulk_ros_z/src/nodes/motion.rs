@@ -36,16 +36,18 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let mut latest_intent = MotionIntent::idle(timestamp_now());
+    let mut timer = node.clock().timer(Duration::from_secs_f64(1.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
         let publish_hz = cfg.timing.publish_hz.max(1.0);
+        timer.set_period(Duration::from_secs_f64(1.0 / publish_hz));
 
         tokio::select! {
             msg = intent_sub.async_recv() => {
                 latest_intent = msg.into_eyre()?;
             }
-            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
+            _ = timer.tick() => {
                 let command = LowLevelCommand {
                     timestamp_ns: timestamp_now(),
                     mode: latest_intent.mode,

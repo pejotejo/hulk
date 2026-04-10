@@ -43,10 +43,12 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let mut frame_count = 0u64;
     let mut last_frame_timestamp_ns = 0u64;
     let mut last_camera_info_timestamp_ns = 0u64;
+    let mut timer = node.clock().timer(Duration::from_secs_f64(1.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
         let publish_hz = cfg.status.publish_hz.max(0.5);
+        timer.set_period(Duration::from_secs_f64(1.0 / publish_hz));
 
         tokio::select! {
             msg = image_sub.async_recv() => {
@@ -61,7 +63,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
                 let camera_info = msg.into_eyre()?;
                 last_camera_info_timestamp_ns = timestamp_from_stamp(&camera_info.header.stamp);
             }
-            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
+            _ = timer.tick() => {
                 let now = timestamp_now();
                 if cfg.inputs.image_required && is_stale(last_frame_timestamp_ns, now, cfg.inputs.max_frame_age_ms) {
                     warn!("vision has not received a fresh image frame");

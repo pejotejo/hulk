@@ -42,10 +42,12 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let mut latest_odometry = OdometryState::default();
     let mut latest_fall_down = FallDownState::default();
     let mut last_button_event: Option<ButtonEvent> = None;
+    let mut timer = node.clock().timer(Duration::from_secs_f64(1.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
         let publish_hz = cfg.timing.publish_hz.max(1.0);
+        timer.set_period(Duration::from_secs_f64(1.0 / publish_hz));
 
         tokio::select! {
             msg = odom_sub.async_recv() => {
@@ -62,7 +64,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             msg = button_sub.async_recv() => {
                 last_button_event = Some(msg.into_eyre()?);
             }
-            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
+            _ = timer.tick() => {
                 let now = timestamp_now();
                 let fresh_button_event = last_button_event.clone().filter(|event| {
                     now.saturating_sub(event.timestamp_ns) <= cfg.inputs.button_event_max_age_ms * 1_000_000

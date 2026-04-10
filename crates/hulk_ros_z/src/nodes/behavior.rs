@@ -40,6 +40,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let mut latest_state: Option<RobotState> = None;
     let mut current_mode = DemoMode::Stand;
     let mut last_button_timestamp_ns = 0u64;
+    let mut timer = node.clock().timer(Duration::from_secs_f64(1.0 / 30.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
@@ -61,7 +62,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
                     }
                     latest_state = Some(state);
                 }
-                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / 30.0)) => {
+                _ = timer.tick() => {
                 let default_mode = cfg.mode.default;
                 if !cfg.mode.allow_button_override {
                     current_mode = default_mode;

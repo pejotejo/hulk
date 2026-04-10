@@ -55,12 +55,14 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let mut x = 0.0f32;
     let mut y = 0.0f32;
     let mut theta = 0.0f32;
+    let mut timer = node.clock().timer(Duration::from_secs_f64(1.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
         let publish_hz = cfg.timing.publish_hz.max(1.0);
 
-        tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)).await;
+        timer.set_period(Duration::from_secs_f64(1.0 / publish_hz));
+        timer.tick().await;
         tick += 1;
         let timestamp_ns = timestamp_now();
 
