@@ -70,6 +70,19 @@ Leave the router running in a separate terminal, then run any example from the r
 For a detailed walkthrough of creating your own project with ros-z (not using the repository examples), see the [Quick Start](./quick_start.md#option-2-create-your-own-project) guide.
 ```
 
+## Configuration Examples
+
+If you want typed, layered node configuration, see [Node Configuration](./node_config.md).
+
+The repository includes two focused `ros-z-config` examples:
+
+```bash
+cargo run -p ros-z-config --example metadata
+cargo run -p ros-z-config --example two_nodes
+```
+
+Use these together with the `zenoh_router` example when testing remote config inspection or CLI writes.
+
 ---
 
 ## Demo Nodes

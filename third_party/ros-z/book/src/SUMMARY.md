@@ -21,6 +21,7 @@
 - [Building](./chapters/building.md)
 - [ROS 2 Distribution Compatibility](./chapters/distro_compatibility.md)
 - [Running Examples](./chapters/examples.md)
+- [Node Configuration](./chapters/node_config.md)
 - [Networking](./chapters/networking.md)
   - [Configuration Options](./chapters/config_options.md)
   - [Advanced Configuration](./chapters/config_advanced.md)
