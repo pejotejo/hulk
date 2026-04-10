@@ -5,19 +5,18 @@ use ros_z::Builder;
 use ros_z_config::prelude::*;
 
 use crate::{
+    IntoEyreResultExt,
     config::BehaviorConfig,
     msgs::{
         BUTTON_EVENT_DOUBLE_CLICK, BUTTON_EVENT_LONG_PRESS_START, BUTTON_EVENT_SINGLE_CLICK,
         DemoMode, MotionIntent, RobotState, timestamp_now,
     },
-    IntoEyreResultExt,
-    stack::{NodeTaskHandle, StackContext},
+    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = stack
-        .ros_z
+pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+    let node = ctx
         .create_node("behavior")
         .with_type_description_service()
         .with_extended_type_description_service()
@@ -46,7 +45,6 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             let cfg = config.snapshot().typed().clone();
 
             tokio::select! {
-                _ = stack.shutdown.cancelled() => break,
                 msg = state_sub.async_recv() => {
                     let state = msg.into_eyre()?;
                     if state.has_button_event {
@@ -92,6 +90,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             }
         }
 
+        #[allow(unreachable_code)]
         Ok(())
     }))
 }

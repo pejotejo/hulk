@@ -7,19 +7,18 @@ use ros_z_msgs::sensor_msgs::{CameraInfo, Image};
 use tracing::warn;
 
 use crate::{
+    IntoEyreResultExt,
     config::SimDriverConfig,
     msgs::{
         BUTTON_EVENT_SINGLE_CLICK, BUTTON_F1, ButtonEvent, FALL_DOWN_IS_READY, FallDownState,
         OdometryState, header, timestamp_now,
     },
-    IntoEyreResultExt,
-    stack::{NodeTaskHandle, StackContext},
+    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = stack
-        .ros_z
+pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+    let node = ctx
         .create_node("sim_driver")
         .with_type_description_service()
         .with_extended_type_description_service()
@@ -61,61 +60,73 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             let cfg = config.snapshot().typed().clone();
             let publish_hz = cfg.timing.publish_hz.max(1.0);
 
-            tokio::select! {
-                _ = stack.shutdown.cancelled() => break,
-                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
-                    tick += 1;
-                    let timestamp_ns = timestamp_now();
+            tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)).await;
+            tick += 1;
+            let timestamp_ns = timestamp_now();
 
-                    match cfg.odometry.pattern.as_str() {
-                        "stationary" => {}
-                        "straight" => {
-                            x += cfg.odometry.step_x;
-                            y += cfg.odometry.step_y;
-                            theta += cfg.odometry.step_theta;
-                        }
-                        "circle" => {
-                            theta += cfg.odometry.step_theta;
-                            x += cfg.odometry.step_x * theta.cos();
-                            y += cfg.odometry.step_x * theta.sin();
-                        }
-                        other => {
-                            warn!(pattern = other, "unsupported odometry pattern, falling back to stationary");
-                        }
-                    }
-
-                    odom_pub.async_publish(&OdometryState {
-                        timestamp_ns,
-                        x,
-                        y,
-                        theta,
-                    }).await.into_eyre()?;
-
-                    fall_pub.async_publish(&FallDownState {
-                        timestamp_ns,
-                        fall_down_state: FALL_DOWN_IS_READY.to_owned(),
-                        is_recovery_available: true,
-                    }).await.into_eyre()?;
-
-                    if tick % 150 == 0 {
-                        button_pub.async_publish(&ButtonEvent {
-                            timestamp_ns,
-                            button: BUTTON_F1,
-                            event_type: BUTTON_EVENT_SINGLE_CLICK.to_owned(),
-                        }).await.into_eyre()?;
-                    }
-
-                    if cfg.image.enabled {
-                        let image = make_image(&cfg, timestamp_ns);
-                        image_pub.async_publish(&image).await.into_eyre()?;
-
-                        let camera_info = make_camera_info(&cfg, timestamp_ns);
-                        camera_info_pub.async_publish(&camera_info).await.into_eyre()?;
-                    }
+            match cfg.odometry.pattern.as_str() {
+                "stationary" => {}
+                "straight" => {
+                    x += cfg.odometry.step_x;
+                    y += cfg.odometry.step_y;
+                    theta += cfg.odometry.step_theta;
                 }
+                "circle" => {
+                    theta += cfg.odometry.step_theta;
+                    x += cfg.odometry.step_x * theta.cos();
+                    y += cfg.odometry.step_x * theta.sin();
+                }
+                other => {
+                    warn!(
+                        pattern = other,
+                        "unsupported odometry pattern, falling back to stationary"
+                    );
+                }
+            }
+
+            odom_pub
+                .async_publish(&OdometryState {
+                    timestamp_ns,
+                    x,
+                    y,
+                    theta,
+                })
+                .await
+                .into_eyre()?;
+
+            fall_pub
+                .async_publish(&FallDownState {
+                    timestamp_ns,
+                    fall_down_state: FALL_DOWN_IS_READY.to_owned(),
+                    is_recovery_available: true,
+                })
+                .await
+                .into_eyre()?;
+
+            if tick % 150 == 0 {
+                button_pub
+                    .async_publish(&ButtonEvent {
+                        timestamp_ns,
+                        button: BUTTON_F1,
+                        event_type: BUTTON_EVENT_SINGLE_CLICK.to_owned(),
+                    })
+                    .await
+                    .into_eyre()?;
+            }
+
+            if cfg.image.enabled {
+                let image = make_image(&cfg, timestamp_ns);
+                image_pub.async_publish(&image).await.into_eyre()?;
+
+                let camera_info = make_camera_info(&cfg, timestamp_ns);
+                camera_info_pub
+                    .async_publish(&camera_info)
+                    .await
+                    .into_eyre()?;
             }
         }
 
+        #[allow(unreachable_code)]
         Ok(())
     }))
 }

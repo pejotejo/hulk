@@ -2,9 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
 use color_eyre::Result;
-use hulk_ros_z::{namespacing, stack, IntoEyreResultExt};
+use hulk_ros_z::{IntoEyreResultExt, stack};
 use ros_z::{Builder, context::ZContextBuilder};
-use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -29,7 +28,11 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let namespace = namespacing::normalize_robot_namespace(&args.robot);
+    let namespace = if args.robot.starts_with('/') {
+        args.robot.clone()
+    } else {
+        format!("/{}", args.robot)
+    };
     let config_layers = stack::derive_config_layers(&args.config_root, &args.location, &args.robot);
 
     let mut builder = ZContextBuilder::default()
@@ -47,31 +50,16 @@ async fn main() -> Result<()> {
     };
 
     let ctx = Arc::new(builder.build().into_eyre()?);
-    let shutdown = CancellationToken::new();
-    let stack = Arc::new(stack::StackContext {
-        ros_z: ctx.clone(),
-        shutdown: shutdown.clone(),
-        robot: Arc::from(args.robot),
-        namespace: Arc::from(namespace),
-    });
+    let mut running = stack::spawn_all(ctx.clone()).await?;
 
-    let mut running = stack::spawn_all(stack).await?;
-
-    tokio::select! {
-        result = stack::monitor(&mut running.join_set, shutdown.clone()) => {
-            result?;
-        }
+    let result = tokio::select! {
+        result = stack::monitor(&mut running.join_set) => result,
         _ = tokio::signal::ctrl_c() => {
-            shutdown.cancel();
+            Ok(())
         }
-    }
+    };
 
-    stack::shutdown_and_await(
-        &ctx,
-        shutdown,
-        &mut running.join_set,
-        running.shutdown_grace_ms,
-    )
-    .await?;
-    Ok(())
+    running.join_set.abort_all();
+    ctx.shutdown().into_eyre()?;
+    result
 }

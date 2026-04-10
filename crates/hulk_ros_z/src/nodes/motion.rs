@@ -6,16 +6,15 @@ use ros_z_config::prelude::*;
 use tracing::info;
 
 use crate::{
+    IntoEyreResultExt,
     config::MotionConfig,
     msgs::{LowLevelCommand, MotionIntent, timestamp_now},
-    IntoEyreResultExt,
-    stack::{NodeTaskHandle, StackContext},
+    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = stack
-        .ros_z
+pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+    let node = ctx
         .create_node("motion")
         .with_type_description_service()
         .with_extended_type_description_service()
@@ -43,7 +42,6 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             let publish_hz = cfg.timing.publish_hz.max(1.0);
 
             tokio::select! {
-                _ = stack.shutdown.cancelled() => break,
                 msg = intent_sub.async_recv() => {
                     latest_intent = msg.into_eyre()?;
                 }
@@ -65,6 +63,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             }
         }
 
+        #[allow(unreachable_code)]
         Ok(())
     }))
 }

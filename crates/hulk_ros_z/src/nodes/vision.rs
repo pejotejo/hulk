@@ -7,16 +7,15 @@ use ros_z_msgs::sensor_msgs::{CameraInfo, Image};
 use tracing::{info, warn};
 
 use crate::{
+    IntoEyreResultExt,
     config::VisionConfig,
     msgs::{VisionStatus, timestamp_now},
-    IntoEyreResultExt,
-    stack::{NodeTaskHandle, StackContext},
+    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = stack
-        .ros_z
+pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+    let node = ctx
         .create_node("vision")
         .with_type_description_service()
         .with_extended_type_description_service()
@@ -50,7 +49,6 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             let publish_hz = cfg.status.publish_hz.max(0.5);
 
             tokio::select! {
-                _ = stack.shutdown.cancelled() => break,
                 msg = image_sub.async_recv() => {
                     let image = msg.into_eyre()?;
                     frame_count += 1;
@@ -82,6 +80,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             }
         }
 
+        #[allow(unreachable_code)]
         Ok(())
     }))
 }

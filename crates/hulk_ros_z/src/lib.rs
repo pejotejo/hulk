@@ -1,7 +1,5 @@
-pub mod bringup_manager;
 pub mod config;
 pub mod msgs;
-pub mod namespacing;
 pub mod nodes;
 pub mod stack;
 pub mod topics;

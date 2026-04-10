@@ -5,16 +5,15 @@ use ros_z::Builder;
 use ros_z_config::prelude::*;
 
 use crate::{
+    IntoEyreResultExt,
     config::StateEstimatorConfig,
     msgs::{ButtonEvent, FallDownState, OdometryState, RobotState, timestamp_now},
-    IntoEyreResultExt,
-    stack::{NodeTaskHandle, StackContext},
+    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = stack
-        .ros_z
+pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+    let node = ctx
         .create_node("state_estimator")
         .with_type_description_service()
         .with_extended_type_description_service()
@@ -52,7 +51,6 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             let publish_hz = cfg.timing.publish_hz.max(1.0);
 
             tokio::select! {
-                _ = stack.shutdown.cancelled() => break,
                 msg = odom_sub.async_recv() => {
                     let msg = msg.into_eyre()?;
                     let alpha = cfg.smoothing.odometry_alpha.clamp(0.0, 1.0);
@@ -88,6 +86,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             }
         }
 
+        #[allow(unreachable_code)]
         Ok(())
     }))
 }

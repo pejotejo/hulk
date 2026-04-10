@@ -1,5 +1,4 @@
 pub mod behavior;
-pub mod bringup_manager;
 pub mod motion;
 pub mod robot_hw;
 pub mod sim_driver;
@@ -7,7 +6,6 @@ pub mod state_estimator;
 pub mod vision;
 
 pub use behavior::BehaviorConfig;
-pub use bringup_manager::BringupManagerConfig;
 pub use motion::MotionConfig;
 pub use robot_hw::RobotHwConfig;
 pub use sim_driver::SimDriverConfig;
