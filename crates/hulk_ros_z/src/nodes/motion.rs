@@ -23,7 +23,24 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<MotionConfig>("motion")
         .into_eyre()?;
     config
-        .add_validation_hook(validate_motion_config)
+        .add_validation_hook(|cfg: &MotionConfig| {
+            if !cfg.timing.publish_hz.is_finite() || cfg.timing.publish_hz <= 0.0 {
+                return Err("motion.timing.publish_hz must be > 0".to_owned());
+            }
+            if cfg.limits.max_forward < 0.0 || !cfg.limits.max_forward.is_finite() {
+                return Err("motion.limits.max_forward must be finite and >= 0".to_owned());
+            }
+            if cfg.limits.max_lateral < 0.0 || !cfg.limits.max_lateral.is_finite() {
+                return Err("motion.limits.max_lateral must be finite and >= 0".to_owned());
+            }
+            if cfg.limits.max_angular < 0.0 || !cfg.limits.max_angular.is_finite() {
+                return Err("motion.limits.max_angular must be finite and >= 0".to_owned());
+            }
+            if cfg.output.mode != "log_only" && cfg.output.mode != "publish" {
+                return Err("motion.output.mode must be one of: log_only, publish".to_owned());
+            }
+            Ok(())
+        })
         .into_eyre()?;
 
     let intent_sub = node
@@ -66,24 +83,5 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     }
 
     #[allow(unreachable_code)]
-    Ok(())
-}
-
-fn validate_motion_config(cfg: &MotionConfig) -> std::result::Result<(), String> {
-    if !cfg.timing.publish_hz.is_finite() || cfg.timing.publish_hz <= 0.0 {
-        return Err("motion.timing.publish_hz must be > 0".to_owned());
-    }
-    if cfg.limits.max_forward < 0.0 || !cfg.limits.max_forward.is_finite() {
-        return Err("motion.limits.max_forward must be finite and >= 0".to_owned());
-    }
-    if cfg.limits.max_lateral < 0.0 || !cfg.limits.max_lateral.is_finite() {
-        return Err("motion.limits.max_lateral must be finite and >= 0".to_owned());
-    }
-    if cfg.limits.max_angular < 0.0 || !cfg.limits.max_angular.is_finite() {
-        return Err("motion.limits.max_angular must be finite and >= 0".to_owned());
-    }
-    if cfg.output.mode != "log_only" && cfg.output.mode != "publish" {
-        return Err("motion.output.mode must be one of: log_only, publish".to_owned());
-    }
     Ok(())
 }

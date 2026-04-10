@@ -25,7 +25,21 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<BehaviorConfig>("behavior")
         .into_eyre()?;
     config
-        .add_validation_hook(validate_behavior_config)
+        .add_validation_hook(|cfg: &BehaviorConfig| {
+            for (name, value, min, max) in [
+                ("behavior.walk.forward", cfg.walk.forward, -1.0, 1.0),
+                ("behavior.walk.lateral", cfg.walk.lateral, -1.0, 1.0),
+                ("behavior.walk.angular", cfg.walk.angular, -2.0, 2.0),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("{name} must be finite"));
+                }
+                if value < min || value > max {
+                    return Err(format!("{name} must be between {min} and {max}"));
+                }
+            }
+            Ok(())
+        })
         .into_eyre()?;
 
     let state_sub = node
@@ -92,27 +106,5 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     }
 
     #[allow(unreachable_code)]
-    Ok(())
-}
-
-fn validate_behavior_config(cfg: &BehaviorConfig) -> std::result::Result<(), String> {
-    validate_walk_component("behavior.walk.forward", cfg.walk.forward, -1.0, 1.0)?;
-    validate_walk_component("behavior.walk.lateral", cfg.walk.lateral, -1.0, 1.0)?;
-    validate_walk_component("behavior.walk.angular", cfg.walk.angular, -2.0, 2.0)?;
-    Ok(())
-}
-
-fn validate_walk_component(
-    name: &str,
-    value: f32,
-    min: f32,
-    max: f32,
-) -> std::result::Result<(), String> {
-    if !value.is_finite() {
-        return Err(format!("{name} must be finite"));
-    }
-    if value < min || value > max {
-        return Err(format!("{name} must be between {min} and {max}"));
-    }
     Ok(())
 }
