@@ -5119,6 +5119,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hulk_ros_z"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "ros-z",
+ "ros-z-config",
+ "ros-z-msgs",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "zenoh",
+]
+
+[[package]]
 name = "hulk_widgets"
 version = "0.1.0"
 dependencies = [
@@ -8824,6 +8841,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ros-z-codegen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "ros-z-schema",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "ros-z-config"
 version = "0.1.0"
 dependencies = [
@@ -8846,6 +8879,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "ros-z-msgs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "byteorder",
+ "glob",
+ "ros-z",
+ "ros-z-cdr",
+ "ros-z-codegen",
+ "serde",
+ "serde-big-array",
+ "serde_bytes",
+ "smart-default",
+ "zenoh-buffers",
 ]
 
 [[package]]
@@ -9338,6 +9389,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde-value"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9688,6 +9748,17 @@ name = "smallvec"
 version = "2.0.0-alpha.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d44cfb396c3caf6fbfd0ab422af02631b69ddd96d2eff0b0f0724f9024051b"
+
+[[package]]
+name = "smart-default"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0eb01866308440fc64d6c44d9e86c5cc17adfe33c4d6eed55da9145044d0ffc1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "smithay-client-toolkit"

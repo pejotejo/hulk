@@ -27,6 +27,7 @@ members = [
   "crates/hulk_imagine",
   "crates/hulk_manifest",
   "crates/hulk_mujoco",
+  "crates/hulk_ros_z",
   "crates/hulk_replayer",
   "crates/hulk_widgets",
   "crates/hungarian_algorithm",
@@ -208,6 +209,7 @@ ros2 = { path = "crates/ros2" }
 ros2-client = { version = "0.8.2", features = ["pre-iron-gid"] }
 ros-z = { path = "third_party/ros-z/crates/ros-z" }
 ros-z-config = { path = "third_party/ros-z/crates/ros-z-config" }
+ros-z-msgs = { path = "third_party/ros-z/crates/ros-z-msgs" }
 rustfft = "6.2.0"
 semver = "1.0.25"
 sensor_receiver = { path = "crates/sensor_receiver" }
