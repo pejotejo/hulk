@@ -5,7 +5,7 @@ use eframe::epaint::{Color32, Stroke};
 
 use coordinate_systems::{Ground, Pixel};
 use geometry::line_segment::LineSegment;
-use projection::{Projection, camera_matrix::CameraMatrix};
+use projection::{camera_matrix::CameraMatrix, Projection};
 use types::field_dimensions::FieldDimensions;
 
 use crate::{

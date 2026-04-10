@@ -2,8 +2,8 @@ use std::{env::temp_dir, fs::create_dir_all, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use color_eyre::{
+    eyre::{bail, eyre, Context as _},
     Result,
-    eyre::{Context as _, bail, eyre},
 };
 use eframe::egui::{
     ColorImage, ComboBox, Context, Response, SizeHint, TextureId, TextureOptions, Ui, Widget,
@@ -13,7 +13,7 @@ use image::{EncodableLayout, RgbImage};
 use linear_algebra::{point, vector};
 use log::{info, warn};
 use ros2::sensor_msgs::image::Image;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
 
@@ -160,7 +160,7 @@ impl Widget for &mut ImagePanel {
                 ImageBuffer::YCbCr(buffer) => buffer.get_last_timestamp(),
             };
             if let Ok(Some(timestamp)) = maybe_timestamp {
-                let date: DateTime<Utc> = timestamp.into();
+                let date: DateTime<Utc> = timestamp.as_system_time().into();
                 ui.label(date.format("%T%.3f").to_string());
             }
             if ui.button("Save").clicked() {

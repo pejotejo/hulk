@@ -9,8 +9,8 @@ mod mujoco_simulator;
 mod parameter;
 mod plot;
 mod remote_control;
+mod synthetic_pose;
 mod text;
-mod vision_tuner;
 
 pub use behavior_simulator::BehaviorSimulatorPanel;
 pub use enum_plot::EnumPlotPanel;
@@ -23,5 +23,5 @@ pub use mujoco_simulator::MujocoSimulatorPanel;
 pub use parameter::ParameterPanel;
 pub use plot::PlotPanel;
 pub use remote_control::RemotePanel;
+pub use synthetic_pose::SyntheticPosePanel;
 pub use text::TextPanel;
-pub use vision_tuner::VisionTunerPanel;

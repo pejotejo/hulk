@@ -51,7 +51,7 @@ Possible actions are:
 |`close_tab`     | Close current tab                                |
 |`duplicate_tab` | Duplicate current tab                            |
 |`focus_above`   | Move focus up                                    |
-|`focus_address` | Focus the NAO address field                      |
+|`focus_endpoint`| Focus the router endpoint field                  |
 |`focus_below`   | Move focus down                                  |
 |`focus_left`    | Move focus left                                  |
 |`focus_panel`   | Focus the panel selector                         |
@@ -59,7 +59,7 @@ Possible actions are:
 |`no_op`         | Do nothing (used to unbind a key)                |
 |`open_split`    | Split the current surface along the longest axis |
 |`open_tab`      | Open a new tab in the current surface            |
-|`reconnect`     | Reestablish the connection to the NAO            |
+|`reconnect`     | Reestablish the connection to the router         |
 |`close_all`     | Close all tabs and windows                       |
 
 !!! example "Example configuration"

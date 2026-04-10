@@ -1,143 +1,343 @@
 use std::sync::Arc;
 
+use eframe::egui::{ComboBox, Response, ScrollArea, TextEdit, Ui, Widget};
+use hulk_widgets::CompletionEdit;
+use ros_z_config::{ConfigScope, NodeConfigFieldMetadataWire};
+use serde_json::{json, Value};
+
 use crate::{
-    log_error::LogError,
     panel::{Panel, PanelCreationContext},
     robot::Robot,
-    value_buffer::BufferHandle,
 };
-use color_eyre::{
-    Result,
-    eyre::{Error, eyre},
-};
-use communication::messages::TextOrBinary;
-use eframe::egui::{Response, ScrollArea, TextEdit, Ui, Widget};
-use hulk_widgets::{PathFilter, RobotPathCompletionEdit};
-use log::error;
-use parameters::directory::Scope;
-use serde_json::{Value, json};
 
 pub struct ParameterPanel {
     robot: Arc<Robot>,
-    path: String,
-    buffer: Option<BufferHandle<Value>>,
-    parameter_value: Result<String>,
+    node_selector: String,
+    field_path: String,
+    target_scope: ConfigScope,
+    field_paths: Vec<String>,
+    field_metadata: Option<NodeConfigFieldMetadataWire>,
+    parameter_value: String,
+    current_revision: Option<u64>,
+    effective_source_scope: Option<ConfigScope>,
+    metadata_available: bool,
+    status_message: Option<String>,
 }
 
 impl<'a> Panel<'a> for ParameterPanel {
     const NAME: &'static str = "Parameter";
 
     fn new(context: PanelCreationContext) -> Self {
-        let path = context
-            .value
-            .and_then(|value| value.get("path"))
-            .and_then(|path| path.as_str());
-
-        let value_buffer = path.map(|path| context.robot.subscribe_json(path));
-
-        Self {
+        let mut panel = Self {
             robot: context.robot,
-            path: path.unwrap_or("").to_string(),
-            buffer: value_buffer,
-            parameter_value: Err(eyre!("no subscription")),
-        }
+            node_selector: context
+                .value
+                .and_then(|value| value.get("node"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            field_path: context
+                .value
+                .and_then(|value| value.get("field_path"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            target_scope: context
+                .value
+                .and_then(|value| value.get("scope"))
+                .and_then(Value::as_str)
+                .and_then(parse_scope)
+                .unwrap_or(ConfigScope::Robot),
+            field_paths: Vec::new(),
+            field_metadata: None,
+            parameter_value: String::new(),
+            current_revision: None,
+            effective_source_scope: None,
+            metadata_available: false,
+            status_message: None,
+        };
+        panel.refresh_node_context();
+        panel.refresh_selected_value();
+        panel
     }
+
     fn save(&self) -> Value {
         json!({
-            "path": self.path.clone()
+            "node": self.node_selector,
+            "field_path": self.field_path,
+            "scope": scope_name(self.target_scope),
         })
+    }
+}
+
+impl ParameterPanel {
+    fn refresh_node_context(&mut self) {
+        self.field_paths.clear();
+        self.field_metadata = None;
+        self.metadata_available = false;
+        self.status_message = None;
+
+        if self.node_selector.is_empty() {
+            return;
+        }
+
+        match self.robot.list_config_paths(&self.node_selector, true) {
+            Ok(response) if response.success => {
+                self.metadata_available = true;
+                self.field_paths = response.paths;
+            }
+            Ok(response) => {
+                self.status_message = Some(response.message);
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+            }
+        }
+    }
+
+    fn refresh_selected_value(&mut self) {
+        self.field_metadata = None;
+        self.current_revision = None;
+        self.effective_source_scope = None;
+
+        if self.node_selector.is_empty() || self.field_path.is_empty() {
+            return;
+        }
+
+        match self
+            .robot
+            .get_config_value(&self.node_selector, &self.field_path)
+        {
+            Ok(response) if response.success => {
+                self.current_revision = Some(response.revision);
+                self.effective_source_scope = Some(response.effective_source_scope);
+                self.parameter_value = response.value_json;
+                self.status_message = None;
+            }
+            Ok(response) => {
+                self.status_message = Some(response.message);
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+            }
+        }
+
+        if self.metadata_available {
+            match self
+                .robot
+                .get_config_metadata(&self.node_selector, vec![self.field_path.clone()])
+            {
+                Ok(response) if response.success => {
+                    self.field_metadata = response.metadata.into_iter().next();
+                }
+                Ok(response) => {
+                    self.status_message = Some(response.message);
+                }
+                Err(error) => {
+                    self.status_message = Some(error.to_string());
+                }
+            }
+        }
+    }
+
+    fn commit(&mut self) {
+        let value = match serde_json::from_str::<Value>(&self.parameter_value) {
+            Ok(value) => value,
+            Err(error) => {
+                self.status_message = Some(format!("invalid JSON value: {error}"));
+                return;
+            }
+        };
+
+        let expected_revision = self.current_revision;
+        match self.robot.set_config_json(
+            &self.node_selector,
+            &self.field_path,
+            &value,
+            self.target_scope,
+            expected_revision,
+        ) {
+            Ok(response) if response.success => {
+                self.status_message = Some(format!(
+                    "Committed revision {}",
+                    response.committed_revision
+                ));
+                self.refresh_selected_value();
+            }
+            Ok(response) => {
+                self.status_message = Some(response.message);
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+            }
+        }
+    }
+
+    fn reset_scope(&mut self) {
+        match self.robot.reset_config(
+            &self.node_selector,
+            &self.field_path,
+            self.target_scope,
+            self.current_revision,
+        ) {
+            Ok(response) if response.success => {
+                self.status_message = Some(format!(
+                    "Reset committed revision {}",
+                    response.committed_revision
+                ));
+                self.refresh_selected_value();
+            }
+            Ok(response) => {
+                self.status_message = Some(response.message);
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+            }
+        }
     }
 }
 
 impl Widget for &mut ParameterPanel {
     fn ui(self, ui: &mut Ui) -> Response {
+        let node_state = self.robot.config_node_list_state();
+        let node_names = node_state
+            .nodes
+            .iter()
+            .map(|node| node.node_fqn.clone())
+            .collect::<Vec<_>>();
+
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                let path_edit = ui.add(RobotPathCompletionEdit::new(
-                    ui.id().with("parameter"),
-                    self.robot.latest_paths(),
-                    &mut self.path,
-                    PathFilter::Writable,
+                let node_response = ui.add(CompletionEdit::new(
+                    ui.id().with("parameter-node"),
+                    &node_names,
+                    &mut self.node_selector,
                 ));
-                if path_edit.changed() {
-                    self.buffer = Some(self.robot.subscribe_json(&self.path));
+                if node_state.discovering {
+                    ui.label("discovering config nodes...");
                 }
-                let settable = self.buffer.is_some()
-                    && self
-                        .parameter_value
-                        .as_ref()
-                        .is_ok_and(|value| !value.is_empty());
-                let local_parameter_path = self.path.strip_prefix("parameters.");
+                if node_response.changed() {
+                    self.refresh_node_context();
+                    self.refresh_selected_value();
+                }
 
-                ui.add_enabled_ui(settable && local_parameter_path.is_some(), |ui| {
-                    if ui.button("Set").clicked() {
-                        let serialized =
-                            serde_json::from_str::<Value>(self.parameter_value.as_ref().unwrap());
-                        match serialized {
-                            Ok(value) => {
-                                self.robot
-                                    .write(self.path.clone(), TextOrBinary::Text(value));
-                            }
-                            Err(error) => error!(
-                                "parameter panel: failed to serialize parameter value: {error:#?}"
-                            ),
-                        }
+                if self.metadata_available {
+                    let field_response = ui.add(CompletionEdit::new(
+                        ui.id().with("parameter-field"),
+                        &self.field_paths,
+                        &mut self.field_path,
+                    ));
+                    if field_response.changed() {
+                        self.refresh_selected_value();
                     }
-                    if ui.button("Save to Robot").clicked() {
-                        let serialized =
-                            serde_json::from_str::<Value>(self.parameter_value.as_ref().unwrap());
-                        match serialized {
-                            Ok(value) => {
-                                self.robot
-                                    .store_parameters(
-                                        local_parameter_path.expect(
-                                            "parameter path should start with 'parameters.'",
-                                        ),
-                                        value,
-                                        Scope::current_robot(),
-                                    )
-                                    .log_err();
-                            }
-                            Err(error) => error!(
-                                "parameter panel: failed to serialize parameter value: {error:#?}"
-                            ),
-                        }
+                } else {
+                    let field_response = ui.add(TextEdit::singleline(&mut self.field_path));
+                    if field_response.changed() {
+                        self.refresh_selected_value();
                     }
-                });
+                    if !self.node_selector.is_empty() {
+                        ui.label("metadata unavailable; enter the field path manually");
+                    }
+                }
+
+                ComboBox::from_id_salt(ui.id().with("parameter-scope"))
+                    .selected_text(scope_name(self.target_scope))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.target_scope,
+                            ConfigScope::Default,
+                            "default",
+                        );
+                        ui.selectable_value(
+                            &mut self.target_scope,
+                            ConfigScope::Location,
+                            "location",
+                        );
+                        ui.selectable_value(&mut self.target_scope, ConfigScope::Robot, "robot");
+                    });
+
+                if ui.button("Refresh").clicked() {
+                    self.refresh_node_context();
+                    self.refresh_selected_value();
+                }
             });
 
-            if let Some(buffer) = &mut self.buffer {
-                if buffer.has_changed() {
-                    buffer.mark_as_seen();
-                    match buffer.get_last_value() {
-                        Ok(Some(value)) => {
-                            self.parameter_value =
-                                serde_json::to_string_pretty(&value).map_err(Error::from);
-                        }
-                        Ok(None) => {
-                            self.parameter_value = Err(eyre!("no data available"));
-                        }
-                        Err(error) => {
-                            self.parameter_value = Err(error);
-                        }
-                    }
+            if let Some(metadata) = &self.field_metadata {
+                ui.label(format!(
+                    "type={} writable={} source={} scopes={}{}{}",
+                    metadata.type_name,
+                    metadata.writable,
+                    scope_name(metadata.effective_source_scope),
+                    metadata
+                        .allowed_scopes
+                        .iter()
+                        .map(|scope| scope_name(*scope))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    metadata
+                        .min
+                        .map(|min| format!(" min={min}"))
+                        .unwrap_or_default(),
+                    metadata
+                        .max
+                        .map(|max| format!(" max={max}"))
+                        .unwrap_or_default(),
+                ));
+                if !metadata.description.is_empty() {
+                    ui.label(metadata.description.as_str());
                 }
-                match &mut self.parameter_value {
-                    Ok(value) => {
-                        ScrollArea::vertical().show(ui, |ui| {
-                            ui.add(
-                                TextEdit::multiline(value)
-                                    .code_editor()
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
+            }
+
+            ui.horizontal(|ui| {
+                let can_mutate = !self.node_selector.is_empty()
+                    && !self.field_path.is_empty()
+                    && self.current_revision.is_some();
+                ui.add_enabled_ui(can_mutate, |ui| {
+                    if ui.button("Commit").clicked() {
+                        self.commit();
                     }
-                    Err(error) => {
-                        ui.label(format!("{error:#?}"));
+                    if ui.button("Reset scope").clicked() {
+                        self.reset_scope();
                     }
+                });
+
+                if let Some(revision) = self.current_revision {
+                    ui.label(format!("revision {revision}"));
                 }
+                if let Some(scope) = self.effective_source_scope {
+                    ui.label(format!("source {}", scope_name(scope)));
+                }
+            });
+
+            ScrollArea::vertical().show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut self.parameter_value)
+                        .code_editor()
+                        .desired_width(f32::INFINITY),
+                );
+            });
+
+            if let Some(status) = &self.status_message {
+                ui.label(status);
             }
         })
         .response
+    }
+}
+
+fn parse_scope(scope: &str) -> Option<ConfigScope> {
+    match scope {
+        "default" => Some(ConfigScope::Default),
+        "location" => Some(ConfigScope::Location),
+        "robot" => Some(ConfigScope::Robot),
+        _ => None,
+    }
+}
+
+fn scope_name(scope: ConfigScope) -> &'static str {
+    match scope {
+        ConfigScope::Default => "default",
+        ConfigScope::Location => "location",
+        ConfigScope::Robot => "robot",
     }
 }

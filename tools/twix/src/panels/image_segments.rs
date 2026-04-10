@@ -5,11 +5,11 @@ use eframe::{
     epaint::{Color32, Stroke},
 };
 use itertools::Itertools;
-use linear_algebra::{Vector2, point, vector};
+use linear_algebra::{point, vector, Vector2};
 use serde::{Deserialize, Serialize};
 
 use coordinate_systems::Pixel;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use types::{
     color::{Hsv, RgChromaticity, Rgb},
     image_segments::{Direction, EdgeType, ImageSegments, Segment},

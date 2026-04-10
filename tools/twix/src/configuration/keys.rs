@@ -2,8 +2,8 @@ use std::{collections::HashMap, fmt};
 
 use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 use serde::{
-    Deserialize,
     de::{self, Deserializer},
+    Deserialize,
 };
 use thiserror::Error;
 
@@ -27,7 +27,8 @@ pub enum KeybindAction {
     CloseTab,
     DuplicateTab,
     FocusAbove,
-    FocusAddress,
+    #[serde(alias = "focus_address")]
+    FocusEndpoint,
     FocusBelow,
     FocusLeft,
     FocusPanel,

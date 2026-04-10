@@ -68,6 +68,7 @@ resolver = "2"
 exclude = [
   "services/aliveness",
   "services/power-panic",
+  "third_party/ros-z",
 ]
 
 [workspace.package]
@@ -205,6 +206,8 @@ rmp-serde = "1.3.0"
 robot = { path = "crates/robot" }
 ros2 = { path = "crates/ros2" }
 ros2-client = { version = "0.8.2", features = ["pre-iron-gid"] }
+ros-z = { path = "third_party/ros-z/crates/ros-z" }
+ros-z-config = { path = "third_party/ros-z/crates/ros-z-config" }
 rustfft = "6.2.0"
 semver = "1.0.25"
 sensor_receiver = { path = "crates/sensor_receiver" }
