@@ -1,0 +1,619 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'book/**'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/mdbook-preview.yml'
+      - '.github/workflows/test.yml'
+      - '.github/workflows/rmw-zenoh-rs.yml'
+      - '.github/workflows/semantic-pr.yml'
+      - '.github/workflows/pr-draft-check.yml'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'book/**'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/mdbook-preview.yml'
+      - '.github/workflows/test.yml'
+      - '.github/workflows/rmw-zenoh-rs.yml'
+      - '.github/workflows/semantic-pr.yml'
+      - '.github/workflows/pr-draft-check.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  formatting:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Check formatting
+        run: nix build .#checks.x86_64-linux.pre-commit-check -L
+
+  no-ros-test:
+    name: ROS-independent Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Linux-specific setup
+      - name: Free Disk Space (Ubuntu)
+        if: runner.os == 'Linux'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: true
+          tool-cache: false
+          android: false
+          dotnet: false
+          haskell: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Install Determinate Nix (Linux)
+        if: runner.os == 'Linux'
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Install Nushell (Linux via Nix)
+        if: runner.os == 'Linux'
+        run: |
+          nix profile install nixpkgs#nushell
+          chmod +x scripts/test-pure-rust.nu
+
+      - name: Setup nix environment (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          nix print-dev-env '.#pureRust-ci' --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      # macOS-specific setup
+      - name: Install Rust toolchain (macOS)
+        if: runner.os == 'macOS'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install nushell protobuf
+          chmod +x scripts/test-pure-rust.nu
+
+      - name: Install cargo-nextest (macOS)
+        if: runner.os == 'macOS'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # Common setup
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-pureRust-test
+
+      - name: Set environment variables (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "CI=true" >> $GITHUB_ENV
+
+      # Test steps
+      - name: Clippy (default workspace)
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu clippy-workspace
+        shell: bash
+
+      - name: Run tests
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu run-tests
+        shell: bash
+
+  no-ros-shm:
+    name: SHM Tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: true
+          tool-cache: false
+          android: false
+          dotnet: false
+          haskell: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Install Determinate Nix (Linux)
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Install Nushell (Linux via Nix)
+        run: |
+          nix profile install nixpkgs#nushell
+          chmod +x scripts/test-pure-rust.nu
+
+      - name: Setup nix environment (Linux)
+        run: |
+          nix print-dev-env '.#pureRust-ci' --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-pureRust-shm
+
+      - name: SHM tests
+        run: |
+          sudo prlimit --memlock=unlimited --pid=$$
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-pure-rust.nu test-shm
+        shell: bash
+
+  coverage:
+    name: Code Coverage (ubuntu-latest)
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: true
+          tool-cache: false
+          android: false
+          dotnet: false
+          haskell: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Install Nushell
+        run: nix profile install nixpkgs#nushell
+
+      - name: Setup nix environment
+        run: |
+          nix print-dev-env '.#pureRust-ci' --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-latest-coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Run coverage
+        run: |
+          source /tmp/nix-dev-env.sh
+          cargo llvm-cov \
+            -p ros-z -p ros-z-codegen -p ros-z-cdr -p ros-z-protocol -p ros-z-schema \
+            -j4 \
+            --lcov --output-path lcov.info
+        shell: bash
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+  no-ros-checks:
+    name: ROS-independent Checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Linux-specific setup
+      - name: Free Disk Space (Ubuntu)
+        if: runner.os == 'Linux'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: true
+          tool-cache: false
+          android: false
+          dotnet: false
+          haskell: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Install Determinate Nix (Linux)
+        if: runner.os == 'Linux'
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Install Nushell (Linux via Nix)
+        if: runner.os == 'Linux'
+        run: |
+          nix profile install nixpkgs#nushell
+          chmod +x scripts/test-pure-rust.nu
+
+      - name: Setup nix environment (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          nix print-dev-env '.#pureRust-ci' --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      # macOS-specific setup
+      - name: Install Rust toolchain (macOS)
+        if: runner.os == 'macOS'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install nushell protobuf
+          chmod +x scripts/test-pure-rust.nu
+
+      # Common setup
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-pureRust-checks
+
+      - name: Set environment variables (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "CI=true" >> $GITHUB_ENV
+
+      # Check steps
+      - name: Check ros-z-msgs feature flags
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu check-bundled-msgs
+        shell: bash
+
+      - name: Check ros-z-console
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu check-console
+        shell: bash
+
+      - name: Check all examples
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu check-examples
+        shell: bash
+
+      - name: Check distro feature flags
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            source /tmp/nix-dev-env.sh
+          fi
+          nu scripts/test-pure-rust.nu check-distro-features
+        shell: bash
+
+  go-tests:
+    name: Go Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-go-ffi
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Run Go tests
+        working-directory: crates/ros-z-go
+        run: just test-go
+
+  python-tests:
+    name: Python Tests (ros-z-py) (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [humble, jazzy, kilted]
+    # Skip for draft PRs to save CI time during development
+    if: |
+      github.event_name == 'push' ||
+      github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+        with:
+          extra-conf: |
+            extra-substituters = https://ros-z.cachix.org https://ros.cachix.org
+            extra-trusted-public-keys = ros.cachix.org-1:dSyZxI8geDCJrwgvCOHDoAfOm5sV1wCPjBkKL+38Rvo=
+            extra-trusted-public-keys = ros-z.cachix.org-1:5ts10DbY/BUWnBGqAW+gLn9AvlBNezUM+ITDrb9S8Pw=
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: ros-z
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          # Push ros-z's own built Nix derivations on main-branch runs so
+          # subsequent runs (including PRs) can download them from Cachix
+          # instead of rebuilding. ros-z.cachix.org is our own cache;
+          # ros.cachix.org is read-only for upstream ROS packages.
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install Nushell
+        run: |
+          nix profile install nixpkgs#nushell
+          chmod +x scripts/test-python.nu
+
+      - name: Setup nix environment
+        run: |
+          nix print-dev-env '.#ros-${{ matrix.distro }}-ci' --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.distro }}-python
+
+      - name: Cache Python venv
+        id: venv-cache
+        uses: actions/cache@v4
+        with:
+          path: crates/ros-z-py/.venv
+          key: >-
+            ${{ runner.os }}-${{ matrix.distro }}-venv-${{
+            hashFiles('Cargo.lock', 'crates/ros-z-py/src/**',
+            'crates/ros-z-py/Cargo.toml', 'crates/ros-z-msgs/python/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.distro }}-venv-
+
+      - name: Setup venv
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} setup-venv
+
+      - name: Build native extension
+        run: |
+          source /tmp/nix-dev-env.sh
+          cd crates/ros-z-py && source .venv/bin/activate && maturin develop
+
+      - name: Clippy (ros-z-py)
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} clippy
+
+      - name: Ruff linting
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} lint-ruff
+
+      - name: Ruff format check
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} format-ruff
+
+      - name: MyPy type checking
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} typecheck-mypy
+
+      - name: Run pytest
+        run: |
+          sudo prlimit --memlock=unlimited --pid=$$
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} run-pytest
+
+      - name: Run examples
+        run: |
+           source /tmp/nix-dev-env.sh
+           nu scripts/test-python.nu --distro ${{ matrix.distro }} run-examples
+
+      - name: Run Python-Rust interop tests
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} run-python-interop
+
+      - name: Cleanup
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-python.nu --distro ${{ matrix.distro }} cleanup-python
+
+  ros-tests:
+    name: ROS Tests (clippy-rmw, interop) (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [humble, jazzy, kilted]
+    # Skip for draft PRs to save CI time during development
+    if: |
+      github.event_name == 'push' ||
+      github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+        with:
+          extra-conf: |
+            extra-substituters = https://ros-z.cachix.org https://ros.cachix.org
+            extra-trusted-public-keys = ros.cachix.org-1:dSyZxI8geDCJrwgvCOHDoAfOm5sV1wCPjBkKL+38Rvo=
+            extra-trusted-public-keys = ros-z.cachix.org-1:5ts10DbY/BUWnBGqAW+gLn9AvlBNezUM+ITDrb9S8Pw=
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: ros-z
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+
+      - name: Install Nushell
+        run: |
+          nix profile install nixpkgs#nushell
+          chmod +x scripts/test-ros.nu
+
+      - name: Setup nix environment
+        run: |
+          nix print-dev-env '.#ros-${{ matrix.distro }}-ci' \
+            --accept-flake-config > /tmp/nix-dev-env.sh
+          echo "export CI=true" >> /tmp/nix-dev-env.sh
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.distro }}-ros
+
+      - name: Run ROS tests
+        run: |
+          source /tmp/nix-dev-env.sh
+          nu scripts/test-ros.nu --distro ${{ matrix.distro }}
+
+  bridge-interop:
+    name: Bridge Interop (humble ↔ jazzy)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    # Only run on push or non-draft PRs to save CI time
+    if: |
+      github.event_name == 'push' ||
+      github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+        with:
+          extra-conf: |
+            extra-substituters = https://ros-z.cachix.org https://ros.cachix.org
+            extra-trusted-public-keys = ros.cachix.org-1:dSyZxI8geDCJrwgvCOHDoAfOm5sV1wCPjBkKL+38Rvo=
+            extra-trusted-public-keys = ros-z.cachix.org-1:5ts10DbY/BUWnBGqAW+gLn9AvlBNezUM+ITDrb9S8Pw=
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: ros-z
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: jazzy-bridge-interop
+
+      - name: Setup bridge interop nix environment
+        run: |
+          nix print-dev-env '.#ros-bridge-interop' \
+            --accept-flake-config > /tmp/nix-dev-env-jazzy.sh
+          echo "export CI=true" >> /tmp/nix-dev-env-jazzy.sh
+
+      - name: Build ros-z-bridge binary
+        run: |
+          source /tmp/nix-dev-env-jazzy.sh
+          cargo build -p ros-z-bridge --features jazzy -j4
+
+      - name: Run bridge unit tests
+        run: |
+          source /tmp/nix-dev-env-jazzy.sh
+          cargo test -p ros-z-bridge --features jazzy -j4
+
+      - name: Run bridge interop tests
+        run: |
+          source /tmp/nix-dev-env-jazzy.sh
+          cargo test -p ros-z-tests --test humble_jazzy_bridge \
+            --features jazzy,humble-jazzy-bridge-tests -j4 \
+            -- --nocapture 2>&1

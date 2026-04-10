@@ -1,0 +1,78 @@
+name: Docs
+
+on:
+  push:
+    paths:
+      - 'book/**'
+      - '**.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'book/**'
+      - '**.md'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  test_doc:
+    name: Test documentation
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Build ros-z library (required for mdbook test link path)
+        run: |
+          nix develop '.#pureRust-ci' -c cargo build --lib -p ros-z
+        env:
+          NIX_ACCEPT_FLAKE_CONFIG: 1
+
+      - name: Test mdbook in flake shell
+        run: |
+          nix develop '.#pureRust-ci' -c mdbook test book -L ./target/debug/deps
+        env:
+          NIX_ACCEPT_FLAKE_CONFIG: 1
+
+      - name: Check example documentation coverage
+        run: |
+          nix develop '.#pureRust-ci' -c nu scripts/check-example-coverage.nu
+        env:
+          NIX_ACCEPT_FLAKE_CONFIG: 1
+
+  publish_doc:
+    name: Publish to GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: test_doc
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+
+      - name: Build mdbook in flake shell
+        run: |
+          nix develop '.#pureRust-ci' -c mdbook build book
+        env:
+          NIX_ACCEPT_FLAKE_CONFIG: 1
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./book/book
+          clean_exclude: pr-preview/
+          force_orphan: false
