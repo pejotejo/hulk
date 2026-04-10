@@ -89,9 +89,6 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             }
         }
     }
-
-    #[allow(unreachable_code)]
-    Ok(())
 }
 
 fn is_stale(value: u64, now: u64, max_age_ms: u64) -> bool {

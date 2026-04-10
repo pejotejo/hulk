@@ -147,9 +147,6 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
                 .into_eyre()?;
         }
     }
-
-    #[allow(unreachable_code)]
-    Ok(())
 }
 
 fn make_image(config: &SimDriverConfig, timestamp_ns: u64) -> Image {

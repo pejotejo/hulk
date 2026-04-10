@@ -84,7 +84,4 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             }
         }
     }
-
-    #[allow(unreachable_code)]
-    Ok(())
 }
