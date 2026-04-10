@@ -19,7 +19,7 @@ pub(crate) struct MergedConfig {
     pub provenance: ProvenanceMap,
 }
 
-pub(crate) fn merge_layers(layers: &[(LayerPath, Value)]) -> Result<MergedConfig> {
+pub(crate) fn merge_layers(layers: &[(&str, &Value)]) -> Result<MergedConfig> {
     let mut provenance = ProvenanceMap::new();
     let mut effective = Value::Object(Map::new());
 
@@ -244,13 +244,13 @@ mod tests {
 
     #[test]
     fn merge_prefers_higher_precedence_scalars() {
+        let base = json!({"a": 1, "nested": {"x": 1, "y": 2}});
+        let location = json!({"nested": {"x": 9}});
+        let robot = json!({"a": 5});
         let merged = merge_layers(&[
-            (
-                "./config/base".into(),
-                json!({"a": 1, "nested": {"x": 1, "y": 2}}),
-            ),
-            ("./config/location".into(), json!({"nested": {"x": 9}})),
-            ("./config/robot".into(), json!({"a": 5})),
+            ("./config/base", &base),
+            ("./config/location", &location),
+            ("./config/robot", &robot),
         ])
         .unwrap();
 

@@ -263,17 +263,13 @@ fn snapshot_from_parts<T>(
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    let layers = layers
+    let layers = layers.iter().map(|path| layer_path(path)).collect::<Vec<_>>();
+    let merge_inputs = layers
         .iter()
-        .map(|path| layer_path(path))
+        .zip(layer_overlays.iter())
+        .map(|(layer, overlay)| (layer.as_str(), overlay))
         .collect::<Vec<_>>();
-    let merged = merge_layers(
-        &layers
-            .iter()
-            .cloned()
-            .zip(layer_overlays.iter().cloned())
-            .collect::<Vec<_>>(),
-    )?;
+    let merged = merge_layers(&merge_inputs)?;
     let typed: T = serde_json::from_value(merged.effective.clone()).map_err(|err| {
         ConfigError::DeserializationError {
             message: err.to_string(),
@@ -476,12 +472,7 @@ where
         }
 
         let mut layer_overlays = current.layer_overlays.clone();
-        let active_layers = self
-            .inner
-            .layers
-            .iter()
-            .map(|path| layer_path(path))
-            .collect::<Vec<_>>();
+        let active_layers = &current.layers;
         let mut touched = BTreeSet::new();
 
         for write in writes {

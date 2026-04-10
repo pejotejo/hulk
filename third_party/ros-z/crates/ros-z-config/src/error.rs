@@ -17,7 +17,6 @@ pub enum ConfigError {
     RevisionMismatch { expected: u64, actual: u64 },
     PersistenceError { path: PathBuf, message: String },
     PathError { path: String, reason: String },
-    MissingSelection { field: &'static str },
     EmptyLayerList,
     InvalidConfigKey { key: ConfigKey },
     LayerNotActive { layer: LayerPath },
@@ -58,9 +57,6 @@ impl fmt::Display for ConfigError {
                 write!(f, "failed to persist {}: {message}", path.display())
             }
             Self::PathError { path, reason } => write!(f, "invalid path '{path}': {reason}"),
-            Self::MissingSelection { field } => {
-                write!(f, "missing required config selection: {field}")
-            }
             Self::EmptyLayerList => write!(f, "config layer list must not be empty"),
             Self::InvalidConfigKey { key } => write!(f, "invalid config key '{key}'"),
             Self::LayerNotActive { layer } => {

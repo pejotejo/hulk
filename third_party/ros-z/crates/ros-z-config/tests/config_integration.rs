@@ -7,8 +7,9 @@ use std::{
 
 use ros_z::{Builder, context::ZContextBuilder};
 use ros_z_config::{
-    ConfigMetadata, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv, GetNodeConfigValueSrv,
-    ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigExt, RemoteConfigClient, SetNodeConfigSrv,
+    ConfigError, ConfigMetadata, GetNodeConfigMetadataSrv, GetNodeConfigSnapshotSrv,
+    GetNodeConfigValueSrv, ListNodeConfigPathsSrv, NodeConfigEvent, NodeConfigExt,
+    RemoteConfigClient, SetNodeConfigSrv,
 };
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,14 @@ fn build_ctx(layers: &TestLayers) -> ros_z::Result<ros_z::context::ZContext> {
         .build()
 }
 
+fn build_empty_layers_ctx() -> ros_z::Result<ros_z::context::ZContext> {
+    ZContextBuilder::default()
+        .with_domain_id(10_000 + NEXT_ID.fetch_add(1, Ordering::Relaxed))
+        .with_mode("peer")
+        .disable_multicast_scouting()
+        .build()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn bind_merge_set_and_subscribe_work() -> TestResult {
     let root = temp_config_root();
@@ -146,6 +155,49 @@ async fn second_bind_fails() -> TestResult {
         .bind_config_as::<VisionConfig>("ball_detector")
         .expect_err("second bind must fail");
     assert!(err.to_string().contains("already bound"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn bind_rejects_empty_layer_list() -> TestResult {
+    let ctx = build_empty_layers_ctx()?;
+    let node = ctx
+        .create_node("ball_detector")
+        .with_namespace("vision")
+        .build()?;
+
+    let err = node
+        .bind_config_as::<VisionConfig>("ball_detector")
+        .expect_err("bind must reject empty config layer list");
+    assert!(matches!(err, ConfigError::EmptyLayerList));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn bind_rejects_invalid_config_key() -> TestResult {
+    let root = temp_config_root();
+    let layers = test_layers(&root, "invalid-key");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
+        r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
+    );
+
+    let ctx = build_ctx(&layers)?;
+    let node = ctx
+        .create_node("ball_detector")
+        .with_namespace("vision")
+        .build()?;
+
+    let err = node
+        .bind_config_as::<VisionConfig>("ball detector")
+        .expect_err("bind must reject spaces in config key");
+    assert!(matches!(err, ConfigError::InvalidConfigKey { .. }));
+
+    let err = node
+        .bind_config_as::<VisionConfig>("vision/ball_detector")
+        .expect_err("bind must reject path separators in config key");
+    assert!(matches!(err, ConfigError::InvalidConfigKey { .. }));
     Ok(())
 }
 
@@ -375,6 +427,42 @@ async fn reset_exposes_lower_scope_and_noop_succeeds() -> TestResult {
 
     config.reset("threshold", layer_string(&layers.robot))?;
     assert_eq!(config.snapshot().typed().threshold, 0.5);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn writes_reject_inactive_target_layer() -> TestResult {
+    let root = temp_config_root();
+    let layers = test_layers(&root, "inactive-layer");
+    write_layer_file(
+        &layers.base,
+        "ball_detector",
+        r#"{ enabled: true, threshold: 0.5, nested: { count: 1 } }"#,
+    );
+
+    let ctx = build_ctx(&layers)?;
+    let node = ctx
+        .create_node("ball_detector")
+        .with_namespace("vision")
+        .build()?;
+    let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
+
+    let inactive_layer = "/not/an/active/layer".to_string();
+    let err = config
+        .set_json("threshold", serde_json::json!(0.9), inactive_layer.clone())
+        .expect_err("set_json must reject inactive layer");
+    assert!(matches!(
+        err,
+        ConfigError::LayerNotActive { layer } if layer == inactive_layer
+    ));
+
+    let err = config
+        .reset("threshold", inactive_layer.clone())
+        .expect_err("reset must reject inactive layer");
+    assert!(matches!(
+        err,
+        ConfigError::LayerNotActive { layer } if layer == inactive_layer
+    ));
     Ok(())
 }
 
