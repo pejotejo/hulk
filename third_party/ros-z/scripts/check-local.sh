@@ -35,7 +35,7 @@ run_check() {
 }
 
 # 1. Check formatting
-run_check "Formatting (cargo fmt)" "cargo fmt --check"
+run_check "Formatting (cargo +nightly fmt)" "cargo +nightly fmt --check"
 
 # 2. Clippy lints
 run_check "Clippy (all targets)" "cargo clippy --all-targets -- -D warnings"

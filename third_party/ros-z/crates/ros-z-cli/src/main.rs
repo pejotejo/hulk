@@ -1,6 +1,5 @@
 use clap::Parser;
 use color_eyre::eyre::{Result, WrapErr};
-
 use ros_z_cli::{cli::Cli, run};
 
 #[tokio::main]

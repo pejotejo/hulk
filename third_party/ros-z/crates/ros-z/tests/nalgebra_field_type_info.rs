@@ -13,8 +13,7 @@ use ros_z::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use zenoh::Wait;
-use zenoh::config::WhatAmI;
+use zenoh::{Wait, config::WhatAmI};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ros_z::MessageTypeInfo)]
 #[ros_msg(type_name = "custom_msgs/msg/MathSnapshot")]
