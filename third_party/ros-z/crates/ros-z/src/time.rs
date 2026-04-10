@@ -379,14 +379,14 @@ impl ZInterval {
 pub struct ZTimer {
     clock: ZClock,
     period: ZDuration,
-    next_deadline: ZTime,
+    start: ZTime,
 }
 
 impl ZTimer {
     pub fn new(clock: ZClock, period: impl Into<ZDuration>) -> Self {
         let period = period.into();
         Self {
-            next_deadline: clock.now().saturating_add(period),
+            start: clock.now(),
             clock,
             period,
         }
@@ -397,22 +397,22 @@ impl ZTimer {
     }
 
     pub fn deadline(&self) -> ZTime {
-        self.next_deadline
+        self.start.saturating_add(self.period)
     }
 
     pub fn reset(&mut self) {
-        self.next_deadline = self.clock.now().saturating_add(self.period);
+        self.start = self.clock.now();
     }
 
     pub fn set_period(&mut self, period: impl Into<ZDuration>) {
         self.period = period.into();
-        self.reset();
     }
 
     pub async fn tick(&mut self) -> ZTime {
-        self.clock.sleep_until(self.next_deadline).await;
-        let fired_at = self.next_deadline;
-        self.next_deadline = self.next_deadline.saturating_add(self.period);
+        let deadline = self.deadline();
+        self.clock.sleep_until(deadline).await;
+        let fired_at = deadline;
+        self.start = fired_at;
         fired_at
     }
 }
@@ -478,6 +478,35 @@ mod tests {
         timer.reset();
 
         assert_eq!(timer.deadline(), ZTime::from_nanos(7_000_000_000));
+    }
+
+    #[test]
+    fn ztimer_set_period_before_first_tick_preserves_creation_anchor() {
+        let clock = ZClock::logical(ZTime::zero());
+        let mut timer = clock.timer(ZDuration::from_secs(2));
+
+        timer.set_period(ZDuration::from_secs(5));
+
+        assert_eq!(timer.deadline(), ZTime::from_nanos(5_000_000_000));
+    }
+
+    #[tokio::test]
+    async fn ztimer_set_period_after_tick_preserves_last_fire_phase() {
+        let clock = ZClock::logical(ZTime::zero());
+        let mut timer = clock.timer(ZDuration::from_secs(2));
+
+        let waiter = tokio::spawn(async move {
+            let first_tick = timer.tick().await;
+            timer.set_period(ZDuration::from_secs(5));
+            (first_tick, timer.deadline())
+        });
+
+        tokio::task::yield_now().await;
+        clock.advance(ZDuration::from_secs(2)).unwrap();
+
+        let (first_tick, next_deadline) = waiter.await.unwrap();
+        assert_eq!(first_tick, ZTime::from_nanos(2_000_000_000));
+        assert_eq!(next_deadline, ZTime::from_nanos(7_000_000_000));
     }
 
     #[tokio::test]
