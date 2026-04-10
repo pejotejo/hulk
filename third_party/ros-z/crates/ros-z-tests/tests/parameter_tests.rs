@@ -24,7 +24,11 @@ use ros_z::{
 fn test_parameter_local_api() {
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("context");
-    let node = ctx.create_node("param_test_node").build().expect("node");
+    let node = ctx
+        .create_node("param_test_node")
+        .with_parameters()
+        .build()
+        .expect("node");
 
     // Declare a parameter
     let desc = ParameterDescriptor::new("my_int", ParameterType::Integer);
@@ -61,7 +65,11 @@ fn test_parameter_local_api() {
 fn test_parameter_validation_callback() {
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("context");
-    let node = ctx.create_node("callback_test_node").build().expect("node");
+    let node = ctx
+        .create_node("callback_test_node")
+        .with_parameters()
+        .build()
+        .expect("node");
 
     let desc = ParameterDescriptor::new("speed", ParameterType::Double);
     node.declare_parameter("speed", ParameterValue::Double(1.0), desc)
@@ -101,7 +109,11 @@ fn test_parameter_validation_callback() {
 fn test_read_only_parameter() {
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("context");
-    let node = ctx.create_node("readonly_test_node").build().expect("node");
+    let node = ctx
+        .create_node("readonly_test_node")
+        .with_parameters()
+        .build()
+        .expect("node");
 
     let mut desc = ParameterDescriptor::new("fixed", ParameterType::String);
     desc.read_only = true;
@@ -134,6 +146,7 @@ fn test_parameter_overrides() {
 
     let node = ctx
         .create_node("override_test_node")
+        .with_parameters()
         .with_parameter_overrides(overrides)
         .build()
         .expect("node");
@@ -151,16 +164,12 @@ fn test_parameter_overrides() {
     );
 }
 
-/// Test without_parameters() disables services.
+/// Test parameters are disabled by default.
 #[test]
-fn test_without_parameters() {
+fn test_parameters_disabled_by_default() {
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("ctx");
-    let node = ctx
-        .create_node("no_params_node")
-        .without_parameters()
-        .build()
-        .expect("node");
+    let node = ctx.create_node("no_params_node").build().expect("node");
 
     assert!(!node.has_parameter_service());
     let result = node.declare_parameter(
@@ -171,12 +180,29 @@ fn test_without_parameters() {
     assert!(result.is_err());
 }
 
+#[test]
+fn test_with_parameters_enables_services() {
+    let router = TestRouter::new();
+    let ctx = create_ros_z_context_with_router(&router).expect("ctx");
+    let node = ctx
+        .create_node("with_params_node")
+        .with_parameters()
+        .build()
+        .expect("node");
+
+    assert!(node.has_parameter_service());
+}
+
 /// Test multiple parameter types.
 #[test]
 fn test_parameter_types() {
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("context");
-    let node = ctx.create_node("types_test_node").build().expect("node");
+    let node = ctx
+        .create_node("types_test_node")
+        .with_parameters()
+        .build()
+        .expect("node");
 
     let cases: Vec<(&str, ParameterType, ParameterValue)> = vec![
         ("b", ParameterType::Bool, ParameterValue::Bool(true)),
@@ -255,6 +281,7 @@ fn test_parameter_client_high_level_api() {
         let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
         let node = ctx
             .create_node("high_level_param_server")
+            .with_parameters()
             .build()
             .expect("node");
 
@@ -288,6 +315,7 @@ fn test_parameter_client_high_level_api() {
         let ctx = create_ros_z_context_with_router(&router).expect("ctx");
         let client_node = Arc::new(
             ctx.create_node("high_level_param_client")
+                .with_parameters()
                 .build()
                 .expect("node"),
         );
@@ -353,10 +381,12 @@ fn test_parameter_events_cover_lifecycle() {
     let ctx = create_ros_z_context_with_router(&router).expect("context");
     let server = ctx
         .create_node("param_event_server")
+        .with_parameters()
         .build()
         .expect("server");
     let observer = ctx
         .create_node("param_event_observer")
+        .with_parameters()
         .build()
         .expect("observer");
 
@@ -425,7 +455,11 @@ fn test_parameter_event_published_on_set() {
 
     let router = TestRouter::new();
     let ctx = create_ros_z_context_with_router(&router).expect("context");
-    let node = ctx.create_node("event_test_node").build().expect("node");
+    let node = ctx
+        .create_node("event_test_node")
+        .with_parameters()
+        .build()
+        .expect("node");
 
     // Subscribe to /parameter_events via the raw session before any change.
     let (tx, rx) = mpsc::sync_channel::<WireParameterEvent>(8);
@@ -495,7 +529,11 @@ mod service_tests {
         let endpoint = router.endpoint().to_string();
         thread::spawn(move || {
             let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
-            let node = ctx.create_node("param_server").build().expect("node");
+            let node = ctx
+                .create_node("param_server")
+                .with_parameters()
+                .build()
+                .expect("node");
 
             let desc = ParameterDescriptor::new("value", ParameterType::Integer);
             node.declare_parameter("value", ParameterValue::Integer(7), desc)
@@ -509,7 +547,11 @@ mod service_tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = create_ros_z_context_with_router(&router).expect("ctx");
-            let client_node = ctx.create_node("param_client").build().expect("node");
+            let client_node = ctx
+                .create_node("param_client")
+                .with_parameters()
+                .build()
+                .expect("node");
 
             tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -639,7 +681,11 @@ mod service_tests {
         let endpoint = router.endpoint().to_string();
         thread::spawn(move || {
             let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
-            let node = ctx.create_node("rollback_server").build().expect("node");
+            let node = ctx
+                .create_node("rollback_server")
+                .with_parameters()
+                .build()
+                .expect("node");
 
             for (name, val) in &[("a", 1i64), ("b", 2i64)] {
                 let desc = ParameterDescriptor::new(*name, ParameterType::Integer);
@@ -663,7 +709,11 @@ mod service_tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = create_ros_z_context_with_router(&router).expect("ctx");
-            let client_node = ctx.create_node("rollback_client").build().expect("node");
+            let client_node = ctx
+                .create_node("rollback_client")
+                .with_parameters()
+                .build()
+                .expect("node");
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             let make_int = |name: &str, v: i64| {
@@ -734,7 +784,11 @@ mod service_tests {
         let endpoint = router.endpoint().to_string();
         thread::spawn(move || {
             let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
-            let node = ctx.create_node("atomic_server").build().expect("node");
+            let node = ctx
+                .create_node("atomic_server")
+                .with_parameters()
+                .build()
+                .expect("node");
 
             for (name, val) in &[("a", 1i64), ("b", 2i64)] {
                 let desc = ParameterDescriptor::new(*name, ParameterType::Integer);
@@ -750,7 +804,11 @@ mod service_tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = create_ros_z_context_with_router(&router).expect("ctx");
-            let client_node = ctx.create_node("atomic_client").build().expect("node");
+            let client_node = ctx
+                .create_node("atomic_client")
+                .with_parameters()
+                .build()
+                .expect("node");
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             let atomic_client = client_node

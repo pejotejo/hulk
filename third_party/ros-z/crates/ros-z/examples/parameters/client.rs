@@ -27,13 +27,16 @@ async fn main() -> Result<()> {
 
     println!("\n=== Remote Parameter Client Demo ===\n");
 
-    let server = ctx.create_node("client_demo_server").build()?;
+    let server = ctx
+        .create_node("client_demo_server")
+        .with_parameters()
+        .build()?;
     let desc = ParameterDescriptor::new("max_speed", ParameterType::Integer);
     server
         .declare_parameter("max_speed", ParameterValue::Integer(50), desc)
         .expect("declare max_speed");
 
-    let client_node = Arc::new(ctx.create_node("client_demo").build()?);
+    let client_node = Arc::new(ctx.create_node("client_demo").with_parameters().build()?);
     let client = ParameterClient::new(
         client_node,
         ParameterTarget::from_fqn("/client_demo_server").expect("valid node name"),

@@ -41,6 +41,7 @@ fn main() -> Result<()> {
 
     let node = ctx
         .create_node("yaml_demo")
+        .with_parameters()
         .with_parameter_file(&path)
         .expect("parse yaml")
         .build()?;
@@ -77,6 +78,7 @@ fn main() -> Result<()> {
 
     let node2 = ctx
         .create_node("override_demo")
+        .with_parameters()
         .with_parameter_overrides(overrides)
         .build()?;
 

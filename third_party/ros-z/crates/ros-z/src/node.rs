@@ -59,7 +59,7 @@ pub struct ZNode {
     /// Enabled via `ZNodeBuilder::with_extended_type_description_service()`.
     extended_type_desc_service: Option<ExtendedTypeDescriptionService>,
     /// Parameter service providing ROS 2-compatible parameter management.
-    /// Enabled by default; disable via `ZNodeBuilder::without_parameters()`.
+    /// Disabled by default; enable via `ZNodeBuilder::with_parameters()`.
     parameter_service: Option<ParameterService>,
 }
 
@@ -88,7 +88,7 @@ pub struct ZNodeBuilder {
     pub(crate) enable_type_desc_service: bool,
     /// Whether to enable the extended type description service for this node.
     pub(crate) enable_extended_type_desc_service: bool,
-    /// Whether to enable parameter services for this node (default: true).
+    /// Whether to enable parameter services for this node (default: false).
     pub(crate) enable_parameters: bool,
     /// Initial parameter overrides applied at declaration time.
     pub(crate) parameter_overrides: std::collections::HashMap<String, ParameterValue>,
@@ -175,11 +175,19 @@ impl ZNodeBuilder {
         self
     }
 
+    /// Enable the parameter services for this node.
+    ///
+    /// By default, nodes do not expose the standard ROS 2 parameter services.
+    /// Call this to opt in when a node intentionally uses parameters.
+    pub fn with_parameters(mut self) -> Self {
+        self.enable_parameters = true;
+        self
+    }
+
     /// Disable the parameter services for this node.
     ///
-    /// By default, every node exposes the standard ROS 2 parameter services
-    /// (`~get_parameters`, `~set_parameters`, etc.) and publishes on
-    /// `/parameter_events`. Call this to opt out.
+    /// Parameter services are disabled by default. This method remains
+    /// available for explicitness and symmetry with [`ZNodeBuilder::with_parameters`].
     pub fn without_parameters(mut self) -> Self {
         self.enable_parameters = false;
         self
@@ -293,7 +301,7 @@ impl Builder for ZNodeBuilder {
             None
         };
 
-        // Create parameter service if enabled (default)
+        // Create parameter service if enabled
         let parameter_service = if self.enable_parameters {
             debug!("[NOD] Creating parameter service");
             let service = ParameterService::new(ParameterServiceConfig {

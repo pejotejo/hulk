@@ -651,7 +651,7 @@ impl ZContext {
             runtime_config_inputs: self.runtime_config_inputs.clone(),
             enable_type_desc_service: false,
             enable_extended_type_desc_service: false,
-            enable_parameters: true,
+            enable_parameters: false,
             parameter_overrides: std::collections::HashMap::new(),
         }
     }

@@ -72,7 +72,11 @@ fn test_ros2_param_list_on_ros_z_node() {
     let endpoint = router.endpoint().to_string();
     let _server = thread::spawn(move || {
         let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
-        let node = ctx.create_node("param_list_node").build().expect("node");
+        let node = ctx
+            .create_node("param_list_node")
+            .with_parameters()
+            .build()
+            .expect("node");
 
         let desc = ParameterDescriptor::new("count", ParameterType::Integer);
         node.declare_parameter("count", ParameterValue::Integer(42), desc)
@@ -131,7 +135,11 @@ fn test_ros2_param_get_set_on_ros_z_node() {
     let endpoint = router.endpoint().to_string();
     let _server = thread::spawn(move || {
         let ctx = create_ros_z_context_with_endpoint(&endpoint).expect("ctx");
-        let node = ctx.create_node("param_getset_node").build().expect("node");
+        let node = ctx
+            .create_node("param_getset_node")
+            .with_parameters()
+            .build()
+            .expect("node");
 
         let desc = ParameterDescriptor::new("count", ParameterType::Integer);
         node.declare_parameter("count", ParameterValue::Integer(0), desc)

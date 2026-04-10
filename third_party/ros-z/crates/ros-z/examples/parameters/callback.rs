@@ -22,7 +22,7 @@ struct Args {
 fn run(ctx: ZContext) -> Result<()> {
     println!("\n=== Validation Callback Demo ===\n");
 
-    let node = ctx.create_node("callback_demo").build()?;
+    let node = ctx.create_node("callback_demo").with_parameters().build()?;
 
     let mut desc = ParameterDescriptor::new("temperature", ParameterType::Double);
     desc.floating_point_range = Some(FloatingPointRange {

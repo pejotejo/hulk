@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
 
     println!("\n=== Parameter Declaration Demo ===\n");
 
-    let node = ctx.create_node("declare_demo").build()?;
+    let node = ctx.create_node("declare_demo").with_parameters().build()?;
 
     let mut desc = ParameterDescriptor::new("max_speed", ParameterType::Integer);
     desc.integer_range = Some(ros_z::parameter::IntegerRange {

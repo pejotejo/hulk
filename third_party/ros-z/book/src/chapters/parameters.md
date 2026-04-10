@@ -2,6 +2,8 @@
 
 **ros-z implements the full ROS 2 parameter subsystem for native nodes.** Declare, get, set, and validate typed parameters at runtime — with config file loading, range constraints, and standard parameter services that interoperate with `ros2 param`.
 
+Parameter services are **disabled by default**. Opt in per node with `.with_parameters()`.
+
 ```admonish note
 Parameters let you configure node behavior at runtime without recompilation. ros-z parameters are fully compatible with the ROS 2 parameter protocol, so `ros2 param list`, `ros2 param get`, and `ros2 param set` work out of the box against ros-z nodes.
 ```
@@ -41,7 +43,7 @@ graph TD
 ```rust,ignore
 use ros_z::{Builder, parameter::*};
 
-let node = ctx.create_node("my_node").build()?;
+let node = ctx.create_node("my_node").with_parameters().build()?;
 
 // Declare a parameter with a descriptor
 let desc = ParameterDescriptor::new("max_speed", ParameterType::Double);
@@ -200,7 +202,8 @@ If both wildcard (`/**`) and node-specific entries match, node-specific values w
 
 | Method | Effect |
 |--------|--------|
-| `.without_parameters()` | Disable parameter services entirely |
+| `.with_parameters()` | Enable parameter services explicitly |
+| `.without_parameters()` | Disable parameter services explicitly |
 | `.with_parameter_overrides(map)` | Set overrides from a `HashMap<String, ParameterValue>` |
 | `.with_parameter_file(path)` | Load overrides from a YAML file |
 
@@ -243,7 +246,7 @@ This matches the ROS 2 default topic/QoS shape. Tools like `ros2 param` and `rqt
 
 - **Error handling**: ros-z returns `Result<(), String>` on set failures; rclcpp throws exceptions
 - **Callbacks**: ros-z callbacks receive `&[Parameter]` (slice) and return `SetParametersResult`; rclcpp receives `std::vector<rclcpp::Parameter>`
-- **Opt-out**: ros-z can disable parameter services with `.without_parameters()`; rclcpp always enables them
+- **Opt-in**: ros-z enables parameter services only with `.with_parameters()`; rclcpp always enables them
 - **Unset values**: ros-z keeps `ParameterValue::NotSet` declared; deletion is explicit via `undeclare_parameter`
 - **No `declare_parameter_if_not_declared`**: check `node.get_parameter("name").is_some()` first
 

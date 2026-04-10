@@ -322,8 +322,18 @@ mod tests {
             .with_connect_endpoints([endpoint])
             .build()
             .unwrap();
-        let server = Arc::new(ctx.create_node(server_name).build().unwrap());
-        let client_node = Arc::new(ctx.create_node(client_name).build().unwrap());
+        let server = Arc::new(
+            ctx.create_node(server_name)
+                .with_parameters()
+                .build()
+                .unwrap(),
+        );
+        let client_node = Arc::new(
+            ctx.create_node(client_name)
+                .with_parameters()
+                .build()
+                .unwrap(),
+        );
         let target = ParameterTarget::from_fqn(&format!("/{server_name}")).expect("valid fqn");
         let client = ParameterClient::new(Arc::clone(&client_node), target).unwrap();
         (server, client)
