@@ -10,11 +10,10 @@ use crate::{
     IntoEyreResultExt,
     config::VisionConfig,
     msgs::{VisionStatus, timestamp_now},
-    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
     let node = ctx
         .create_node("vision")
         .with_type_description_service()
@@ -38,51 +37,48 @@ pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
         .build()
         .into_eyre()?;
 
-    Ok(tokio::spawn(async move {
-        let _node = node;
-        let mut frame_count = 0u64;
-        let mut last_frame_timestamp_ns = 0u64;
-        let mut last_camera_info_timestamp_ns = 0u64;
+    let mut frame_count = 0u64;
+    let mut last_frame_timestamp_ns = 0u64;
+    let mut last_camera_info_timestamp_ns = 0u64;
 
-        loop {
-            let cfg = config.snapshot().typed().clone();
-            let publish_hz = cfg.status.publish_hz.max(0.5);
+    loop {
+        let cfg = config.snapshot().typed().clone();
+        let publish_hz = cfg.status.publish_hz.max(0.5);
 
-            tokio::select! {
-                msg = image_sub.async_recv() => {
-                    let image = msg.into_eyre()?;
-                    frame_count += 1;
-                    last_frame_timestamp_ns = timestamp_from_stamp(&image.header.stamp);
-                    if cfg.debug.log_frame_rate && frame_count % 30 == 0 {
-                        info!(frame_count, "vision received image frames");
-                    }
-                }
-                msg = camera_info_sub.async_recv() => {
-                    let camera_info = msg.into_eyre()?;
-                    last_camera_info_timestamp_ns = timestamp_from_stamp(&camera_info.header.stamp);
-                }
-                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
-                    let now = timestamp_now();
-                    if cfg.inputs.image_required && is_stale(last_frame_timestamp_ns, now, cfg.inputs.max_frame_age_ms) {
-                        warn!("vision has not received a fresh image frame");
-                    }
-                    if cfg.inputs.camera_info_required && is_stale(last_camera_info_timestamp_ns, now, cfg.inputs.max_frame_age_ms) {
-                        warn!("vision has not received fresh camera info");
-                    }
-
-                    status_pub.async_publish(&VisionStatus {
-                        frame_count,
-                        last_frame_timestamp_ns,
-                        last_camera_info_timestamp_ns,
-                        heartbeat_timestamp_ns: now,
-                    }).await.into_eyre()?;
+        tokio::select! {
+            msg = image_sub.async_recv() => {
+                let image = msg.into_eyre()?;
+                frame_count += 1;
+                last_frame_timestamp_ns = timestamp_from_stamp(&image.header.stamp);
+                if cfg.debug.log_frame_rate && frame_count % 30 == 0 {
+                    info!(frame_count, "vision received image frames");
                 }
             }
-        }
+            msg = camera_info_sub.async_recv() => {
+                let camera_info = msg.into_eyre()?;
+                last_camera_info_timestamp_ns = timestamp_from_stamp(&camera_info.header.stamp);
+            }
+            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
+                let now = timestamp_now();
+                if cfg.inputs.image_required && is_stale(last_frame_timestamp_ns, now, cfg.inputs.max_frame_age_ms) {
+                    warn!("vision has not received a fresh image frame");
+                }
+                if cfg.inputs.camera_info_required && is_stale(last_camera_info_timestamp_ns, now, cfg.inputs.max_frame_age_ms) {
+                    warn!("vision has not received fresh camera info");
+                }
 
-        #[allow(unreachable_code)]
-        Ok(())
-    }))
+                status_pub.async_publish(&VisionStatus {
+                    frame_count,
+                    last_frame_timestamp_ns,
+                    last_camera_info_timestamp_ns,
+                    heartbeat_timestamp_ns: now,
+                }).await.into_eyre()?;
+            }
+        }
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 fn is_stale(value: u64, now: u64, max_age_ms: u64) -> bool {

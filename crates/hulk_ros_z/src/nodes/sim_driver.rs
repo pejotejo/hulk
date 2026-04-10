@@ -13,11 +13,10 @@ use crate::{
         BUTTON_EVENT_SINGLE_CLICK, BUTTON_F1, ButtonEvent, FALL_DOWN_IS_READY, FallDownState,
         OdometryState, header, timestamp_now,
     },
-    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
     let node = ctx
         .create_node("sim_driver")
         .with_type_description_service()
@@ -49,86 +48,83 @@ pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
         .build()
         .into_eyre()?;
 
-    Ok(tokio::spawn(async move {
-        let _node = node;
-        let mut tick: u64 = 0;
-        let mut x = 0.0f32;
-        let mut y = 0.0f32;
-        let mut theta = 0.0f32;
+    let mut tick: u64 = 0;
+    let mut x = 0.0f32;
+    let mut y = 0.0f32;
+    let mut theta = 0.0f32;
 
-        loop {
-            let cfg = config.snapshot().typed().clone();
-            let publish_hz = cfg.timing.publish_hz.max(1.0);
+    loop {
+        let cfg = config.snapshot().typed().clone();
+        let publish_hz = cfg.timing.publish_hz.max(1.0);
 
-            tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)).await;
-            tick += 1;
-            let timestamp_ns = timestamp_now();
+        tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)).await;
+        tick += 1;
+        let timestamp_ns = timestamp_now();
 
-            match cfg.odometry.pattern.as_str() {
-                "stationary" => {}
-                "straight" => {
-                    x += cfg.odometry.step_x;
-                    y += cfg.odometry.step_y;
-                    theta += cfg.odometry.step_theta;
-                }
-                "circle" => {
-                    theta += cfg.odometry.step_theta;
-                    x += cfg.odometry.step_x * theta.cos();
-                    y += cfg.odometry.step_x * theta.sin();
-                }
-                other => {
-                    warn!(
-                        pattern = other,
-                        "unsupported odometry pattern, falling back to stationary"
-                    );
-                }
+        match cfg.odometry.pattern.as_str() {
+            "stationary" => {}
+            "straight" => {
+                x += cfg.odometry.step_x;
+                y += cfg.odometry.step_y;
+                theta += cfg.odometry.step_theta;
             }
-
-            odom_pub
-                .async_publish(&OdometryState {
-                    timestamp_ns,
-                    x,
-                    y,
-                    theta,
-                })
-                .await
-                .into_eyre()?;
-
-            fall_pub
-                .async_publish(&FallDownState {
-                    timestamp_ns,
-                    fall_down_state: FALL_DOWN_IS_READY.to_owned(),
-                    is_recovery_available: true,
-                })
-                .await
-                .into_eyre()?;
-
-            if tick % 150 == 0 {
-                button_pub
-                    .async_publish(&ButtonEvent {
-                        timestamp_ns,
-                        button: BUTTON_F1,
-                        event_type: BUTTON_EVENT_SINGLE_CLICK.to_owned(),
-                    })
-                    .await
-                    .into_eyre()?;
+            "circle" => {
+                theta += cfg.odometry.step_theta;
+                x += cfg.odometry.step_x * theta.cos();
+                y += cfg.odometry.step_x * theta.sin();
             }
-
-            if cfg.image.enabled {
-                let image = make_image(&cfg, timestamp_ns);
-                image_pub.async_publish(&image).await.into_eyre()?;
-
-                let camera_info = make_camera_info(&cfg, timestamp_ns);
-                camera_info_pub
-                    .async_publish(&camera_info)
-                    .await
-                    .into_eyre()?;
+            other => {
+                warn!(
+                    pattern = other,
+                    "unsupported odometry pattern, falling back to stationary"
+                );
             }
         }
 
-        #[allow(unreachable_code)]
-        Ok(())
-    }))
+        odom_pub
+            .async_publish(&OdometryState {
+                timestamp_ns,
+                x,
+                y,
+                theta,
+            })
+            .await
+            .into_eyre()?;
+
+        fall_pub
+            .async_publish(&FallDownState {
+                timestamp_ns,
+                fall_down_state: FALL_DOWN_IS_READY.to_owned(),
+                is_recovery_available: true,
+            })
+            .await
+            .into_eyre()?;
+
+        if tick % 150 == 0 {
+            button_pub
+                .async_publish(&ButtonEvent {
+                    timestamp_ns,
+                    button: BUTTON_F1,
+                    event_type: BUTTON_EVENT_SINGLE_CLICK.to_owned(),
+                })
+                .await
+                .into_eyre()?;
+        }
+
+        if cfg.image.enabled {
+            let image = make_image(&cfg, timestamp_ns);
+            image_pub.async_publish(&image).await.into_eyre()?;
+
+            let camera_info = make_camera_info(&cfg, timestamp_ns);
+            camera_info_pub
+                .async_publish(&camera_info)
+                .await
+                .into_eyre()?;
+        }
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 fn make_image(config: &SimDriverConfig, timestamp_ns: u64) -> Image {

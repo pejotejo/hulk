@@ -9,11 +9,10 @@ use crate::{
     IntoEyreResultExt,
     config::MotionConfig,
     msgs::{LowLevelCommand, MotionIntent, timestamp_now},
-    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
     let node = ctx
         .create_node("motion")
         .with_type_description_service()
@@ -33,37 +32,34 @@ pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
         .build()
         .into_eyre()?;
 
-    Ok(tokio::spawn(async move {
-        let _node = node;
-        let mut latest_intent = MotionIntent::idle(timestamp_now());
+    let mut latest_intent = MotionIntent::idle(timestamp_now());
 
-        loop {
-            let cfg = config.snapshot().typed().clone();
-            let publish_hz = cfg.timing.publish_hz.max(1.0);
+    loop {
+        let cfg = config.snapshot().typed().clone();
+        let publish_hz = cfg.timing.publish_hz.max(1.0);
 
-            tokio::select! {
-                msg = intent_sub.async_recv() => {
-                    latest_intent = msg.into_eyre()?;
-                }
-                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
-                    let command = LowLevelCommand {
-                        timestamp_ns: timestamp_now(),
-                        mode: latest_intent.mode.clone(),
-                        forward: latest_intent.forward.clamp(-cfg.limits.max_forward, cfg.limits.max_forward),
-                        lateral: latest_intent.lateral.clamp(-cfg.limits.max_lateral, cfg.limits.max_lateral),
-                        angular: latest_intent.angular.clamp(-cfg.limits.max_angular, cfg.limits.max_angular),
-                    };
+        tokio::select! {
+            msg = intent_sub.async_recv() => {
+                latest_intent = msg.into_eyre()?;
+            }
+            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
+                let command = LowLevelCommand {
+                    timestamp_ns: timestamp_now(),
+                    mode: latest_intent.mode.clone(),
+                    forward: latest_intent.forward.clamp(-cfg.limits.max_forward, cfg.limits.max_forward),
+                    lateral: latest_intent.lateral.clamp(-cfg.limits.max_lateral, cfg.limits.max_lateral),
+                    angular: latest_intent.angular.clamp(-cfg.limits.max_angular, cfg.limits.max_angular),
+                };
 
-                    command_pub.async_publish(&command).await.into_eyre()?;
+                command_pub.async_publish(&command).await.into_eyre()?;
 
-                    if cfg.output.mode == "log_only" {
-                        info!(?command, "published low-level command in log_only mode");
-                    }
+                if cfg.output.mode == "log_only" {
+                    info!(?command, "published low-level command in log_only mode");
                 }
             }
         }
+    }
 
-        #[allow(unreachable_code)]
-        Ok(())
-    }))
+    #[allow(unreachable_code)]
+    Ok(())
 }

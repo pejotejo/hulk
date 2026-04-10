@@ -1,7 +1,6 @@
 pub mod config;
 pub mod msgs;
 pub mod nodes;
-pub mod stack;
 pub mod topics;
 
 pub trait IntoEyreResultExt<T> {

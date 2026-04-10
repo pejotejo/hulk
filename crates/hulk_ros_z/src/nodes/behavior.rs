@@ -11,11 +11,10 @@ use crate::{
         BUTTON_EVENT_DOUBLE_CLICK, BUTTON_EVENT_LONG_PRESS_START, BUTTON_EVENT_SINGLE_CLICK,
         DemoMode, MotionIntent, RobotState, timestamp_now,
     },
-    stack::NodeTaskHandle,
     topics,
 };
 
-pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
+pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
     let node = ctx
         .create_node("behavior")
         .with_type_description_service()
@@ -35,64 +34,61 @@ pub fn spawn(ctx: Arc<ros_z::context::ZContext>) -> Result<NodeTaskHandle> {
         .build()
         .into_eyre()?;
 
-    Ok(tokio::spawn(async move {
-        let _node = node;
-        let mut latest_state: Option<RobotState> = None;
-        let mut current_mode = DemoMode::Stand;
-        let mut last_button_timestamp_ns = 0u64;
+    let mut latest_state: Option<RobotState> = None;
+    let mut current_mode = DemoMode::Stand;
+    let mut last_button_timestamp_ns = 0u64;
 
-        loop {
-            let cfg = config.snapshot().typed().clone();
+    loop {
+        let cfg = config.snapshot().typed().clone();
 
-            tokio::select! {
-                msg = state_sub.async_recv() => {
-                    let state = msg.into_eyre()?;
-                    if state.has_button_event {
-                        let button_event = &state.last_button_event;
-                        if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
-                            current_mode = match button_event.event_type.as_str() {
-                                BUTTON_EVENT_SINGLE_CLICK => parse_mode(&cfg.buttons.single_click_mode)?,
-                                BUTTON_EVENT_DOUBLE_CLICK => parse_mode(&cfg.buttons.double_click_mode)?,
-                                BUTTON_EVENT_LONG_PRESS_START => parse_mode(&cfg.buttons.long_press_mode)?,
-                                _ => current_mode,
-                            };
-                            last_button_timestamp_ns = button_event.timestamp_ns;
-                        }
+        tokio::select! {
+            msg = state_sub.async_recv() => {
+                let state = msg.into_eyre()?;
+                if state.has_button_event {
+                    let button_event = &state.last_button_event;
+                    if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
+                        current_mode = match button_event.event_type.as_str() {
+                            BUTTON_EVENT_SINGLE_CLICK => parse_mode(&cfg.buttons.single_click_mode)?,
+                            BUTTON_EVENT_DOUBLE_CLICK => parse_mode(&cfg.buttons.double_click_mode)?,
+                            BUTTON_EVENT_LONG_PRESS_START => parse_mode(&cfg.buttons.long_press_mode)?,
+                            _ => current_mode,
+                        };
+                        last_button_timestamp_ns = button_event.timestamp_ns;
                     }
-                    latest_state = Some(state);
                 }
-                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / 30.0)) => {
-                    let default_mode = parse_mode(&cfg.mode.default)?;
-                    if !cfg.mode.allow_button_override {
-                        current_mode = default_mode;
-                    }
-
-                    let mode = match latest_state.as_ref() {
-                        Some(state) if !state.is_upright() => DemoMode::Stand,
-                        Some(_) => current_mode,
-                        None => default_mode,
-                    };
-
-                    let walk = if matches!(mode, DemoMode::Walk) {
-                        (cfg.walk.forward, cfg.walk.lateral, cfg.walk.angular)
-                    } else {
-                        (0.0, 0.0, 0.0)
-                    };
-
-                    intent_pub.async_publish(&MotionIntent {
-                        timestamp_ns: timestamp_now(),
-                        mode: mode.as_str().to_owned(),
-                        forward: walk.0,
-                        lateral: walk.1,
-                        angular: walk.2,
-                    }).await.into_eyre()?;
+                latest_state = Some(state);
+            }
+            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / 30.0)) => {
+                let default_mode = parse_mode(&cfg.mode.default)?;
+                if !cfg.mode.allow_button_override {
+                    current_mode = default_mode;
                 }
+
+                let mode = match latest_state.as_ref() {
+                    Some(state) if !state.is_upright() => DemoMode::Stand,
+                    Some(_) => current_mode,
+                    None => default_mode,
+                };
+
+                let walk = if matches!(mode, DemoMode::Walk) {
+                    (cfg.walk.forward, cfg.walk.lateral, cfg.walk.angular)
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
+
+                intent_pub.async_publish(&MotionIntent {
+                    timestamp_ns: timestamp_now(),
+                    mode: mode.as_str().to_owned(),
+                    forward: walk.0,
+                    lateral: walk.1,
+                    angular: walk.2,
+                }).await.into_eyre()?;
             }
         }
+    }
 
-        #[allow(unreachable_code)]
-        Ok(())
-    }))
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 fn parse_mode(mode: &str) -> Result<DemoMode> {

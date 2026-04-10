@@ -1,9 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
-use color_eyre::Result;
-use hulk_ros_z::{IntoEyreResultExt, stack};
+use color_eyre::{Result, eyre::eyre};
+use hulk_ros_z::{IntoEyreResultExt, nodes};
 use ros_z::{Builder, context::ZContextBuilder};
+use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -20,6 +21,10 @@ struct Args {
     router: Option<String>,
 }
 
+struct RunningStack {
+    join_set: JoinSet<Result<()>>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -33,7 +38,7 @@ async fn main() -> Result<()> {
     } else {
         format!("/{}", args.robot)
     };
-    let config_layers = stack::derive_config_layers(&args.config_root, &args.location, &args.robot);
+    let config_layers = derive_config_layers(&args.config_root, &args.location, &args.robot);
 
     let mut builder = ZContextBuilder::default()
         .with_namespace(&namespace)
@@ -50,10 +55,10 @@ async fn main() -> Result<()> {
     };
 
     let ctx = Arc::new(builder.build().into_eyre()?);
-    let mut running = stack::spawn_all(ctx.clone()).await?;
+    let mut running = spawn_all(ctx.clone()).await?;
 
     let result = tokio::select! {
-        result = stack::monitor(&mut running.join_set) => result,
+        result = monitor(&mut running.join_set) => result,
         _ = tokio::signal::ctrl_c() => {
             Ok(())
         }
@@ -62,4 +67,39 @@ async fn main() -> Result<()> {
     running.join_set.abort_all();
     ctx.shutdown().into_eyre()?;
     result
+}
+
+fn derive_config_layers(
+    config_root: &std::path::Path,
+    location: &str,
+    robot: &str,
+) -> Vec<PathBuf> {
+    vec![
+        config_root.join("base"),
+        config_root.join("location").join(location),
+        config_root.join("robot").join(robot),
+    ]
+}
+
+async fn spawn_all(ctx: Arc<ros_z::context::ZContext>) -> Result<RunningStack> {
+    let mut join_set = JoinSet::new();
+    join_set.spawn(nodes::sim_driver::run(ctx.clone()));
+    join_set.spawn(nodes::state_estimator::run(ctx.clone()));
+    join_set.spawn(nodes::behavior::run(ctx.clone()));
+    join_set.spawn(nodes::motion::run(ctx.clone()));
+    join_set.spawn(nodes::vision::run(ctx));
+
+    Ok(RunningStack { join_set })
+}
+
+async fn monitor(join_set: &mut JoinSet<Result<()>>) -> Result<()> {
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(error),
+            Err(join_error) => return Err(eyre!("monitor join failed: {join_error}")),
+        }
+    }
+
+    Ok(())
 }
