@@ -1,0 +1,13 @@
+{
+  inputs: {
+    image_required: false,
+    camera_info_required: false,
+    max_frame_age_ms: 200,
+  },
+  status: {
+    publish_hz: 2.0,
+  },
+  debug: {
+    log_frame_rate: false,
+  },
+}

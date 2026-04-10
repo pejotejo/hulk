@@ -1,0 +1,13 @@
+{
+  timing: {
+    publish_hz: 30.0,
+  },
+  inputs: {
+    odometry_max_age_ms: 200,
+    fall_down_max_age_ms: 200,
+    button_event_max_age_ms: 500,
+  },
+  smoothing: {
+    odometry_alpha: 1.0,
+  },
+}

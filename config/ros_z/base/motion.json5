@@ -1,0 +1,13 @@
+{
+  timing: {
+    publish_hz: 30.0,
+  },
+  output: {
+    mode: "log_only",
+  },
+  limits: {
+    max_forward: 0.4,
+    max_lateral: 0.3,
+    max_angular: 0.8,
+  },
+}

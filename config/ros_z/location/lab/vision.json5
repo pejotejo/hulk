@@ -1,0 +1,6 @@
+{
+  inputs: {
+    image_required: true,
+    camera_info_required: true,
+  },
+}
