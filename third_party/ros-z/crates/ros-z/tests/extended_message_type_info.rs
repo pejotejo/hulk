@@ -318,6 +318,68 @@ async fn extended_only_types_use_extended_service_when_enabled() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extended_discovery_works_across_namespaces() {
+    let router = TestRouter::new();
+
+    let pub_ctx = create_context_with_router(&router).expect("publisher context");
+    let pub_node = pub_ctx
+        .create_node("extended_talker")
+        .with_namespace("tools")
+        .with_extended_type_description_service()
+        .build()
+        .expect("publisher node");
+
+    let publisher = pub_node
+        .create_pub::<RobotEnvelope>("/extended_robot_topic")
+        .build()
+        .expect("publisher");
+
+    let sub_ctx = create_context_with_router(&router).expect("subscriber context");
+    let sub_node = sub_ctx
+        .create_node("extended_listener")
+        .with_namespace("ui")
+        .build()
+        .expect("subscriber node");
+
+    let publish_task = tokio::spawn(async move {
+        for _ in 0..20 {
+            let msg = RobotEnvelope {
+                label: "robot-9".to_string(),
+                mission_id: Some(42),
+                state: RobotState::Charging {
+                    minutes_remaining: 12,
+                },
+            };
+            publisher.publish(&msg).expect("publish");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let subscriber = sub_node
+        .create_dyn_sub_auto("/extended_robot_topic", Duration::from_secs(10))
+        .await
+        .expect("extended fallback subscriber")
+        .build()
+        .expect("subscriber build");
+    let schema = subscriber.schema().expect("discovered schema");
+
+    assert!(schema.uses_extended_types());
+    assert_eq!(schema.type_name, "custom_msgs/msg/RobotEnvelope");
+
+    let message = subscriber
+        .recv_timeout(Duration::from_secs(3))
+        .expect("dynamic message");
+    assert_eq!(
+        message.get::<String>("label").unwrap(),
+        "robot-9".to_string()
+    );
+
+    publish_task.await.expect("publisher task");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn top_level_enums_are_discoverable_through_the_extended_service() {
     let router = TestRouter::new();
 

@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use tracing::{debug, warn};
 
-use crate::{Builder, node::ZNode};
+use crate::{Builder, node::ZNode, topic_name::qualify_remote_private_service_name};
 
 #[cfg(test)]
 use super::discovery::collect_topic_schema_candidates_from_publishers;
@@ -26,14 +26,15 @@ pub(crate) async fn query_type_description(
         candidate.namespace, candidate.node_name, candidate.type_name
     );
 
-    let service_name = if candidate.namespace.is_empty() || candidate.namespace == "/" {
-        format!("/{}/get_type_description", candidate.node_name)
-    } else {
-        format!(
-            "{}/{}/get_type_description",
-            candidate.namespace, candidate.node_name
-        )
-    };
+    let service_name = qualify_remote_private_service_name(
+        "get_type_description",
+        &candidate.namespace,
+        &candidate.node_name,
+    )
+    .map_err(|e| DynamicError::SerializationError(e.to_string()))?;
+    let node_fqn =
+        qualify_remote_private_service_name("", &candidate.namespace, &candidate.node_name)
+            .map_err(|e| DynamicError::SerializationError(e.to_string()))?;
 
     let client = node
         .create_client::<GetTypeDescription>(&service_name)
@@ -49,11 +50,7 @@ pub(crate) async fn query_type_description(
         .call_or_timeout(&request, timeout)
         .await
         .map_err(|_| DynamicError::ServiceTimeout {
-            node: if candidate.namespace.is_empty() || candidate.namespace == "/" {
-                candidate.node_name.clone()
-            } else {
-                format!("{}/{}", candidate.namespace, candidate.node_name)
-            },
+            node: node_fqn,
             service: service_name,
         })?;
 

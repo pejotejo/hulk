@@ -1,6 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{Builder, dynamic::DynamicError, node::ZNode};
+use crate::{
+    Builder, dynamic::DynamicError, node::ZNode, topic_name::qualify_remote_private_service_name,
+};
 
 use crate::dynamic::{MessageSchema, discovery::TopicSchemaCandidate};
 use crate::extended_type_description_service::{
@@ -16,14 +18,15 @@ pub(crate) async fn query_extended_type_description(
     candidate: &TopicSchemaCandidate,
     timeout: Duration,
 ) -> Result<(Arc<MessageSchema>, String), DynamicError> {
-    let service_name = if candidate.namespace.is_empty() || candidate.namespace == "/" {
-        format!("/{}/get_extended_type_description", candidate.node_name)
-    } else {
-        format!(
-            "{}/{}/get_extended_type_description",
-            candidate.namespace, candidate.node_name
-        )
-    };
+    let service_name = qualify_remote_private_service_name(
+        "get_extended_type_description",
+        &candidate.namespace,
+        &candidate.node_name,
+    )
+    .map_err(|e| DynamicError::SerializationError(e.to_string()))?;
+    let node_fqn =
+        qualify_remote_private_service_name("", &candidate.namespace, &candidate.node_name)
+            .map_err(|e| DynamicError::SerializationError(e.to_string()))?;
 
     let client = node
         .create_client::<GetExtendedTypeDescription>(&service_name)
@@ -37,10 +40,9 @@ pub(crate) async fn query_extended_type_description(
     let response = client
         .call_or_timeout(&request, timeout)
         .await
-        .map_err(|_| {
-            DynamicError::SerializationError(
-                "extended type description service timed out".to_string(),
-            )
+        .map_err(|_| DynamicError::ServiceTimeout {
+            node: node_fqn,
+            service: service_name,
         })?;
 
     let schema = schema_from_extended_type_description_response(&response)?;

@@ -210,3 +210,67 @@ async fn derived_message_schema_is_auto_registered_and_discoverable() {
 
     publish_task.await.expect("publisher task");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn derived_message_schema_discovery_works_across_namespaces() {
+    let router = TestRouter::new();
+
+    let pub_ctx = create_context_with_router(&router).expect("publisher context");
+    let pub_node = pub_ctx
+        .create_node("derived_talker")
+        .with_namespace("tools")
+        .with_type_description_service()
+        .build()
+        .expect("publisher node");
+
+    let publisher = pub_node
+        .create_pub::<RobotTelemetry>("/derived_topic")
+        .build()
+        .expect("publisher");
+
+    let sub_ctx = create_context_with_router(&router).expect("subscriber context");
+    let sub_node = sub_ctx
+        .create_node("derived_listener")
+        .with_namespace("ui")
+        .build()
+        .expect("subscriber node");
+
+    let publish_task = tokio::spawn(async move {
+        for _ in 0..25 {
+            let msg = RobotTelemetry {
+                label: "robot-1".to_string(),
+                pose: Position2D { x: 1.25, y: -2.5 },
+                temperatures: vec![20.5, 21.0, 21.5],
+                flags: [true, false],
+                payload: vec![1, 2, 3, 4],
+            };
+            publisher.publish(&msg).expect("publish");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let subscriber = sub_node
+        .create_dyn_sub_auto("/derived_topic", Duration::from_secs(10))
+        .await
+        .expect("dynamic subscriber with auto-discovery")
+        .build()
+        .expect("subscriber build");
+    let discovered_schema = subscriber.schema().expect("discovered schema");
+
+    assert_eq!(
+        discovered_schema.type_name,
+        "custom_msgs/msg/RobotTelemetry"
+    );
+
+    let msg = subscriber
+        .recv_timeout(Duration::from_secs(3))
+        .expect("received dynamic message");
+    assert_eq!(
+        msg.get::<String>("label").expect("label field"),
+        "robot-1".to_string()
+    );
+
+    publish_task.await.expect("publisher task");
+}

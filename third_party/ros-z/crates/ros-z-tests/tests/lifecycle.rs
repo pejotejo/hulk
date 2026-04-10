@@ -315,26 +315,41 @@ struct ClientTestEnv {
 }
 
 fn make_client_test_env(node_name: &str) -> ClientTestEnv {
+    make_client_test_env_with_namespaces(None, node_name, None)
+}
+
+fn make_client_test_env_with_namespaces(
+    node_namespace: Option<&str>,
+    node_name: &str,
+    manager_namespace: Option<&str>,
+) -> ClientTestEnv {
     use std::{thread, time::Duration};
 
     let router = common::TestRouter::new();
 
     let ctx_node =
         common::create_ros_z_context_with_endpoint(router.endpoint()).expect("node context");
-    let lc_node = ctx_node
-        .create_lifecycle_node(node_name)
-        .build()
-        .expect("lifecycle node");
+    let mut lc_node_builder = ctx_node.create_lifecycle_node(node_name);
+    if let Some(namespace) = node_namespace {
+        lc_node_builder = lc_node_builder.with_namespace(namespace);
+    }
+    let lc_node = lc_node_builder.build().expect("lifecycle node");
 
     thread::sleep(Duration::from_millis(500));
 
     let ctx_client =
         common::create_ros_z_context_with_endpoint(router.endpoint()).expect("client context");
-    let mgr_node = ctx_client
-        .create_node("lifecycle_manager")
-        .build()
-        .expect("manager node");
-    let client = ZLifecycleClient::new(&mgr_node, node_name).expect("lifecycle client");
+    let mut mgr_node_builder = ctx_client.create_node("lifecycle_manager");
+    if let Some(namespace) = manager_namespace {
+        mgr_node_builder = mgr_node_builder.with_namespace(namespace);
+    }
+    let mgr_node = mgr_node_builder.build().expect("manager node");
+
+    let target_node = match node_namespace {
+        Some(namespace) => format!("/{namespace}/{node_name}"),
+        None => format!("/{node_name}"),
+    };
+    let client = ZLifecycleClient::new(&mgr_node, &target_node).expect("lifecycle client");
 
     thread::sleep(Duration::from_millis(500));
 
@@ -449,4 +464,33 @@ async fn test_client_invalid_transition_returns_false() {
         .await
         .expect("trigger");
     assert!(!result);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_client_get_state_across_namespaces() {
+    let env =
+        make_client_test_env_with_namespaces(Some("tools"), "lc_client_cross_ns", Some("ops"));
+    let timeout = std::time::Duration::from_secs(5);
+
+    let state = env.client.get_state(timeout).await.expect("get_state");
+    assert_eq!(state, LifecycleState::Unconfigured);
+}
+
+#[test]
+fn test_client_rejects_relative_target_name() {
+    let ctx = ZContextBuilder::default()
+        .disable_multicast_scouting()
+        .build()
+        .expect("context");
+    let mgr_node = ctx
+        .create_node("lifecycle_manager")
+        .with_namespace("ops")
+        .build()
+        .expect("manager node");
+
+    let err = match ZLifecycleClient::new(&mgr_node, "camera_driver") {
+        Ok(_) => panic!("relative target should fail"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("absolute node FQN"));
 }

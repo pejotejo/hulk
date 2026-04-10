@@ -221,6 +221,26 @@ pub fn qualify_service_name(
     qualify_topic_name(service, namespace, node_name)
 }
 
+pub(crate) fn qualify_remote_private_service_name(
+    service_basename: &str,
+    namespace: &str,
+    node_name: &str,
+) -> Result<String, TopicNameError> {
+    let service_basename = service_basename
+        .strip_prefix('~')
+        .unwrap_or(service_basename);
+    let service_basename = service_basename
+        .strip_prefix('/')
+        .unwrap_or(service_basename);
+    let private_service_name = if service_basename.is_empty() {
+        "~".to_string()
+    } else {
+        format!("~{service_basename}")
+    };
+
+    qualify_service_name(&private_service_name, namespace, node_name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +377,34 @@ mod tests {
         assert_eq!(
             qualify_service_name("~my_service", "/ns", "node").unwrap(),
             "/ns/node/my_service"
+        );
+    }
+
+    #[test]
+    fn test_remote_private_service_names_are_absolute() {
+        assert_eq!(
+            qualify_remote_private_service_name("get_state", "", "node").unwrap(),
+            "/node/get_state"
+        );
+        assert_eq!(
+            qualify_remote_private_service_name("get_state", "/", "node").unwrap(),
+            "/node/get_state"
+        );
+        assert_eq!(
+            qualify_remote_private_service_name("get_state", "tools", "node").unwrap(),
+            "/tools/node/get_state"
+        );
+        assert_eq!(
+            qualify_remote_private_service_name("get_state", "/tools", "node").unwrap(),
+            "/tools/node/get_state"
+        );
+    }
+
+    #[test]
+    fn test_remote_private_service_helper_accepts_empty_basename() {
+        assert_eq!(
+            qualify_remote_private_service_name("", "/tools", "node").unwrap(),
+            "/tools/node"
         );
     }
 }

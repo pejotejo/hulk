@@ -35,13 +35,14 @@ use crate::{
     },
     node::ZNode,
     service::ZClient,
+    topic_name::qualify_remote_private_service_name,
 };
 
 /// Client for managing a remote lifecycle node's state machine.
 ///
 /// Each method maps to one of the five standard lifecycle management services.
-/// The node name passed to [`ZLifecycleClient::new`] must match the name the
-/// lifecycle node was created with (including namespace).
+/// The target passed to [`ZLifecycleClient::new`] must be the lifecycle node's
+/// absolute fully-qualified name, including namespace.
 pub struct ZLifecycleClient {
     change_state: ZClient<ChangeState>,
     get_state: ZClient<GetState>,
@@ -52,22 +53,37 @@ pub struct ZLifecycleClient {
 impl ZLifecycleClient {
     /// Create a new lifecycle client targeting `node_name`.
     ///
-    /// Services are resolved relative to the node name:
-    /// `{node_name}/change_state`, `{node_name}/get_state`, etc.
+    /// `node_name` must be an absolute node FQN like `/camera_node` or
+    /// `/tools/camera_node`.
     pub fn new(node: &ZNode, node_name: &str) -> Result<Self> {
+        let (target_namespace, target_node_name) = parse_absolute_node_fqn(node_name)?;
         let change_state = node
-            .create_client::<ChangeState>(&format!("{node_name}/change_state"))
+            .create_client::<ChangeState>(&qualify_remote_private_service_name(
+                "change_state",
+                &target_namespace,
+                &target_node_name,
+            )?)
             .build()?;
         let get_state = node
-            .create_client::<GetState>(&format!("{node_name}/get_state"))
+            .create_client::<GetState>(&qualify_remote_private_service_name(
+                "get_state",
+                &target_namespace,
+                &target_node_name,
+            )?)
             .build()?;
         let get_available_states = node
-            .create_client::<GetAvailableStates>(&format!("{node_name}/get_available_states"))
+            .create_client::<GetAvailableStates>(&qualify_remote_private_service_name(
+                "get_available_states",
+                &target_namespace,
+                &target_node_name,
+            )?)
             .build()?;
         let get_available_transitions = node
-            .create_client::<GetAvailableTransitions>(&format!(
-                "{node_name}/get_available_transitions"
-            ))
+            .create_client::<GetAvailableTransitions>(&qualify_remote_private_service_name(
+                "get_available_transitions",
+                &target_namespace,
+                &target_node_name,
+            )?)
             .build()?;
         Ok(Self {
             change_state,
@@ -165,6 +181,35 @@ impl ZLifecycleClient {
             .await?;
         Ok(resp.available_transitions)
     }
+}
+
+fn parse_absolute_node_fqn(node_name: &str) -> Result<(String, String)> {
+    let node_name = node_name.trim();
+    if !node_name.starts_with('/') {
+        return Err(zenoh::Error::from(format!(
+            "Lifecycle client target must be an absolute node FQN, got '{node_name}'"
+        )));
+    }
+
+    let mut parts = node_name.rsplitn(2, '/');
+    let name = parts.next().unwrap_or_default();
+    let namespace = parts.next().unwrap_or_default();
+    if name.is_empty() {
+        return Err(zenoh::Error::from(format!(
+            "Lifecycle client target must include a node name, got '{node_name}'"
+        )));
+    }
+
+    let namespace = if namespace.is_empty() {
+        "/".to_string()
+    } else {
+        namespace.to_string()
+    };
+
+    qualify_remote_private_service_name("", &namespace, name)
+        .map_err(|e| zenoh::Error::from(format!("Invalid lifecycle client target: {e}")))?;
+
+    Ok((namespace, name.to_string()))
 }
 
 fn state_from_lc(s: &LcState) -> LifecycleState {

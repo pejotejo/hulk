@@ -53,7 +53,7 @@ fn main() -> Result<()> {
 
     // --- Bringup manager ---
     let mgr = ctx.create_node("bringup_manager").build()?;
-    let client = ZLifecycleClient::new(&mgr, "camera_driver")?;
+    let client = ZLifecycleClient::new(&mgr, "/camera_driver")?;
 
     // Allow time for service discovery
     std::thread::sleep(Duration::from_millis(300));
