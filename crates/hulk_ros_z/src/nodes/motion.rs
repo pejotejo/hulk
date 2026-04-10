@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use ros_z::Builder;
+use ros_z::{Builder, context::ZContext};
 use ros_z_config::prelude::*;
 use tracing::info;
 
@@ -12,7 +12,7 @@ use crate::{
     topics,
 };
 
-pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
+pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
         .create_node("motion")
         .with_type_description_service()
@@ -45,7 +45,7 @@ pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
             _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
                 let command = LowLevelCommand {
                     timestamp_ns: timestamp_now(),
-                    mode: latest_intent.mode.clone(),
+                    mode: latest_intent.mode,
                     forward: latest_intent.forward.clamp(-cfg.limits.max_forward, cfg.limits.max_forward),
                     lateral: latest_intent.lateral.clamp(-cfg.limits.max_lateral, cfg.limits.max_lateral),
                     angular: latest_intent.angular.clamp(-cfg.limits.max_angular, cfg.limits.max_angular),

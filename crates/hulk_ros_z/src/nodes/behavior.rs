@@ -1,7 +1,7 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use color_eyre::{Result, eyre::eyre};
-use ros_z::Builder;
+use color_eyre::Result;
+use ros_z::{Builder, context::ZContext};
 use ros_z_config::prelude::*;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     topics,
 };
 
-pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
+pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
         .create_node("behavior")
         .with_type_description_service()
@@ -22,7 +22,7 @@ pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
         .build()
         .into_eyre()?;
     let config = node
-        .bind_config_with_metadata_as::<BehaviorConfig>("behavior")
+        .bind_config_as::<BehaviorConfig>("behavior")
         .into_eyre()?;
 
     let state_sub = node
@@ -43,23 +43,23 @@ pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
 
         tokio::select! {
             msg = state_sub.async_recv() => {
-                let state = msg.into_eyre()?;
-                if state.has_button_event {
-                    let button_event = &state.last_button_event;
-                    if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
-                        current_mode = match button_event.event_type.as_str() {
-                            BUTTON_EVENT_SINGLE_CLICK => parse_mode(&cfg.buttons.single_click_mode)?,
-                            BUTTON_EVENT_DOUBLE_CLICK => parse_mode(&cfg.buttons.double_click_mode)?,
-                            BUTTON_EVENT_LONG_PRESS_START => parse_mode(&cfg.buttons.long_press_mode)?,
-                            _ => current_mode,
-                        };
-                        last_button_timestamp_ns = button_event.timestamp_ns;
+                    let state = msg.into_eyre()?;
+                    if state.has_button_event {
+                        let button_event = &state.last_button_event;
+                        if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
+                            current_mode = match button_event.event_type.as_str() {
+                                BUTTON_EVENT_SINGLE_CLICK => cfg.buttons.single_click_mode,
+                                BUTTON_EVENT_DOUBLE_CLICK => cfg.buttons.double_click_mode,
+                                BUTTON_EVENT_LONG_PRESS_START => cfg.buttons.long_press_mode,
+                                _ => current_mode,
+                            };
+                            last_button_timestamp_ns = button_event.timestamp_ns;
+                        }
                     }
+                    latest_state = Some(state);
                 }
-                latest_state = Some(state);
-            }
-            _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / 30.0)) => {
-                let default_mode = parse_mode(&cfg.mode.default)?;
+                _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / 30.0)) => {
+                let default_mode = cfg.mode.default;
                 if !cfg.mode.allow_button_override {
                     current_mode = default_mode;
                 }
@@ -78,7 +78,7 @@ pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
 
                 intent_pub.async_publish(&MotionIntent {
                     timestamp_ns: timestamp_now(),
-                    mode: mode.as_str().to_owned(),
+                    mode,
                     forward: walk.0,
                     lateral: walk.1,
                     angular: walk.2,
@@ -89,8 +89,4 @@ pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
 
     #[allow(unreachable_code)]
     Ok(())
-}
-
-fn parse_mode(mode: &str) -> Result<DemoMode> {
-    DemoMode::from_str(mode).map_err(|error| eyre!(error))
 }

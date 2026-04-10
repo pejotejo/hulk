@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use ros_z::Builder;
+use ros_z::{Builder, context::ZContext};
 use ros_z_config::prelude::*;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     topics,
 };
 
-pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
+pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
         .create_node("state_estimator")
         .with_type_description_service()

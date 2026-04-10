@@ -1,7 +1,8 @@
-use ros_z_config::ConfigMetadata;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, ConfigMetadata)]
+use crate::msgs::DemoMode;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BehaviorConfig {
     pub mode: ModeConfig,
@@ -9,22 +10,22 @@ pub struct BehaviorConfig {
     pub walk: WalkConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ConfigMetadata)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModeConfig {
-    pub default: String,
+    pub default: DemoMode,
     pub allow_button_override: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ConfigMetadata)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ButtonConfig {
-    pub single_click_mode: String,
-    pub double_click_mode: String,
-    pub long_press_mode: String,
+    pub single_click_mode: DemoMode,
+    pub double_click_mode: DemoMode,
+    pub long_press_mode: DemoMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ConfigMetadata)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WalkConfig {
     pub forward: f32,

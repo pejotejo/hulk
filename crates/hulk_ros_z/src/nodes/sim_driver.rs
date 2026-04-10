@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use ros_z::{Builder, ZBuf};
+use ros_z::{Builder, ZBuf, context::ZContext};
 use ros_z_config::prelude::*;
 use ros_z_msgs::sensor_msgs::{CameraInfo, Image};
 use tracing::warn;
@@ -16,7 +16,7 @@ use crate::{
     topics,
 };
 
-pub async fn run(ctx: Arc<ros_z::context::ZContext>) -> Result<()> {
+pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
         .create_node("sim_driver")
         .with_type_description_service()
