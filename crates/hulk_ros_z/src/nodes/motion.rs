@@ -7,31 +7,32 @@ use tracing::info;
 
 use crate::{
     config::MotionConfig,
-    into_eyre,
     msgs::{LowLevelCommand, MotionIntent, timestamp_now},
+    IntoEyreResultExt,
     stack::{NodeTaskHandle, StackContext},
     topics,
 };
 
 pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = into_eyre(
-        stack
-            .ros_z
-            .create_node("motion")
-            .with_type_description_service()
-            .with_extended_type_description_service()
-            .build(),
-    )?;
-    let config = into_eyre(node.bind_config_with_metadata_as::<MotionConfig>("motion"))?;
+    let node = stack
+        .ros_z
+        .create_node("motion")
+        .with_type_description_service()
+        .with_extended_type_description_service()
+        .build()
+        .into_eyre()?;
+    let config = node
+        .bind_config_with_metadata_as::<MotionConfig>("motion")
+        .into_eyre()?;
 
-    let intent_sub = into_eyre(
-        node.create_sub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
-            .build(),
-    )?;
-    let command_pub = into_eyre(
-        node.create_pub::<LowLevelCommand>(topics::CONTROL_LOW_LEVEL_COMMAND)
-            .build(),
-    )?;
+    let intent_sub = node
+        .create_sub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
+        .build()
+        .into_eyre()?;
+    let command_pub = node
+        .create_pub::<LowLevelCommand>(topics::CONTROL_LOW_LEVEL_COMMAND)
+        .build()
+        .into_eyre()?;
 
     Ok(tokio::spawn(async move {
         let _node = node;
@@ -44,7 +45,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             tokio::select! {
                 _ = stack.shutdown.cancelled() => break,
                 msg = intent_sub.async_recv() => {
-                    latest_intent = into_eyre(msg)?;
+                    latest_intent = msg.into_eyre()?;
                 }
                 _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
                     let command = LowLevelCommand {
@@ -55,7 +56,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                         angular: latest_intent.angular.clamp(-cfg.limits.max_angular, cfg.limits.max_angular),
                     };
 
-                    into_eyre(command_pub.async_publish(&command).await)?;
+                    command_pub.async_publish(&command).await.into_eyre()?;
 
                     if cfg.output.mode == "log_only" {
                         info!(?command, "published low-level command in log_only mode");

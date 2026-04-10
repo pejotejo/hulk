@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
 use color_eyre::Result;
-use hulk_ros_z::{into_eyre, namespacing, stack};
+use hulk_ros_z::{namespacing, stack, IntoEyreResultExt};
 use ros_z::{Builder, context::ZContextBuilder};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
         .with_config_layers(config_layers);
 
     builder = match args.router {
-        Some(router) => into_eyre(builder.with_router_endpoint(router))?,
+        Some(router) => builder.with_router_endpoint(router).into_eyre()?,
         None => builder
             .with_mode("router")
             .disable_multicast_scouting()
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
             .with_listen_endpoints(["tcp/127.0.0.1:7447"]),
     };
 
-    let ctx = Arc::new(into_eyre(builder.build())?);
+    let ctx = Arc::new(builder.build().into_eyre()?);
     let shutdown = CancellationToken::new();
     let stack = Arc::new(stack::StackContext {
         ros_z: ctx.clone(),

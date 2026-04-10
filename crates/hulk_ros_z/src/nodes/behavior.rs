@@ -6,34 +6,35 @@ use ros_z_config::prelude::*;
 
 use crate::{
     config::BehaviorConfig,
-    into_eyre,
     msgs::{
         BUTTON_EVENT_DOUBLE_CLICK, BUTTON_EVENT_LONG_PRESS_START, BUTTON_EVENT_SINGLE_CLICK,
         DemoMode, MotionIntent, RobotState, timestamp_now,
     },
+    IntoEyreResultExt,
     stack::{NodeTaskHandle, StackContext},
     topics,
 };
 
 pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = into_eyre(
-        stack
-            .ros_z
-            .create_node("behavior")
-            .with_type_description_service()
-            .with_extended_type_description_service()
-            .build(),
-    )?;
-    let config = into_eyre(node.bind_config_with_metadata_as::<BehaviorConfig>("behavior"))?;
+    let node = stack
+        .ros_z
+        .create_node("behavior")
+        .with_type_description_service()
+        .with_extended_type_description_service()
+        .build()
+        .into_eyre()?;
+    let config = node
+        .bind_config_with_metadata_as::<BehaviorConfig>("behavior")
+        .into_eyre()?;
 
-    let state_sub = into_eyre(
-        node.create_sub::<RobotState>(topics::STATE_ROBOT_STATE)
-            .build(),
-    )?;
-    let intent_pub = into_eyre(
-        node.create_pub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
-            .build(),
-    )?;
+    let state_sub = node
+        .create_sub::<RobotState>(topics::STATE_ROBOT_STATE)
+        .build()
+        .into_eyre()?;
+    let intent_pub = node
+        .create_pub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
+        .build()
+        .into_eyre()?;
 
     Ok(tokio::spawn(async move {
         let _node = node;
@@ -47,7 +48,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             tokio::select! {
                 _ = stack.shutdown.cancelled() => break,
                 msg = state_sub.async_recv() => {
-                    let state = into_eyre(msg)?;
+                    let state = msg.into_eyre()?;
                     if state.has_button_event {
                         let button_event = &state.last_button_event;
                         if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
@@ -80,13 +81,13 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                         (0.0, 0.0, 0.0)
                     };
 
-                    into_eyre(intent_pub.async_publish(&MotionIntent {
+                    intent_pub.async_publish(&MotionIntent {
                         timestamp_ns: timestamp_now(),
                         mode: mode.as_str().to_owned(),
                         forward: walk.0,
                         lateral: walk.1,
                         angular: walk.2,
-                    }).await)?;
+                    }).await.into_eyre()?;
                 }
             }
         }

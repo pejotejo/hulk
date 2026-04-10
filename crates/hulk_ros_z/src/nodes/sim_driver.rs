@@ -8,43 +8,47 @@ use tracing::warn;
 
 use crate::{
     config::SimDriverConfig,
-    into_eyre,
     msgs::{
         BUTTON_EVENT_SINGLE_CLICK, BUTTON_F1, ButtonEvent, FALL_DOWN_IS_READY, FallDownState,
         OdometryState, header, timestamp_now,
     },
+    IntoEyreResultExt,
     stack::{NodeTaskHandle, StackContext},
     topics,
 };
 
 pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = into_eyre(
-        stack
-            .ros_z
-            .create_node("sim_driver")
-            .with_type_description_service()
-            .with_extended_type_description_service()
-            .build(),
-    )?;
-    let config = into_eyre(node.bind_config_with_metadata_as::<SimDriverConfig>("sim_driver"))?;
+    let node = stack
+        .ros_z
+        .create_node("sim_driver")
+        .with_type_description_service()
+        .with_extended_type_description_service()
+        .build()
+        .into_eyre()?;
+    let config = node
+        .bind_config_with_metadata_as::<SimDriverConfig>("sim_driver")
+        .into_eyre()?;
 
-    let odom_pub = into_eyre(
-        node.create_pub::<OdometryState>(topics::SENSORS_ODOMETRY)
-            .build(),
-    )?;
-    let fall_pub = into_eyre(
-        node.create_pub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
-            .build(),
-    )?;
-    let button_pub = into_eyre(
-        node.create_pub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
-            .build(),
-    )?;
-    let image_pub = into_eyre(node.create_pub::<Image>(topics::SENSORS_IMAGE).build())?;
-    let camera_info_pub = into_eyre(
-        node.create_pub::<CameraInfo>(topics::SENSORS_CAMERA_INFO)
-            .build(),
-    )?;
+    let odom_pub = node
+        .create_pub::<OdometryState>(topics::SENSORS_ODOMETRY)
+        .build()
+        .into_eyre()?;
+    let fall_pub = node
+        .create_pub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
+        .build()
+        .into_eyre()?;
+    let button_pub = node
+        .create_pub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
+        .build()
+        .into_eyre()?;
+    let image_pub = node
+        .create_pub::<Image>(topics::SENSORS_IMAGE)
+        .build()
+        .into_eyre()?;
+    let camera_info_pub = node
+        .create_pub::<CameraInfo>(topics::SENSORS_CAMERA_INFO)
+        .build()
+        .into_eyre()?;
 
     Ok(tokio::spawn(async move {
         let _node = node;
@@ -80,33 +84,33 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                         }
                     }
 
-                    into_eyre(odom_pub.async_publish(&OdometryState {
+                    odom_pub.async_publish(&OdometryState {
                         timestamp_ns,
                         x,
                         y,
                         theta,
-                    }).await)?;
+                    }).await.into_eyre()?;
 
-                    into_eyre(fall_pub.async_publish(&FallDownState {
+                    fall_pub.async_publish(&FallDownState {
                         timestamp_ns,
                         fall_down_state: FALL_DOWN_IS_READY.to_owned(),
                         is_recovery_available: true,
-                    }).await)?;
+                    }).await.into_eyre()?;
 
                     if tick % 150 == 0 {
-                        into_eyre(button_pub.async_publish(&ButtonEvent {
+                        button_pub.async_publish(&ButtonEvent {
                             timestamp_ns,
                             button: BUTTON_F1,
                             event_type: BUTTON_EVENT_SINGLE_CLICK.to_owned(),
-                        }).await)?;
+                        }).await.into_eyre()?;
                     }
 
                     if cfg.image.enabled {
                         let image = make_image(&cfg, timestamp_ns);
-                        into_eyre(image_pub.async_publish(&image).await)?;
+                        image_pub.async_publish(&image).await.into_eyre()?;
 
                         let camera_info = make_camera_info(&cfg, timestamp_ns);
-                        into_eyre(camera_info_pub.async_publish(&camera_info).await)?;
+                        camera_info_pub.async_publish(&camera_info).await.into_eyre()?;
                     }
                 }
             }

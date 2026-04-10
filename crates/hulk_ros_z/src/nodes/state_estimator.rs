@@ -6,40 +6,40 @@ use ros_z_config::prelude::*;
 
 use crate::{
     config::StateEstimatorConfig,
-    into_eyre,
     msgs::{ButtonEvent, FallDownState, OdometryState, RobotState, timestamp_now},
+    IntoEyreResultExt,
     stack::{NodeTaskHandle, StackContext},
     topics,
 };
 
 pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
-    let node = into_eyre(
-        stack
-            .ros_z
-            .create_node("state_estimator")
-            .with_type_description_service()
-            .with_extended_type_description_service()
-            .build(),
-    )?;
-    let config =
-        into_eyre(node.bind_config_with_metadata_as::<StateEstimatorConfig>("state_estimator"))?;
+    let node = stack
+        .ros_z
+        .create_node("state_estimator")
+        .with_type_description_service()
+        .with_extended_type_description_service()
+        .build()
+        .into_eyre()?;
+    let config = node
+        .bind_config_with_metadata_as::<StateEstimatorConfig>("state_estimator")
+        .into_eyre()?;
 
-    let odom_sub = into_eyre(
-        node.create_sub::<OdometryState>(topics::SENSORS_ODOMETRY)
-            .build(),
-    )?;
-    let fall_sub = into_eyre(
-        node.create_sub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
-            .build(),
-    )?;
-    let button_sub = into_eyre(
-        node.create_sub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
-            .build(),
-    )?;
-    let robot_state_pub = into_eyre(
-        node.create_pub::<RobotState>(topics::STATE_ROBOT_STATE)
-            .build(),
-    )?;
+    let odom_sub = node
+        .create_sub::<OdometryState>(topics::SENSORS_ODOMETRY)
+        .build()
+        .into_eyre()?;
+    let fall_sub = node
+        .create_sub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
+        .build()
+        .into_eyre()?;
+    let button_sub = node
+        .create_sub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
+        .build()
+        .into_eyre()?;
+    let robot_state_pub = node
+        .create_pub::<RobotState>(topics::STATE_ROBOT_STATE)
+        .build()
+        .into_eyre()?;
 
     Ok(tokio::spawn(async move {
         let _node = node;
@@ -54,7 +54,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
             tokio::select! {
                 _ = stack.shutdown.cancelled() => break,
                 msg = odom_sub.async_recv() => {
-                    let msg = into_eyre(msg)?;
+                    let msg = msg.into_eyre()?;
                     let alpha = cfg.smoothing.odometry_alpha.clamp(0.0, 1.0);
                     latest_odometry.x = latest_odometry.x * (1.0 - alpha) + msg.x * alpha;
                     latest_odometry.y = latest_odometry.y * (1.0 - alpha) + msg.y * alpha;
@@ -62,10 +62,10 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                     latest_odometry.timestamp_ns = msg.timestamp_ns;
                 }
                 msg = fall_sub.async_recv() => {
-                    latest_fall_down = into_eyre(msg)?;
+                    latest_fall_down = msg.into_eyre()?;
                 }
                 msg = button_sub.async_recv() => {
-                    last_button_event = Some(into_eyre(msg)?);
+                    last_button_event = Some(msg.into_eyre()?);
                 }
                 _ = tokio::time::sleep(Duration::from_secs_f64(1.0 / publish_hz)) => {
                     let now = timestamp_now();
@@ -73,7 +73,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                         now.saturating_sub(event.timestamp_ns) <= cfg.inputs.button_event_max_age_ms * 1_000_000
                     });
 
-                    into_eyre(robot_state_pub.async_publish(&RobotState {
+                    robot_state_pub.async_publish(&RobotState {
                         timestamp_ns: now,
                         odometry: latest_odometry,
                         fall_down_state: latest_fall_down.clone(),
@@ -83,7 +83,7 @@ pub fn spawn(stack: Arc<StackContext>) -> Result<NodeTaskHandle> {
                             button: 0,
                             event_type: String::new(),
                         }),
-                    }).await)?;
+                    }).await.into_eyre()?;
                 }
             }
         }

@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     bringup_manager::{BringupManagerConfig, spawn_bringup_manager},
-    into_eyre, nodes,
+    nodes, IntoEyreResultExt,
 };
 
 pub type NodeTaskHandle = tokio::task::JoinHandle<Result<()>>;
@@ -115,6 +115,6 @@ pub async fn shutdown_and_await(
         }
     }
 
-    into_eyre(ctx.shutdown())?;
+    ctx.shutdown().into_eyre()?;
     Ok(())
 }
