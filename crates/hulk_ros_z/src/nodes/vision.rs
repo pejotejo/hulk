@@ -24,7 +24,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<VisionConfig>("vision")
         .into_eyre()?;
     config
-        .add_validation_hook(Arc::new(validate_vision_config))
+        .add_validation_hook(validate_vision_config)
         .into_eyre()?;
 
     let image_sub = node

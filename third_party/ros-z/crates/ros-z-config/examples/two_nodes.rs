@@ -46,12 +46,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
     let pub_cfg = pub_node.bind_config_as::<WalkPublisherConfig>("walk_publisher")?;
     let sub_cfg = sub_node.bind_config_as::<WalkMonitorConfig>("walk_monitor")?;
 
-    pub_cfg.add_validation_hook(Arc::new(|cfg: &WalkPublisherConfig| {
+    pub_cfg.add_validation_hook(|cfg: &WalkPublisherConfig| {
         if cfg.publish_hz <= 0.0 {
             return Err("publish_hz must be > 0".into());
         }
         Ok(())
-    }))?;
+    })?;
 
     let topic = pub_cfg.snapshot().typed().cmd_vel_topic.clone();
     let zpub = pub_node.create_pub::<Twist>(&topic).build()?;

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ros_z::{Builder, context::ZContextBuilder};
 use ros_z_config::{ConfigMetadata, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -37,12 +35,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sy
 
     let config = node.bind_config_with_metadata_as::<WalkPublisherConfig>("walk_publisher")?;
 
-    config.add_validation_hook(Arc::new(|cfg: &WalkPublisherConfig| {
+    config.add_validation_hook(|cfg: &WalkPublisherConfig| {
         if cfg.publish_hz <= 0.0 {
             return Err("publish_hz must be > 0".into());
         }
         Ok(())
-    }))?;
+    })?;
 
     for path in config.list_paths()? {
         let meta = config.get_metadata(&path)?;

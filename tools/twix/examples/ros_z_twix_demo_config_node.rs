@@ -1,7 +1,6 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use clap::Parser;
@@ -65,12 +64,12 @@ async fn main() -> Result<()> {
         .map_err(|error| eyre!(error.to_string()))?;
     let config = node.bind_config_with_metadata_as::<TwixDemoConfig>("twix_demo")?;
 
-    config.add_validation_hook(Arc::new(|candidate: &TwixDemoConfig| {
+    config.add_validation_hook(|candidate: &TwixDemoConfig| {
         if candidate.label.trim().is_empty() {
             return Err("label must not be empty".to_string());
         }
         Ok(())
-    }))?;
+    })?;
 
     println!("node_fqn=/motion/twix_demo_config");
     println!("config_root={}", config_root.display());

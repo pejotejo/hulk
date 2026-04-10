@@ -27,7 +27,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<SimDriverConfig>("sim_driver")
         .into_eyre()?;
     config
-        .add_validation_hook(Arc::new(validate_sim_driver_config))
+        .add_validation_hook(validate_sim_driver_config)
         .into_eyre()?;
 
     let odom_pub = node

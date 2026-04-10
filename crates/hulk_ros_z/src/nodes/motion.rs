@@ -23,7 +23,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<MotionConfig>("motion")
         .into_eyre()?;
     config
-        .add_validation_hook(Arc::new(validate_motion_config))
+        .add_validation_hook(validate_motion_config)
         .into_eyre()?;
 
     let intent_sub = node

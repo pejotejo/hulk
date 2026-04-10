@@ -219,13 +219,13 @@ async fn late_validation_hook_validates_current_snapshot() -> TestResult {
 
     let config = node.bind_config_as::<VisionConfig>("ball_detector")?;
     let err = config
-        .add_validation_hook(std::sync::Arc::new(|cfg: &VisionConfig| {
+        .add_validation_hook(|cfg: &VisionConfig| {
             if cfg.threshold > 1.0 {
                 Err("threshold too high".into())
             } else {
                 Ok(())
             }
-        }))
+        })
         .expect_err("late hook must validate current snapshot");
     assert!(err.to_string().contains("threshold too high"));
     Ok(())

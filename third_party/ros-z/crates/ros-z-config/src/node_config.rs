@@ -435,7 +435,11 @@ where
     /// Adding a hook validates the current committed snapshot immediately. If
     /// the current snapshot violates the new hook, registration fails and the
     /// hook is not installed.
-    pub fn add_validation_hook(&self, hook: ValidateHook<T>) -> Result<()> {
+    pub fn add_validation_hook<F>(&self, hook: F) -> Result<()>
+    where
+        F: Fn(&T) -> std::result::Result<(), String> + Send + Sync + 'static,
+    {
+        let hook: ValidateHook<T> = Arc::new(hook);
         let _commit_guard = self.inner.commit_lock.lock();
         self.run_hook(self.snapshot().typed.as_ref(), &hook)?;
         self.inner.hooks.lock().push(hook);

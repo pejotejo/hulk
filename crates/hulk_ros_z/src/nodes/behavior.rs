@@ -25,7 +25,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .bind_config_with_metadata_as::<BehaviorConfig>("behavior")
         .into_eyre()?;
     config
-        .add_validation_hook(Arc::new(validate_behavior_config))
+        .add_validation_hook(validate_behavior_config)
         .into_eyre()?;
 
     let state_sub = node
