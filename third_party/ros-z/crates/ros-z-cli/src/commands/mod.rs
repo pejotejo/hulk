@@ -2,6 +2,7 @@ pub mod config;
 pub mod echo;
 pub mod graph;
 pub mod info;
+pub mod inspect;
 pub mod list;
 pub mod param;
 pub mod record;

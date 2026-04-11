@@ -1,7 +1,11 @@
 mod api;
 mod engine;
+mod inspect;
 mod output;
 mod prepare;
+
+#[cfg(test)]
+mod inspect_tests;
 
 use std::sync::Arc;
 
@@ -14,6 +18,7 @@ pub use api::{
     RecorderOptions, RecordingReport, RecordingStartup, ResolvedPublisher, ResolvedTopic,
     StatsSnapshot, TopicStats,
 };
+pub use inspect::{InspectedTopic, InspectionReport, RosZInspection, inspect_file};
 pub use output::{format_output_timestamp, resolve_output_path};
 pub use prepare::normalize_topics;
 

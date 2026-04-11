@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, time::SystemTime};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct RecorderOptions {
@@ -19,7 +19,7 @@ pub struct RecordingStartup {
     pub resolved_topics: Vec<ResolvedTopic>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedTopic {
     pub requested_topic: String,
     pub qualified_topic: String,
@@ -30,7 +30,7 @@ pub struct ResolvedTopic {
     pub publishers: Vec<ResolvedPublisher>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedPublisher {
     pub node_fqn: Option<String>,
     pub type_hash: Option<String>,

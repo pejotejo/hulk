@@ -16,6 +16,7 @@ use crate::{
 };
 
 use color_eyre::eyre::Result;
+use ros_z_record::InspectionReport;
 
 pub fn print_topic_summaries(topics: &[TopicSummary]) {
     let name_width = column_width(topics.iter().map(|topic| topic.name.as_str()));
@@ -44,6 +45,72 @@ pub fn print_service_summaries(services: &[ServiceSummary]) {
             "{:<name_width$}  {:<type_width$}  servers={} clients={}",
             service.name, service.type_name, service.servers, service.clients,
         );
+    }
+}
+
+pub fn print_inspection_report(report: &InspectionReport) {
+    println!("File: {}", report.input.display());
+    println!("Profile: {}", report.profile.as_deref().unwrap_or("none"));
+    println!("Library: {}", report.library.as_deref().unwrap_or("none"));
+    println!(
+        "Summary: {}",
+        if report.summary_present {
+            "present"
+        } else {
+            "absent"
+        }
+    );
+    println!("Schemas: {}", report.schema_count);
+    println!("Channels: {}", report.channel_count);
+    println!("Attachments: {}", report.attachment_count);
+    println!("Metadata: {}", report.metadata_count);
+    println!("Messages: {}", report.message_count);
+    println!(
+        "Time Range: {} -> {}",
+        format_optional_u64(report.message_start_time),
+        format_optional_u64(report.message_end_time),
+    );
+
+    if let Some(session) = &report.ros_z.session {
+        println!();
+        println!("ros-z Session ({})", session.len());
+        for (key, value) in session {
+            println!("{key}: {value}");
+        }
+    }
+
+    if let Some(requested_topics) = &report.ros_z.requested_topics {
+        println!();
+        println!("Requested Topics ({})", requested_topics.len());
+        for topic in requested_topics {
+            println!("{topic}");
+        }
+    }
+
+    println!();
+    println!("Topics ({})", report.topics.len());
+    for topic in &report.topics {
+        println!(
+            "{}  messages={} bytes={} channels={}",
+            topic.topic, topic.message_count, topic.byte_count, topic.channel_count,
+        );
+        if let Some(type_name) = &topic.type_name {
+            println!("  type={type_name}");
+        }
+        if let Some(type_hash) = &topic.type_hash {
+            println!("  hash={type_hash}");
+        }
+        if !topic.source_ids.is_empty() {
+            println!("  sources={}", topic.source_ids.join(", "));
+        }
+    }
+
+    if !report.warnings.is_empty() {
+        println!();
+        println!("Warnings ({})", report.warnings.len());
+        for warning in &report.warnings {
+            println!("{warning}");
+        }
     }
 }
 
@@ -319,6 +386,12 @@ fn print_named_type_section(label: &str, entries: &[NamedType]) {
     for entry in entries {
         println!("{:<name_width$}  {}", entry.name, entry.type_name);
     }
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn column_width<'a>(values: impl Iterator<Item = &'a str>) -> usize {

@@ -82,6 +82,8 @@ pub enum Command {
     },
     /// Record topics to a compressed MCAP file
     Record(RecordArgs),
+    /// Inspect a recorded MCAP file
+    Inspect(InspectArgs),
     /// Show metadata for a topic, service, or node
     Info {
         #[arg(value_enum)]
@@ -98,6 +100,12 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct InspectArgs {
+    /// Path to the MCAP file to inspect
+    pub input: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -224,8 +232,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        Backend, Cli, Command, ConfigCommand, ListTarget, ParamCommand, ParameterValueTypeArg,
-        RecordArgs,
+        Backend, Cli, Command, ConfigCommand, InspectArgs, ListTarget, ParamCommand,
+        ParameterValueTypeArg, RecordArgs,
     };
 
     #[test]
@@ -287,6 +295,19 @@ mod tests {
                 assert_eq!(duration, Some(12.5));
                 assert_eq!(discovery_timeout, 3.0);
                 assert_eq!(stats_interval, 1.0);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_inspect_command() {
+        let cli = Cli::parse_from(["rosz", "inspect", "capture.mcap", "--json"]);
+
+        assert!(cli.json);
+        match cli.command {
+            Command::Inspect(InspectArgs { input }) => {
+                assert_eq!(input, PathBuf::from("capture.mcap"));
             }
             other => panic!("unexpected command: {other:?}"),
         }

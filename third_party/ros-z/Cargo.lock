@@ -3328,6 +3328,7 @@ dependencies = [
  "ros-z-record",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
 ]
