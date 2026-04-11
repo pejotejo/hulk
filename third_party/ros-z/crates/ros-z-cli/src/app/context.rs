@@ -63,6 +63,10 @@ impl AppContext {
         self.context.graph().as_ref()
     }
 
+    pub fn node(&self) -> Arc<ZNode> {
+        Arc::clone(&self.node)
+    }
+
     pub fn snapshot(&self) -> GraphSnapshot {
         self.graph().snapshot(self.domain_id)
     }

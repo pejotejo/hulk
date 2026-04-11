@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
 pub enum Backend {
@@ -79,6 +80,8 @@ pub enum Command {
         #[arg(long)]
         timeout: Option<f64>,
     },
+    /// Record topics to a compressed MCAP file
+    Record(RecordArgs),
     /// Show metadata for a topic, service, or node
     Info {
         #[arg(value_enum)]
@@ -95,6 +98,30 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct RecordArgs {
+    /// Topics to record. Combine with `--topic-file` to build the final topic list.
+    pub topics: Vec<String>,
+    #[arg(long = "topic-file")]
+    /// Read additional topics from a file, one topic per line. Blank lines and `#` comments are ignored.
+    pub topic_file: Vec<PathBuf>,
+    #[arg(short = 'o', long)]
+    /// Write to this exact output path. Mutually exclusive with `--name-template`.
+    pub output: Option<PathBuf>,
+    #[arg(long)]
+    /// Generate the output filename from a template. Supports `{timestamp}` in UTC `%Y%m%dT%H%M%SZ` format.
+    pub name_template: Option<String>,
+    #[arg(long)]
+    /// Stop recording after this many seconds. If unset, recording runs until Ctrl-C.
+    pub duration: Option<f64>,
+    #[arg(long, default_value_t = 5.0)]
+    /// How long to wait for each requested topic's schema discovery before failing startup.
+    pub discovery_timeout: f64,
+    #[arg(long, default_value_t = 5.0)]
+    /// How often to print recording statistics in seconds while the recorder is running.
+    pub stats_interval: f64,
 }
 
 #[derive(Debug, Subcommand)]
@@ -192,10 +219,13 @@ pub enum ConfigCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
 
     use super::{
         Backend, Cli, Command, ConfigCommand, ListTarget, ParamCommand, ParameterValueTypeArg,
+        RecordArgs,
     };
 
     #[test]
@@ -216,6 +246,47 @@ mod tests {
                 assert_eq!(topic, "/chatter");
                 assert_eq!(count, Some(1));
                 assert_eq!(timeout, None);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_record_command_with_output_flags() {
+        let cli = Cli::parse_from([
+            "rosz",
+            "record",
+            "/camera",
+            "/imu",
+            "--topic-file",
+            "topics.txt",
+            "--output",
+            "capture.mcap",
+            "--duration",
+            "12.5",
+            "--discovery-timeout",
+            "3.0",
+            "--stats-interval",
+            "1.0",
+        ]);
+
+        match cli.command {
+            Command::Record(RecordArgs {
+                topics,
+                topic_file,
+                output,
+                name_template,
+                duration,
+                discovery_timeout,
+                stats_interval,
+            }) => {
+                assert_eq!(topics, vec!["/camera", "/imu"]);
+                assert_eq!(topic_file, vec![PathBuf::from("topics.txt")]);
+                assert_eq!(output, Some(PathBuf::from("capture.mcap")));
+                assert_eq!(name_template, None);
+                assert_eq!(duration, Some(12.5));
+                assert_eq!(discovery_timeout, 3.0);
+                assert_eq!(stats_interval, 1.0);
             }
             other => panic!("unexpected command: {other:?}"),
         }

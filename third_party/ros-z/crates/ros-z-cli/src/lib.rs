@@ -27,6 +27,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             count,
             timeout,
         } => commands::echo::run(&app, output_mode, &topic, count, timeout).await,
+        Command::Record(args) => {
+            commands::record::run(
+                &app,
+                output_mode,
+                &cli.router,
+                cli.domain,
+                cli.backend,
+                &args,
+            )
+            .await
+        }
         Command::Info { target, name } => {
             commands::info::run(&app, output_mode, target, &name).await
         }
