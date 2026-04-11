@@ -24,9 +24,9 @@ use std::sync::Arc;
 fn try_extract_type_info(msg_class: &Bound<'_, PyAny>) -> Option<TypeInfo> {
     let msg_type: String = msg_class.getattr("__msgtype__").ok()?.extract().ok()?;
     let type_hash_str: String = msg_class.getattr("__hash__").ok()?.extract().ok()?;
-    let type_hash = TypeHash::from_rihs_string(&type_hash_str)?;
+    let type_hash = TypeHash::from_rihs_string(&type_hash_str).ok()?;
     let rust_type_name = python_type_to_rust_type(&msg_type);
-    Some(TypeInfo::new(&rust_type_name, type_hash))
+    Some(TypeInfo::with_hash(&rust_type_name, type_hash))
 }
 
 /// Extract type information from a msgspec message class.
@@ -52,8 +52,7 @@ fn extract_type_info_from_class(msg_class: &Bound<'_, PyAny>) -> PyResult<(Strin
         .getattr("__hash__")
         .ok()
         .and_then(|v| v.extract::<String>().ok())
-        .and_then(|s| TypeHash::from_rihs_string(&s))
-        .unwrap_or_else(TypeHash::zero);
+        .and_then(|s| TypeHash::from_rihs_string(&s).ok());
 
     let rust_type_name = python_type_to_rust_type(&msg_type);
     let type_info = TypeInfo::new(&rust_type_name, type_hash);
@@ -93,7 +92,7 @@ fn extract_service_type_from_request_class(
             )
         })?;
 
-    let type_hash = TypeHash::from_rihs_string(&type_hash_str).ok_or_else(|| {
+    let type_hash = TypeHash::from_rihs_string(&type_hash_str).map_err(|_| {
         pyo3::exceptions::PyValueError::new_err(format!(
             "Invalid type hash format: {}",
             type_hash_str
@@ -108,7 +107,7 @@ fn extract_service_type_from_request_class(
         .to_string();
 
     let rust_type_name = python_type_to_rust_type(&srv_type);
-    let type_info = TypeInfo::new(&rust_type_name, type_hash);
+    let type_info = TypeInfo::with_hash(&rust_type_name, type_hash);
 
     Ok((srv_type, type_info))
 }

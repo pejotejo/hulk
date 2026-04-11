@@ -121,7 +121,7 @@ impl MessageTypeSupport {
         Ok(Self { ptr: type_support })
     }
 
-    pub fn get_type_hash(&self) -> TypeHash {
+    fn raw_type_hash(&self) -> rosidl_type_hash_t {
         let hash = unsafe {
             let type_hash = self
                 .as_ref()
@@ -130,7 +130,20 @@ impl MessageTypeSupport {
             assert!(!type_hash.is_null());
             *type_hash
         };
-        TypeHash::new(hash.version, hash.value)
+        hash
+    }
+
+    pub fn get_type_hash(&self) -> TypeHash {
+        TypeHash(self.raw_type_hash().value)
+    }
+
+    pub fn get_optional_type_hash(&self) -> Option<TypeHash> {
+        let hash = self.raw_type_hash();
+        if hash.version == 1 {
+            Some(TypeHash(hash.value))
+        } else {
+            None
+        }
     }
 
     pub unsafe fn serialize_message(&self, ros_message: *const c_void) -> Vec<u8> {
@@ -197,7 +210,7 @@ impl MessageTypeSupport {
     }
 
     pub fn get_type_info(&self) -> TypeInfo {
-        TypeInfo::new(&self.get_ros_type_name(), self.get_type_hash())
+        TypeInfo::new(&self.get_ros_type_name(), self.get_optional_type_hash())
     }
 }
 
@@ -245,16 +258,27 @@ impl ServiceTypeSupport {
         })
     }
 
-    pub fn get_type_hash(&self) -> TypeHash {
-        let hash = unsafe {
+    fn raw_type_hash(&self) -> Option<rosidl_type_hash_t> {
+        unsafe {
             let type_hash = get_service_type_hash(self.ptr);
             if type_hash.is_null() {
-                // Fallback to response type's hash if service hash is not available
-                return self.response.get_type_hash();
+                None
+            } else {
+                Some(*type_hash)
             }
-            *type_hash
-        };
-        TypeHash::new(hash.version, hash.value)
+        }
+    }
+
+    pub fn get_type_hash(&self) -> TypeHash {
+        self.get_optional_type_hash()
+            .unwrap_or_else(|| self.response.get_type_hash())
+    }
+
+    pub fn get_optional_type_hash(&self) -> Option<TypeHash> {
+        match self.raw_type_hash() {
+            Some(hash) if hash.version == 1 => Some(TypeHash(hash.value)),
+            Some(_) | None => None,
+        }
     }
 
     pub fn get_type_info(&self) -> TypeInfo {
@@ -262,6 +286,6 @@ impl ServiceTypeSupport {
         let name = name_with_suffix
             .strip_suffix("_Response")
             .expect("Invalid Response type - must end with _Response");
-        TypeInfo::new(name, self.get_type_hash())
+        TypeInfo::new(name, self.get_optional_type_hash())
     }
 }

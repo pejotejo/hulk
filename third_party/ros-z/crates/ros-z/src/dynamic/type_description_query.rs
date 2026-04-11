@@ -87,7 +87,7 @@ mod tests {
     use crate::dynamic::type_description_service::{
         WireTypeDescription, schema_to_wire_type_description,
     };
-    use crate::entity::{EndpointEntity, EndpointKind, Entity, NodeEntity, TypeHash, TypeInfo};
+    use crate::entity::{EndpointEntity, EndpointKind, Entity, NodeEntity, TypeInfo};
 
     fn publisher_entity(node_name: Option<&str>, type_name: Option<&str>) -> Arc<Entity> {
         let node = node_name.map(|name| {
@@ -106,7 +106,7 @@ mod tests {
             node,
             kind: EndpointKind::Publisher,
             topic: "/chatter".to_string(),
-            type_info: type_name.map(|name| TypeInfo::new(name, TypeHash::zero())),
+            type_info: type_name.map(|name| TypeInfo::new(name, None)),
             qos: Default::default(),
         }))
     }
@@ -199,7 +199,10 @@ mod tests {
         assert_eq!(candidates[0].node_name, "talker");
         assert_eq!(candidates[0].namespace, "/");
         assert_eq!(candidates[0].type_name, "std_msgs/msg/String");
-        assert_eq!(candidates[0].type_hash, TypeHash::zero().to_rihs_string());
+        assert_eq!(
+            candidates[0].type_hash,
+            crate::entity::TYPE_HASH_NOT_SUPPORTED
+        );
     }
 
     #[test]

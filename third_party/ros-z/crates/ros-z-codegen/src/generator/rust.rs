@@ -1243,7 +1243,7 @@ pub fn generate_service_impl(srv: &ResolvedService) -> Result<TokenStream> {
 
         impl ::ros_z::ServiceTypeInfo for #name {
             fn service_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     #service_type_name,
                     ::ros_z::entity::TypeHash::from_rihs_string(#hash_str)
                         .expect("Invalid RIHS hash")
@@ -1298,7 +1298,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
             }
 
             fn send_goal_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     #send_goal_type_name,
                     ::ros_z::entity::TypeHash::from_rihs_string(#send_goal_hash_str)
                         .expect("Invalid RIHS hash")
@@ -1306,7 +1306,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
             }
 
             fn get_result_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     #get_result_type_name,
                     ::ros_z::entity::TypeHash::from_rihs_string(#get_result_hash_str)
                         .expect("Invalid RIHS hash")
@@ -1314,7 +1314,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
             }
 
             fn cancel_goal_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     "action_msgs/srv/CancelGoal",
                     ::ros_z::entity::TypeHash::from_rihs_string(#cancel_goal_hash_str)
                         .expect("Invalid RIHS hash")
@@ -1322,7 +1322,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
             }
 
             fn feedback_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     #feedback_msg_type_name,
                     ::ros_z::entity::TypeHash::from_rihs_string(#feedback_hash_str)
                         .expect("Invalid RIHS hash")
@@ -1330,7 +1330,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
             }
 
             fn status_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     "action_msgs/msg/GoalStatusArray",
                     ::ros_z::entity::TypeHash::from_rihs_string(#status_hash_str)
                         .expect("Invalid RIHS hash")
@@ -1340,7 +1340,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
 
         impl ::ros_z::ActionTypeInfo for #name {
             fn action_type_info() -> ::ros_z::entity::TypeInfo {
-                ::ros_z::entity::TypeInfo::new(
+                ::ros_z::entity::TypeInfo::with_hash(
                     #action_type_name,
                     ::ros_z::entity::TypeHash::from_rihs_string(#hash_str)
                         .expect("Invalid RIHS hash")

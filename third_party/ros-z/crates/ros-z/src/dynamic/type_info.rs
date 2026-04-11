@@ -1,25 +1,22 @@
 use tracing::warn;
 
 use crate::dynamic::{MessageSchema, MessageSchemaTypeDescription};
-use crate::entity::{TypeHash, TypeInfo};
+use crate::entity::{TypeHash, TypeInfo, TYPE_HASH_NOT_SUPPORTED};
 use crate::ros_msg::dds_type_name_to_canonical;
 
 pub(crate) fn ros_type_name_from_dds(dds_name: &str) -> String {
     dds_type_name_to_canonical(dds_name)
 }
 
-pub(crate) fn schema_hash(schema: &MessageSchema) -> TypeHash {
+pub(crate) fn schema_hash(schema: &MessageSchema) -> Option<TypeHash> {
     match schema.compute_type_hash() {
-        Ok(hash) => {
-            let rihs_string = hash.to_rihs_string();
-            TypeHash::from_rihs_string(&rihs_string).unwrap_or_else(TypeHash::zero)
-        }
+        Ok(hash) => Some(hash),
         Err(error) => {
             warn!(
                 "[NOD] Failed to compute type hash for {}: {}",
                 schema.type_name, error
             );
-            TypeHash::zero()
+            None
         }
     }
 }
@@ -37,6 +34,19 @@ pub(crate) fn schema_type_info_with_hash(
 ) -> TypeInfo {
     TypeInfo {
         name: schema.type_name.clone(),
-        hash: TypeHash::from_rihs_string(discovered_hash).unwrap_or_else(TypeHash::zero),
+        hash: if discovered_hash == TYPE_HASH_NOT_SUPPORTED {
+            None
+        } else {
+            match TypeHash::from_rihs_string(discovered_hash) {
+                Ok(hash) => Some(hash),
+                Err(error) => {
+                    warn!(
+                        "[NOD] Failed to parse discovered type hash for {}: {} ({})",
+                        schema.type_name, discovered_hash, error
+                    );
+                    None
+                }
+            }
+        },
     }
 }

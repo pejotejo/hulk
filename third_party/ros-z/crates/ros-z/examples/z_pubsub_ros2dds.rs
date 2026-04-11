@@ -110,7 +110,7 @@ async fn main() -> ros_z::Result<()> {
     };
 
     // Type info for std_msgs/msg/String
-    let type_info = TypeInfo::new("std_msgs/msg/String", TypeHash::zero());
+    let type_info = TypeInfo::new("std_msgs/msg/String", None);
 
     // QoS profile - use Reliable/Volatile for standard compatibility
     let qos = ros_z_protocol::qos::QosProfile {

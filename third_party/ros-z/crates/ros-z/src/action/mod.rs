@@ -44,50 +44,35 @@ pub trait ZAction: Send + Sync + 'static {
     /// Default implementation returns zero hash for ros-z to ros-z communication only.
     /// Override this to provide proper type hashes for ROS 2 interop.
     fn send_goal_type_info() -> crate::entity::TypeInfo {
-        crate::entity::TypeInfo::new(
-            &format!("{}/_action/SendGoal", Self::name()),
-            crate::entity::TypeHash::zero(),
-        )
+        crate::entity::TypeInfo::new(&format!("{}/_action/SendGoal", Self::name()), None)
     }
 
     /// Returns type info for the GetResult service.
     /// Default implementation returns zero hash for ros-z to ros-z communication only.
     /// Override this to provide proper type hashes for ROS 2 interop.
     fn get_result_type_info() -> crate::entity::TypeInfo {
-        crate::entity::TypeInfo::new(
-            &format!("{}/_action/GetResult", Self::name()),
-            crate::entity::TypeHash::zero(),
-        )
+        crate::entity::TypeInfo::new(&format!("{}/_action/GetResult", Self::name()), None)
     }
 
     /// Returns type info for the CancelGoal service.
     /// Default implementation returns zero hash for ros-z to ros-z communication only.
     /// Override this to provide proper type hashes for ROS 2 interop.
     fn cancel_goal_type_info() -> crate::entity::TypeInfo {
-        crate::entity::TypeInfo::new(
-            "action_msgs/srv/CancelGoal",
-            crate::entity::TypeHash::zero(),
-        )
+        crate::entity::TypeInfo::new("action_msgs/srv/CancelGoal", None)
     }
 
     /// Returns type info for the Feedback topic.
     /// Default implementation returns zero hash for ros-z to ros-z communication only.
     /// Override this to provide proper type hashes for ROS 2 interop.
     fn feedback_type_info() -> crate::entity::TypeInfo {
-        crate::entity::TypeInfo::new(
-            &format!("{}/_FeedbackMessage", Self::name()),
-            crate::entity::TypeHash::zero(),
-        )
+        crate::entity::TypeInfo::new(&format!("{}/_FeedbackMessage", Self::name()), None)
     }
 
     /// Returns type info for the Status topic.
     /// Default implementation returns zero hash for ros-z to ros-z communication only.
     /// Override this to provide proper type hashes for ROS 2 interop.
     fn status_type_info() -> crate::entity::TypeInfo {
-        crate::entity::TypeInfo::new(
-            "action_msgs/msg/GoalStatusArray",
-            crate::entity::TypeHash::zero(),
-        )
+        crate::entity::TypeInfo::new("action_msgs/msg/GoalStatusArray", None)
     }
 }
 

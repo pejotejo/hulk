@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use ros_z::{
-    Builder, MessageTypeInfo, TypeHash,
+    Builder, MessageTypeInfo,
     context::ZContextBuilder,
     dynamic::{FieldType, MessageSchemaTypeDescription},
 };
@@ -136,20 +136,10 @@ fn derive_generates_type_info_and_schema() {
         other => panic!("expected byte sequence field, got {:?}", other),
     }
 
-    let expected_hash = TypeHash::from_rihs_string(
-        &schema
-            .compute_type_hash()
-            .expect("schema hash")
-            .to_rihs_string(),
-    )
-    .expect("valid entity type hash");
+    let expected_hash = schema.compute_type_hash().expect("schema hash");
 
     let reported_hash = RobotTelemetry::type_hash();
-    if TypeHash::zero().to_rihs_string() == "TypeHashNotSupported" {
-        assert_eq!(reported_hash, TypeHash::zero());
-    } else {
-        assert_eq!(reported_hash, expected_hash);
-    }
+    assert_eq!(reported_hash, expected_hash);
 }
 
 #[test]

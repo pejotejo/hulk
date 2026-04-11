@@ -8,7 +8,7 @@ use crate::ServiceTypeInfo;
 use crate::attachment::Attachment;
 use crate::context::GlobalCounter;
 use crate::dynamic::{DynamicError, MessageSchema};
-use crate::entity::{EndpointEntity, EndpointKind, NodeEntity, TypeHash, TypeInfo};
+use crate::entity::{EndpointEntity, EndpointKind, NodeEntity, TypeInfo};
 use crate::msg::{SerdeCdrSerdes, ZMessage, ZService};
 use crate::service::{ZServer, ZServerBuilder};
 
@@ -47,7 +47,7 @@ impl ZService for GetExtendedTypeDescription {
 
 impl ServiceTypeInfo for GetExtendedTypeDescription {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new("ros_z/srv/GetExtendedTypeDescription", TypeHash::zero())
+        TypeInfo::new("ros_z/srv/GetExtendedTypeDescription", None)
     }
 }
 

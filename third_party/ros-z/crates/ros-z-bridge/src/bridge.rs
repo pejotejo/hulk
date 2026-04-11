@@ -228,7 +228,7 @@ impl Bridge {
                 ep.topic,
                 type_info.name
             );
-            self.bridge_entity(key, &type_info.hash, event.distro, &event.raw_ke);
+            self.bridge_entity(key, type_info.hash.as_ref(), event.distro, &event.raw_ke);
         } else {
             tracing::info!(
                 "Entity disappeared: topic={} type={}",
@@ -243,14 +243,23 @@ impl Bridge {
     fn bridge_entity(
         &self,
         key: BridgeKey,
-        discovered_hash: &TypeHash,
+        discovered_hash: Option<&TypeHash>,
         from_distro: Distro,
         raw_lv_ke: &str,
     ) {
         // Resolve the Jazzy hash: Humble entities carry all-zero hash, so look up
         // the real RIHS01 hash from the compile-time registry.
         let jazzy_hash = match from_distro {
-            Distro::Jazzy => discovered_hash.clone(),
+            Distro::Jazzy => match discovered_hash {
+                Some(hash) => hash.clone(),
+                None => {
+                    tracing::warn!(
+                        "Missing Jazzy hash for type {} — cannot bridge",
+                        key.type_name
+                    );
+                    return;
+                }
+            },
             Distro::Humble => match hash_registry::lookup(&key.type_name) {
                 Some(h) => h.clone(),
                 None => {
@@ -420,7 +429,7 @@ mod tests {
 
     #[test]
     fn lv_ke_humble_to_jazzy() {
-        let hash = TypeHash::new(1, [0xabu8; 32]);
+        let hash = TypeHash([0xabu8; 32]);
         let rewritten = lv_ke_to_jazzy(HUMBLE_LV_KE, &hash);
         assert!(rewritten.contains("RIHS01_"));
         assert!(!rewritten.contains("TypeHashNotSupported"));
@@ -440,7 +449,7 @@ mod tests {
 
     #[test]
     fn lv_ke_roundtrip() {
-        let hash = TypeHash::new(1, [0xabu8; 32]);
+        let hash = TypeHash([0xabu8; 32]);
         // Humble → Jazzy → Humble should restore the original (modulo the hash value).
         let jazzy = lv_ke_to_jazzy(HUMBLE_LV_KE, &hash);
         let back = lv_ke_to_humble(&jazzy);

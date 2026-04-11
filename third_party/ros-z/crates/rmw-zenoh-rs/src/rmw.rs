@@ -1964,12 +1964,22 @@ pub extern "C" fn rmw_get_publishers_info_by_topic(
                     }
                 };
                 (*endpoint_info).topic_type = rcutils_strdup(type_cstr.as_ptr(), *allocator);
-                (*endpoint_info).topic_type_hash = rosidl_type_hash_t {
-                    version: type_info.hash.version,
-                    value: type_info.hash.value,
+                (*endpoint_info).topic_type_hash = match type_info.hash {
+                    Some(hash) => rosidl_type_hash_t {
+                        version: 1,
+                        value: hash.0,
+                    },
+                    None => rosidl_type_hash_t {
+                        version: 0,
+                        value: [0u8; ROSIDL_TYPE_HASH_SIZE as usize],
+                    },
                 };
             } else {
                 (*endpoint_info).topic_type = std::ptr::null();
+                (*endpoint_info).topic_type_hash = rosidl_type_hash_t {
+                    version: 0,
+                    value: [0u8; ROSIDL_TYPE_HASH_SIZE as usize],
+                };
             }
 
             // Set endpoint type
@@ -3468,12 +3478,22 @@ pub extern "C" fn rmw_get_subscriptions_info_by_topic(
                     }
                 };
                 (*endpoint_info).topic_type = rcutils_strdup(type_cstr.as_ptr(), *allocator);
-                (*endpoint_info).topic_type_hash = rosidl_type_hash_t {
-                    version: type_info.hash.version,
-                    value: type_info.hash.value,
+                (*endpoint_info).topic_type_hash = match type_info.hash {
+                    Some(hash) => rosidl_type_hash_t {
+                        version: 1,
+                        value: hash.0,
+                    },
+                    None => rosidl_type_hash_t {
+                        version: 0,
+                        value: [0u8; ROSIDL_TYPE_HASH_SIZE as usize],
+                    },
                 };
             } else {
                 (*endpoint_info).topic_type = std::ptr::null();
+                (*endpoint_info).topic_type_hash = rosidl_type_hash_t {
+                    version: 0,
+                    value: [0u8; ROSIDL_TYPE_HASH_SIZE as usize],
+                };
             }
 
             // Set endpoint type

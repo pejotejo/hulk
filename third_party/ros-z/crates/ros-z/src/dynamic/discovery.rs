@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
     dynamic::{DynamicError, MessageSchema},
-    entity::{Entity, EntityKind},
+    entity::{Entity, EntityKind, TYPE_HASH_NOT_SUPPORTED},
     graph::Graph,
     node::ZNode,
     topic_name::qualify_topic_name,
@@ -51,7 +51,11 @@ pub(crate) fn collect_topic_schema_candidates_from_publishers(
             node_name: node.name.clone(),
             namespace: node.namespace.clone(),
             type_name: ros_type_name_from_dds(&type_info.name),
-            type_hash: type_info.hash.to_rihs_string(),
+            type_hash: type_info
+                .hash
+                .as_ref()
+                .map(|hash| hash.to_rihs_string())
+                .unwrap_or_else(|| TYPE_HASH_NOT_SUPPORTED.to_string()),
         });
     }
 

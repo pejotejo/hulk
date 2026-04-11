@@ -6,6 +6,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use core::{fmt::Display, ops::Deref};
+pub use ros_z_schema::TypeHash;
 use zenoh::{key_expr::KeyExpr, session::ZenohId};
 
 use crate::qos::QosProfile;
@@ -180,104 +181,26 @@ impl TryFrom<EntityKind> for EndpointKind {
     }
 }
 
-/// Type hash (RIHS format).
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct TypeHash {
-    pub version: u8,
-    pub value: [u8; 32],
-}
-
-impl TypeHash {
-    /// Placeholder value for type hash when not supported (ROS 2 Humble)
-    const TYPE_HASH_NOT_SUPPORTED: &'static str = "TypeHashNotSupported";
-
-    pub const fn new(version: u8, value: [u8; 32]) -> Self {
-        Self { version, value }
-    }
-
-    pub const fn zero() -> Self {
-        Self {
-            version: 1,
-            value: [0u8; 32],
-        }
-    }
-
-    pub fn from_rihs_string(rihs_str: &str) -> Option<Self> {
-        // Handle ROS 2 Humble's "not supported" placeholder
-        if rihs_str == Self::TYPE_HASH_NOT_SUPPORTED {
-            return Some(TypeHash::zero());
-        }
-
-        if let Some(hex_part) = rihs_str.strip_prefix("RIHS01_") {
-            if hex_part.len() == 64 {
-                let mut hash_bytes = [0u8; 32];
-                for (i, chunk) in hex_part.as_bytes().chunks(2).enumerate() {
-                    if i < 32 {
-                        if let Ok(byte_val) =
-                            u8::from_str_radix(core::str::from_utf8(chunk).unwrap_or("00"), 16)
-                        {
-                            hash_bytes[i] = byte_val;
-                        } else {
-                            return None;
-                        }
-                    }
-                }
-                return Some(TypeHash {
-                    version: 1,
-                    value: hash_bytes,
-                });
-            }
-        }
-        None
-    }
-
-    pub fn to_rihs_string(&self) -> String {
-        #[cfg(feature = "no-type-hash")]
-        {
-            // ROS 2 Humble doesn't support type hashing
-            Self::TYPE_HASH_NOT_SUPPORTED.to_string()
-        }
-
-        #[cfg(not(feature = "no-type-hash"))]
-        {
-            use alloc::format;
-            match self.version {
-                1 => {
-                    let hex_str: String = self.value.iter().map(|b| format!("{:02x}", b)).collect();
-                    format!("RIHS01_{}", hex_str)
-                }
-                _ => format!(
-                    "RIHS{:02x}_{}",
-                    self.version,
-                    self.value
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>()
-                ),
-            }
-        }
-    }
-}
-
-impl Display for TypeHash {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.to_rihs_string())
-    }
-}
+/// Placeholder value for type hash when not supported on wire.
+pub const TYPE_HASH_NOT_SUPPORTED: &str = "TypeHashNotSupported";
 
 /// Type information (name + hash).
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct TypeInfo {
     pub name: String,
-    pub hash: TypeHash,
+    pub hash: Option<TypeHash>,
 }
 
 impl TypeInfo {
-    pub fn new(name: &str, hash: TypeHash) -> Self {
+    pub fn new(name: &str, hash: Option<TypeHash>) -> Self {
         TypeInfo {
             name: name.to_string(),
             hash,
         }
+    }
+
+    pub fn with_hash(name: &str, hash: TypeHash) -> Self {
+        Self::new(name, Some(hash))
     }
 }
 

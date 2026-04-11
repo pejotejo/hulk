@@ -3433,6 +3433,7 @@ dependencies = [
 name = "ros-z-protocol"
 version = "0.1.0"
 dependencies = [
+ "ros-z-schema",
  "zenoh",
 ]
 

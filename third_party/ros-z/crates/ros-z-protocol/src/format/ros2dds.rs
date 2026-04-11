@@ -152,10 +152,7 @@ impl KeyExprFormatter for Ros2DdsFormatter {
         let type_info = if type_name.is_empty() || type_name == "unknown" {
             None
         } else {
-            Some(TypeInfo {
-                name: type_name,
-                hash: TypeHash::zero(),
-            })
+            Some(TypeInfo::new(&type_name, None))
         };
 
         let _ = z_id;
@@ -415,7 +412,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -444,7 +441,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -503,7 +500,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Subscription,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -535,7 +532,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "/chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -569,10 +566,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: "add_two_ints".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/AddTwoInts",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/AddTwoInts", None)),
             qos: QosProfile::default(),
         };
 
@@ -616,10 +610,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Client,
             topic: "add_two_ints".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/AddTwoInts",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/AddTwoInts", None)),
             qos: QosProfile::default(),
         };
 

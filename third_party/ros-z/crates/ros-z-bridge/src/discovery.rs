@@ -1,7 +1,7 @@
 //! Discovery: subscribe to `@ros2_lv/{domain_id}/**` and classify entities.
 //!
-//! Entities coming from a Humble network will have `TypeHashNotSupported` as
-//! their type hash (which `TypeHash::from_rihs_string` maps to `TypeHash::zero()`).
+//! Entities coming from a Humble network will have `TypeHashNotSupported` on
+//! wire, which parses into `type_info.hash = None`.
 //! Entities from a Jazzy network will have a real RIHS01 hash.
 //!
 //! This module does not forward any data — it only surfaces discovery events
@@ -39,8 +39,8 @@ pub struct DiscoveryEvent {
     pub raw_ke: String,
 }
 
-/// Classify a `TypeHash` as Humble or Jazzy.
-pub fn classify_hash(hash: &TypeHash) -> Distro {
+/// Classify an optional endpoint hash as Humble or Jazzy.
+pub fn classify_hash(hash: Option<&TypeHash>) -> Distro {
     if is_humble_hash(hash) {
         Distro::Humble
     } else {
@@ -56,8 +56,8 @@ pub fn classify_entity(entity: &Entity) -> Option<Distro> {
     match entity {
         Entity::Node(_) => None,
         Entity::Endpoint(ep) => {
-            let hash = ep.type_info.as_ref().map(|ti| &ti.hash)?;
-            Some(classify_hash(hash))
+            let type_info = ep.type_info.as_ref()?;
+            Some(classify_hash(type_info.hash.as_ref()))
         }
     }
 }
@@ -139,7 +139,7 @@ mod tests {
         entity::{EndpointEntity, NodeEntity},
     };
 
-    fn make_endpoint(hash: TypeHash) -> Entity {
+    fn make_endpoint(hash: Option<TypeHash>) -> Entity {
         Entity::Endpoint(EndpointEntity {
             id: 1,
             node: Some(NodeEntity {
@@ -159,14 +159,14 @@ mod tests {
 
     #[test]
     fn classify_humble_endpoint() {
-        let entity = make_endpoint(TypeHash::zero());
+        let entity = make_endpoint(None);
         assert_eq!(classify_entity(&entity), Some(Distro::Humble));
     }
 
     #[test]
     fn classify_jazzy_endpoint() {
-        let hash = TypeHash::new(1, [0xabu8; 32]);
-        let entity = make_endpoint(hash);
+        let hash = TypeHash([0xabu8; 32]);
+        let entity = make_endpoint(Some(hash));
         assert_eq!(classify_entity(&entity), Some(Distro::Jazzy));
     }
 
@@ -205,16 +205,16 @@ mod tests {
 
     #[test]
     fn classify_hash_zero_is_humble() {
-        assert_eq!(classify_hash(&TypeHash::zero()), Distro::Humble);
+        assert_eq!(classify_hash(None), Distro::Humble);
     }
 
     #[test]
     fn classify_hash_non_zero_is_jazzy() {
-        let h = TypeHash::new(1, {
+        let h = TypeHash({
             let mut b = [0u8; 32];
             b[0] = 1;
             b
         });
-        assert_eq!(classify_hash(&h), Distro::Jazzy);
+        assert_eq!(classify_hash(Some(&h)), Distro::Jazzy);
     }
 }

@@ -76,7 +76,7 @@ pub struct Calculate;
 
 impl ServiceTypeInfo for Calculate {
     fn service_type_info() -> ros_z::entity::TypeInfo {
-        ros_z::entity::TypeInfo::new("examples/srv/Calculate", TypeHash::zero())
+        ros_z::entity::TypeInfo::new("examples/srv/Calculate", None)
     }
 }
 

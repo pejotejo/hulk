@@ -215,7 +215,7 @@ impl ZService for DescribeParametersSrv {
 
 impl ServiceTypeInfo for DescribeParametersSrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/DescribeParameters",
             TypeHash::from_rihs_string(
                 "RIHS01_845b484d71eb0673dae682f2e3ba3c4851a65a3dcfb97bddd82c5b57e91e4cff",
@@ -234,7 +234,7 @@ impl ZService for GetParametersSrv {
 
 impl ServiceTypeInfo for GetParametersSrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/GetParameters",
             TypeHash::from_rihs_string(
                 "RIHS01_bf9803d5c74cf989a5de3e0c2e99444599a627c7ff75f97b8c05b01003675cbc",
@@ -253,7 +253,7 @@ impl ZService for GetParameterTypesSrv {
 
 impl ServiceTypeInfo for GetParameterTypesSrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/GetParameterTypes",
             TypeHash::from_rihs_string(
                 "RIHS01_da199c878688b3e530bdfe3ca8f74cb9fa0c303101e980a9e8f260e25e1c80ca",
@@ -272,7 +272,7 @@ impl ZService for ListParametersSrv {
 
 impl ServiceTypeInfo for ListParametersSrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/ListParameters",
             TypeHash::from_rihs_string(
                 "RIHS01_3e6062bfbb27bfb8730d4cef2558221f51a11646d78e7bb30a1e83afac3aad9d",
@@ -291,7 +291,7 @@ impl ZService for SetParametersSrv {
 
 impl ServiceTypeInfo for SetParametersSrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/SetParameters",
             TypeHash::from_rihs_string(
                 "RIHS01_56eed9a67e169f9cb6c1f987bc88f868c14a8fc9f743a263bc734c154015d7e0",
@@ -310,7 +310,7 @@ impl ZService for SetParametersAtomicallySrv {
 
 impl ServiceTypeInfo for SetParametersAtomicallySrv {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "rcl_interfaces/srv/SetParametersAtomically",
             TypeHash::from_rihs_string(
                 "RIHS01_0e192ef259c07fc3c07a13191d27002222e65e00ccec653ca05e856f79285fcd",
@@ -326,7 +326,7 @@ impl ServiceTypeInfo for SetParametersAtomicallySrv {
 
 /// Type info for ParameterEvent message (used for the /parameter_events publisher).
 pub fn parameter_event_type_info() -> TypeInfo {
-    TypeInfo::new(
+    TypeInfo::with_hash(
         "rcl_interfaces/msg/ParameterEvent",
         TypeHash::from_rihs_string(
             "RIHS01_043e627780fcad87a22d225bc2a037361dba713fca6a6b9f4b869a5aa0393204",

@@ -124,7 +124,7 @@ impl ZService for RosService {
 impl ServiceTypeInfo for RosService {
     // Static method returns placeholder value since RosService is a generic wrapper
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new("rcl_z/srv/RosService", TypeHash::zero())
+        TypeInfo::new("rcl_z/srv/RosService", None)
     }
 
     // Note: Dynamic method would need to be implemented differently for services

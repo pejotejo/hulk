@@ -35,7 +35,7 @@ fn endpoint_entity(domain_id: usize, kind: EndpointKind, topic: &str) -> Endpoin
         topic: topic.to_string(),
         type_info: Some(TypeInfo {
             name: "std_msgs/msg/String".to_string(),
-            hash: TypeHash::zero(),
+            hash: Some(TypeHash::zero()),
         }),
         qos: QosProfile {
             reliability: QosReliability::Reliable,

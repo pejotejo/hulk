@@ -57,7 +57,9 @@ macro_rules! reg {
 macro_rules! reg_service {
     ($map:expr, $T:ty) => {
         let info = <$T>::service_type_info();
-        $map.insert(info.name, info.hash);
+        if let Some(hash) = info.hash {
+            $map.insert(info.name, hash);
+        }
     };
 }
 
@@ -208,7 +210,7 @@ mod tests {
         // Jazzy hashes are non-zero
         let h = hash.unwrap();
         assert!(
-            h.value != [0u8; 32],
+            h.0 != [0u8; 32],
             "jazzy hash must not be all-zeros sentinel"
         );
     }

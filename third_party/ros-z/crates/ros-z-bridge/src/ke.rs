@@ -104,15 +104,15 @@ fn parse_hash_segment(hash_str: &str) -> anyhow::Result<HashVariant> {
     if hash_str == HUMBLE_HASH_SENTINEL {
         return Ok(HashVariant::Humble);
     }
-    if let Some(hash) = TypeHash::from_rihs_string(hash_str) {
+    if let Ok(hash) = TypeHash::from_rihs_string(hash_str) {
         return Ok(HashVariant::Jazzy(hash));
     }
     anyhow::bail!("unrecognised hash segment: {hash_str}")
 }
 
-/// Return `true` if `hash` represents the Humble sentinel (all-zero value).
-pub fn is_humble_hash(hash: &TypeHash) -> bool {
-    *hash == TypeHash::zero()
+/// Return `true` if the endpoint hash state represents Humble's unsupported hash.
+pub fn is_humble_hash(hash: Option<&TypeHash>) -> bool {
+    hash.is_none()
 }
 
 #[cfg(test)]
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn rewrite_humble_to_jazzy() {
         let parsed = ParsedTopicKe::parse(HUMBLE_KE).unwrap();
-        let hash = TypeHash::new(1, [0xabu8; 32]);
+        let hash = TypeHash([0xabu8; 32]);
         let jazzy = parsed.as_jazzy_ke(&hash);
         assert!(jazzy.contains("RIHS01_"));
         assert!(jazzy.ends_with(&"ab".repeat(32)));
@@ -177,15 +177,14 @@ mod tests {
 
     #[test]
     fn is_humble_hash_sentinel() {
-        let zero = TypeHash::zero();
-        assert!(is_humble_hash(&zero));
-        let non_zero = TypeHash::new(1, [1u8; 32]);
-        assert!(!is_humble_hash(&non_zero));
+        assert!(is_humble_hash(None));
+        let non_zero = TypeHash([1u8; 32]);
+        assert!(!is_humble_hash(Some(&non_zero)));
     }
 
     #[test]
     fn rihs_string_format() {
-        let hash = TypeHash::new(1, [0u8; 32]);
+        let hash = TypeHash([0u8; 32]);
         let s = hash.to_rihs_string();
         assert!(s.starts_with("RIHS01_"));
         assert_eq!(s.len(), 7 + 64);

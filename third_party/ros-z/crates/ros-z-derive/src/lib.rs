@@ -9,8 +9,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Expr, Fields, GenericArgument,
-    GenericParam, Generics, Ident, LitStr, PathArguments, Type,
+    Attribute, Data, DeriveInput, Expr, Fields, GenericArgument, GenericParam, Generics, Ident,
+    LitStr, PathArguments, Type, parse_macro_input, parse_quote,
 };
 
 type TokenStream2 = proc_macro2::TokenStream;
@@ -246,11 +246,6 @@ fn impl_message_type_info_for_struct(
     let hash_helper = match flavor {
         MessageDeriveFlavor::Standard => quote! {
             fn __ros_z_type_hash() -> ::ros_z::entity::TypeHash {
-                let zero = ::ros_z::entity::TypeHash::zero();
-                if zero.to_rihs_string() == "TypeHashNotSupported" {
-                    return zero;
-                }
-
                 static TYPE_HASH: ::std::sync::OnceLock<
                     ::std::sync::Mutex<
                         ::std::collections::HashMap<::std::any::TypeId, ::ros_z::entity::TypeHash>
@@ -269,13 +264,9 @@ fn impl_message_type_info_for_struct(
                 let hash = {
                     use ::ros_z::dynamic::MessageSchemaTypeDescription;
 
-                    let schema = Self::__ros_z_schema();
-                    let rihs = schema
+                    Self::__ros_z_schema()
                         .compute_type_hash()
-                        .expect("standard-compatible derived message schema must produce a type hash");
-
-                    ::ros_z::entity::TypeHash::from_rihs_string(&rihs.to_rihs_string())
-                        .expect("derived message hash must be a valid RIHS01 string")
+                        .expect("standard-compatible derived message schema must produce a type hash")
                 };
 
                 cache.lock().expect("type hash cache poisoned").insert(key, hash.clone());
@@ -284,11 +275,6 @@ fn impl_message_type_info_for_struct(
         },
         MessageDeriveFlavor::Extended => quote! {
             fn __ros_z_type_hash() -> ::ros_z::entity::TypeHash {
-                let zero = ::ros_z::entity::TypeHash::zero();
-                if zero.to_rihs_string() == "TypeHashNotSupported" {
-                    return zero;
-                }
-
                 static TYPE_HASH: ::std::sync::OnceLock<
                     ::std::sync::Mutex<
                         ::std::collections::HashMap<::std::any::TypeId, ::ros_z::entity::TypeHash>
@@ -306,21 +292,16 @@ fn impl_message_type_info_for_struct(
 
                 let hash = {
                     let schema = Self::__ros_z_schema();
-                    let hash = if schema.uses_extended_types() {
+                    if schema.uses_extended_types() {
                         ::ros_z::extended_schema::compute_extended_type_hash(&schema)
                             .expect("extended message schema must produce a type hash")
-                            .to_rihs_string()
                     } else {
                         use ::ros_z::dynamic::MessageSchemaTypeDescription;
 
                         schema
                             .compute_type_hash()
                             .expect("standard-compatible extended schema must produce a standard type hash")
-                            .to_rihs_string()
-                    };
-
-                    ::ros_z::entity::TypeHash::from_rihs_string(&hash)
-                        .expect("extended message hash must be a valid RIHS01 string")
+                    }
                 };
 
                 cache.lock().expect("type hash cache poisoned").insert(key, hash.clone());
@@ -469,7 +450,28 @@ fn impl_message_type_info_for_enum(
     package_lit: &LitStr,
     message_name_lit: &LitStr,
 ) -> syn::Result<TokenStream2> {
-    let message_type_hash_impl = extended_message_type_hash_impl_tokens();
+    let message_type_hash_impl = quote! {
+        fn type_hash() -> ::ros_z::entity::TypeHash {
+            static TYPE_HASH: ::std::sync::OnceLock<::ros_z::entity::TypeHash> =
+                ::std::sync::OnceLock::new();
+
+            TYPE_HASH
+                .get_or_init(|| {
+                    let schema = <Self as ::ros_z::ExtendedMessageTypeInfo>::extended_message_schema();
+                    if schema.uses_extended_types() {
+                        ::ros_z::extended_schema::compute_extended_type_hash(&schema)
+                            .expect("extended message schema must produce a type hash")
+                    } else {
+                        use ::ros_z::dynamic::MessageSchemaTypeDescription;
+
+                        schema
+                            .compute_type_hash()
+                            .expect("standard-compatible extended schema must produce a standard type hash")
+                    }
+                })
+                .clone()
+        }
+    };
 
     if data.variants.is_empty() {
         return Err(syn::Error::new_spanned(
@@ -607,41 +609,6 @@ fn add_field_type_info_bounds(generics: &Generics) -> Generics {
         }
     }
     bounded
-}
-
-fn extended_message_type_hash_impl_tokens() -> TokenStream2 {
-    quote! {
-        fn type_hash() -> ::ros_z::entity::TypeHash {
-            let zero = ::ros_z::entity::TypeHash::zero();
-            if zero.to_rihs_string() == "TypeHashNotSupported" {
-                return zero;
-            }
-
-            static TYPE_HASH: ::std::sync::OnceLock<::ros_z::entity::TypeHash> =
-                ::std::sync::OnceLock::new();
-
-            TYPE_HASH
-                .get_or_init(|| {
-                    let schema = <Self as ::ros_z::ExtendedMessageTypeInfo>::extended_message_schema();
-                    let hash = if schema.uses_extended_types() {
-                        ::ros_z::extended_schema::compute_extended_type_hash(&schema)
-                            .expect("extended message schema must produce a type hash")
-                            .to_rihs_string()
-                    } else {
-                        use ::ros_z::dynamic::MessageSchemaTypeDescription;
-
-                        schema
-                            .compute_type_hash()
-                            .expect("standard-compatible extended schema must produce a standard type hash")
-                            .to_rihs_string()
-                    };
-
-                    ::ros_z::entity::TypeHash::from_rihs_string(&hash)
-                        .expect("extended message hash must be a valid RIHS01 string")
-                })
-                .clone()
-        }
-    }
 }
 
 fn impl_from_py_message(input: &DeriveInput) -> syn::Result<TokenStream2> {

@@ -313,7 +313,7 @@ impl ZService for ChangeState {
 
 impl ServiceTypeInfo for ChangeState {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "lifecycle_msgs/srv/ChangeState",
             // RIHS01 service hash for lifecycle_msgs/srv/ChangeState
             // (Request: Transition transition / Response: bool success).
@@ -382,7 +382,7 @@ impl ZService for GetState {
 
 impl ServiceTypeInfo for GetState {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "lifecycle_msgs/srv/GetState",
             // RIHS01 service hash for lifecycle_msgs/srv/GetState
             // (Request: empty / Response: State current_state).
@@ -451,7 +451,7 @@ impl ZService for GetAvailableStates {
 
 impl ServiceTypeInfo for GetAvailableStates {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "lifecycle_msgs/srv/GetAvailableStates",
             // RIHS01 service hash for lifecycle_msgs/srv/GetAvailableStates
             // (Request: empty / Response: State[] available_states).
@@ -520,7 +520,7 @@ impl ZService for GetAvailableTransitions {
 
 impl ServiceTypeInfo for GetAvailableTransitions {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
+        TypeInfo::with_hash(
             "lifecycle_msgs/srv/GetAvailableTransitions",
             // RIHS01 service hash for lifecycle_msgs/srv/GetAvailableTransitions
             // (Request: empty / Response: TransitionDescription[] available_transitions).

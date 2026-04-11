@@ -250,7 +250,7 @@ macro_rules! impl_service {
 
         impl ServiceTypeInfo for $srv {
             fn service_type_info() -> TypeInfo {
-                TypeInfo::new($name, TypeHash::zero())
+                TypeInfo::new($name, None)
             }
         }
     };

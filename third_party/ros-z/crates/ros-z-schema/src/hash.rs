@@ -5,8 +5,8 @@
 use serde::Serialize;
 use sha2::Digest;
 
+use crate::type_description::{to_hash_version, TypeDescriptionMsg};
 use crate::TypeHash;
-use crate::type_description::{TypeDescriptionMsg, to_hash_version};
 
 /// Calculate RIHS01 hash for a TypeDescriptionMsg
 ///

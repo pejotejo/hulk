@@ -57,7 +57,7 @@ struct AddTwoInts;
 
 impl ServiceTypeInfo for AddTwoInts {
     fn service_type_info() -> ros_z::entity::TypeInfo {
-        ros_z::entity::TypeInfo::new("test_msgs/srv/AddTwoInts", TypeHash::zero())
+        ros_z::entity::TypeInfo::new("test_msgs/srv/AddTwoInts", None)
     }
 }
 

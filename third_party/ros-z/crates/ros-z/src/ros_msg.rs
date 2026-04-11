@@ -164,7 +164,7 @@ pub trait MessageTypeInfo {
     /// Returns complete TypeInfo combining name and hash
     /// Static method for compile-time known types
     fn type_info() -> TypeInfo {
-        TypeInfo::new(Self::type_name(), Self::type_hash())
+        TypeInfo::with_hash(Self::type_name(), Self::type_hash())
     }
 
     /// Returns the package name (extracted from type name)
@@ -229,7 +229,7 @@ pub trait MessageTypeInfo {
     /// Returns complete TypeInfo at runtime
     /// Override this for types that need to query type info dynamically
     fn type_info_dyn(&self) -> TypeInfo {
-        TypeInfo::new(&self.type_name_dyn(), self.type_hash_dyn())
+        TypeInfo::with_hash(&self.type_name_dyn(), self.type_hash_dyn())
     }
 
     /// Returns the package name at runtime

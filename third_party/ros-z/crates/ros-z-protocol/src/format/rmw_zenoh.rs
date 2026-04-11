@@ -11,7 +11,7 @@ use zenoh::{key_expr::KeyExpr, session::ZenohId, Result};
 use crate::{
     entity::{
         EndpointEntity, EndpointKind, Entity, EntityConversionError, EntityKind, LivelinessKE,
-        NodeEntity, TopicKE, TypeHash, TypeInfo,
+        NodeEntity, TopicKE, TypeHash, TypeInfo, TYPE_HASH_NOT_SUPPORTED,
     },
     qos::QosProfile,
 };
@@ -27,6 +27,11 @@ pub const EMPTY_TOPIC_HASH: &str = "EMPTY_TOPIC_HASH";
 
 /// rmw_zenoh compatible backend.
 pub struct RmwZenohFormatter;
+
+fn format_type_hash(hash: Option<&TypeHash>) -> String {
+    hash.map(TypeHash::to_rihs_string)
+        .unwrap_or_else(|| TYPE_HASH_NOT_SUPPORTED.to_string())
+}
 
 impl KeyExprFormatter for RmwZenohFormatter {
     const ESCAPE_CHAR: char = '%';
@@ -66,7 +71,7 @@ impl KeyExprFormatter for RmwZenohFormatter {
                 .as_ref()
                 .map_or(format!("{EMPTY_TOPIC_TYPE}/{EMPTY_TOPIC_HASH}"), |x| {
                     let type_name = Self::demangle_name(&x.name);
-                    let type_hash = Self::demangle_name(&x.hash.to_string());
+                    let type_hash = Self::demangle_name(&format_type_hash(x.hash.as_ref()));
                     format!("{type_name}/{type_hash}")
                 });
 
@@ -111,11 +116,16 @@ impl KeyExprFormatter for RmwZenohFormatter {
             Self::mangle_name(s)
         };
 
-        let type_info_str = type_info
-            .as_ref()
-            .map_or(format!("{EMPTY_TOPIC_TYPE}/{EMPTY_TOPIC_HASH}"), |x| {
-                format!("{}/{}", Self::mangle_name(&x.name), x.hash.to_rihs_string())
-            });
+        let type_info_str =
+            type_info
+                .as_ref()
+                .map_or(format!("{EMPTY_TOPIC_TYPE}/{EMPTY_TOPIC_HASH}"), |x| {
+                    format!(
+                        "{}/{}",
+                        Self::mangle_name(&x.name),
+                        format_type_hash(x.hash.as_ref())
+                    )
+                });
 
         let qos_str = qos.encode();
 
@@ -222,12 +232,12 @@ impl KeyExprFormatter for RmwZenohFormatter {
                     (EMPTY_TOPIC_TYPE, EMPTY_TOPIC_HASH) => None,
                     (EMPTY_TOPIC_TYPE, _) | (_, EMPTY_TOPIC_HASH) => None,
                     (topic_type, topic_hash) => {
-                        let type_hash = TypeHash::from_rihs_string(topic_hash)
-                            .unwrap_or(TypeHash::new(0, [0u8; 32]));
-                        Some(TypeInfo {
-                            name: Self::demangle_name(topic_type),
-                            hash: type_hash,
-                        })
+                        let type_hash = if topic_hash == TYPE_HASH_NOT_SUPPORTED {
+                            None
+                        } else {
+                            Some(TypeHash::from_rihs_string(topic_hash).map_err(|_| ParsingError)?)
+                        };
+                        Some(TypeInfo::new(&Self::demangle_name(topic_type), type_hash))
                     }
                 };
 
@@ -322,7 +332,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -368,7 +378,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -436,7 +446,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Subscription,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -469,10 +479,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: "add_two_ints".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/AddTwoInts",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/AddTwoInts", None)),
             qos: QosProfile::default(),
         };
 
@@ -505,10 +512,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Client,
             topic: "add_two_ints".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/AddTwoInts",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/AddTwoInts", None)),
             qos: QosProfile::default(),
         };
 
@@ -591,7 +595,7 @@ mod tests {
             topic: "/talker/get_type_description".to_string(),
             type_info: Some(TypeInfo::new(
                 "type_description_interfaces::srv::dds_::GetTypeDescription_",
-                TypeHash::zero(),
+                None,
             )),
             qos: QosProfile::default(),
         };
@@ -631,10 +635,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Client,
             topic: "/my_service/sub_service/action".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/AddTwoInts",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/AddTwoInts", None)),
             qos: QosProfile::default(),
         };
 
@@ -669,7 +670,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "/ns/topic".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -710,7 +711,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Subscription,
             topic: "/robot/sensor/data".to_string(),
-            type_info: Some(TypeInfo::new("sensor_msgs/msg/Image", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("sensor_msgs/msg/Image", None)),
             qos: QosProfile::default(),
         };
 
@@ -753,7 +754,7 @@ mod tests {
             topic: "/fibonacci/_action/send_goal".to_string(),
             type_info: Some(TypeInfo::new(
                 "action_tutorials_interfaces::action::dds_::Fibonacci_SendGoal_",
-                TypeHash::zero(),
+                None,
             )),
             qos: QosProfile::default(),
         };
@@ -793,10 +794,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: "/my_service/".to_string(),
-            type_info: Some(TypeInfo::new(
-                "example_interfaces/srv/Trigger",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("example_interfaces/srv/Trigger", None)),
             qos: QosProfile::default(),
         };
 
@@ -873,7 +871,7 @@ mod tests {
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
             // Type name with mangled slashes (as stored internally)
-            type_info: Some(TypeInfo::new("std_msgs%msg%String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs%msg%String", None)),
             qos: QosProfile::default(),
         };
 
@@ -913,7 +911,7 @@ mod tests {
             topic: "/talker/get_type_description".to_string(),
             type_info: Some(TypeInfo::new(
                 "type_description_interfaces::srv::dds_::GetTypeDescription_",
-                TypeHash::zero(),
+                None,
             )),
             qos: QosProfile::default(),
         };
@@ -947,10 +945,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "/data/temperature".to_string(),
-            type_info: Some(TypeInfo::new(
-                "sensor_msgs/msg/Temperature",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("sensor_msgs/msg/Temperature", None)),
             qos: QosProfile::default(),
         };
 
@@ -995,7 +990,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Subscription,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -1034,7 +1029,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -1068,9 +1063,9 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "image".to_string(),
-            type_info: Some(TypeInfo::new(
+            type_info: Some(TypeInfo::with_hash(
                 "sensor_msgs/msg/Image",
-                TypeHash::new(1, [0x12; 32]),
+                TypeHash([0x12; 32]),
             )),
             qos: QosProfile::default(),
         };
@@ -1116,7 +1111,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos,
         };
 
@@ -1160,7 +1155,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "/topic/name".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -1180,6 +1175,7 @@ mod tests {
             );
             // Topic name should be reconstructed (slashes demangled)
             assert_eq!(parsed_entity.topic, "/topic/name");
+            assert_eq!(parsed_entity.type_info.unwrap().hash, None);
         } else {
             panic!("Expected Endpoint entity");
         }
@@ -1203,9 +1199,9 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: "/my/service".to_string(),
-            type_info: Some(TypeInfo::new(
+            type_info: Some(TypeInfo::with_hash(
                 "example_interfaces::srv::dds_::AddTwoInts_",
-                TypeHash::new(1, [0xab; 32]),
+                TypeHash([0xab; 32]),
             )),
             qos: QosProfile::default(),
         };
@@ -1217,10 +1213,9 @@ mod tests {
             assert_eq!(parsed_entity.id, original.id);
             assert_eq!(parsed_entity.kind, EndpointKind::Service);
             assert_eq!(parsed_entity.topic, "/my/service");
-            assert_eq!(
-                parsed_entity.type_info.as_ref().unwrap().name,
-                "example_interfaces::srv::dds_::AddTwoInts_"
-            );
+            let type_info = parsed_entity.type_info.unwrap();
+            assert_eq!(type_info.name, "example_interfaces::srv::dds_::AddTwoInts_");
+            assert_eq!(type_info.hash, Some(TypeHash([0xab; 32])));
         } else {
             panic!("Expected Endpoint entity");
         }
@@ -1307,7 +1302,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Publisher,
             topic: "simple_topic".to_string(),
-            type_info: Some(TypeInfo::new("std_msgs/msg/String", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
             qos: QosProfile::default(),
         };
 
@@ -1343,7 +1338,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: "/a//b".to_string(), // Consecutive slashes
-            type_info: Some(TypeInfo::new("std_srvs/srv/Trigger", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_srvs/srv/Trigger", None)),
             qos: QosProfile::default(),
         };
 
@@ -1374,10 +1369,7 @@ mod tests {
             kind: EndpointKind::Publisher,
             topic: "chatter".to_string(),
             // DDS type name with ::dds_:: namespace
-            type_info: Some(TypeInfo::new(
-                "std_msgs::msg::dds_::String_",
-                TypeHash::zero(),
-            )),
+            type_info: Some(TypeInfo::new("std_msgs::msg::dds_::String_", None)),
             qos: QosProfile::default(),
         };
 
@@ -1411,7 +1403,7 @@ mod tests {
             node: Some(node),
             kind: EndpointKind::Service,
             topic: long_topic.to_string(),
-            type_info: Some(TypeInfo::new("std_srvs/srv/Trigger", TypeHash::zero())),
+            type_info: Some(TypeInfo::new("std_srvs/srv/Trigger", None)),
             qos: QosProfile::default(),
         };
 
@@ -1429,7 +1421,7 @@ mod tests {
     /// Test TypeHash RIHS string format.
     #[test]
     fn test_type_hash_rihs_format() {
-        let hash = TypeHash::new(1, [0xab; 32]);
+        let hash = TypeHash([0xab; 32]);
         let rihs_str = hash.to_rihs_string();
 
         // Should be RIHS01_ followed by 64 hex characters
@@ -1446,8 +1438,7 @@ mod tests {
 
         // Should be able to parse back
         let parsed = TypeHash::from_rihs_string(&rihs_str).unwrap();
-        assert_eq!(parsed.version, 1);
-        assert_eq!(parsed.value, [0xab; 32]);
+        assert_eq!(parsed, TypeHash([0xab; 32]));
     }
 
     /// Test zero TypeHash.
@@ -1471,7 +1462,7 @@ mod tests {
 mod kani_proofs {
     use super::*;
     use crate::{
-        entity::{EndpointEntity, EntityKind, NodeEntity, TypeHash, TypeInfo},
+        entity::{EndpointEntity, NodeEntity, TypeHash, TypeInfo},
         qos::{QosDurability, QosHistory, QosProfile, QosReliability},
     };
     use zenoh::session::ZenohId;
@@ -1500,7 +1491,7 @@ mod kani_proofs {
             topic: "/kani_topic".to_string(),
             type_info: Some(TypeInfo {
                 name: "std_msgs/msg/String".to_string(),
-                hash: TypeHash::zero(),
+                hash: Some(TypeHash::zero()),
             }),
             qos: QosProfile {
                 reliability: QosReliability::Reliable,

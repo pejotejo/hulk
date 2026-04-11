@@ -342,6 +342,15 @@ impl Builder for ZNodeBuilder {
 }
 
 impl ZNode {
+    #[cfg(feature = "ffi")]
+    fn parse_endpoint_type_hash(type_hash: &str) -> Option<TypeHash> {
+        if type_hash == TYPE_HASH_NOT_SUPPORTED {
+            None
+        } else {
+            TypeHash::from_rihs_string(type_hash).ok()
+        }
+    }
+
     /// Create a publisher for the given topic.
     ///
     /// If `T` implements [`WithTypeInfo`], type information is automatically populated.
@@ -629,7 +638,7 @@ impl ZNode {
             topic: qualified_topic.clone(),
             type_info: Some(TypeInfo {
                 name: type_name.to_string(),
-                hash: TypeHash::from_rihs_string(type_hash).unwrap_or(TypeHash::zero()),
+                hash: Self::parse_endpoint_type_hash(type_hash),
             }),
             qos: protocol_qos,
         };
@@ -702,7 +711,7 @@ impl ZNode {
             topic: qualified_topic.clone(),
             type_info: Some(TypeInfo {
                 name: type_name.to_string(),
-                hash: TypeHash::from_rihs_string(type_hash).unwrap_or(TypeHash::zero()),
+                hash: Self::parse_endpoint_type_hash(type_hash),
             }),
             qos: protocol_qos,
         };

@@ -16,12 +16,12 @@ mod type_id;
 
 pub use hash::{calculate_hash, to_ros2_json};
 pub use type_description::{
-    FieldDescription, FieldTypeDescription, TypeDescription, TypeDescriptionMsg, to_hash_version,
+    to_hash_version, FieldDescription, FieldTypeDescription, TypeDescription, TypeDescriptionMsg,
 };
 pub use type_id::TypeId;
 
 /// RIHS01 type hash (32 bytes)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeHash(pub [u8; 32]);
 
 impl TypeHash {
@@ -48,7 +48,7 @@ impl TypeHash {
         Ok(TypeHash(hash))
     }
 
-    /// Create a zero (placeholder) type hash for Humble compatibility
+    /// Create the all-zero hash value.
     pub fn zero() -> Self {
         TypeHash([0u8; 32])
     }
