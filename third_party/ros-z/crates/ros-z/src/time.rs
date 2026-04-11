@@ -8,7 +8,14 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use ros_z_protocol::TypeHash;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+
+use crate::{
+    FieldTypeInfo, MessageTypeInfo,
+    dynamic::{FieldSchema, FieldType, MessageSchema, MessageSchemaTypeDescription},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ZDuration(Duration);
@@ -51,9 +58,46 @@ impl From<ZDuration> for Duration {
 /// timeline and only becomes wallclock time when interpreted through a
 /// wallclock-backed [`ZClock`] or converted with [`ZTime::from_wallclock`] /
 /// [`ZTime::to_wallclock`].
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ZTime {
     since_origin: Duration,
+}
+
+impl MessageTypeInfo for ZTime {
+    fn type_name() -> &'static str {
+        "ros_z::msg::dds_::ZTime_"
+    }
+
+    fn type_hash() -> TypeHash {
+        let rihs_string = Self::message_schema()
+            .unwrap()
+            .compute_type_hash()
+            .expect("failed to compute type hash")
+            .to_rihs_string();
+        TypeHash::from_rihs_string(&rihs_string).expect("failed to compute type hash")
+    }
+
+    fn message_schema() -> Option<std::sync::Arc<crate::dynamic::MessageSchema>> {
+        Some(Arc::new(crate::dynamic::MessageSchema {
+            type_name: "ros_z/msg/ZTime".to_string(),
+            package: "ros_z".to_string(),
+            name: "ZTime".to_string(),
+            fields: vec![FieldSchema::new("duration", Duration::field_type())],
+            type_hash: None,
+        }))
+    }
+}
+
+impl FieldTypeInfo for Duration {
+    fn field_type() -> crate::dynamic::FieldType {
+        FieldType::Message(
+            MessageSchema::builder("std/msg/Duration")
+                .field("secs", FieldType::Uint64)
+                .field("nanos", FieldType::Uint32)
+                .build()
+                .expect("failed to build schema for Duration"),
+        )
+    }
 }
 
 impl fmt::Debug for ZTime {
@@ -424,7 +468,10 @@ mod tests {
     #[test]
     fn wallclock_is_default() {
         let clock = ZClock::default();
-        assert!(matches!(clock.set_time(ZTime::zero()), Err(ClockError::NotLogical)));
+        assert!(matches!(
+            clock.set_time(ZTime::zero()),
+            Err(ClockError::NotLogical)
+        ));
     }
 
     #[tokio::test]
@@ -597,7 +644,10 @@ mod tests {
     #[test]
     fn zclock_wallclock_constructor() {
         let c = ZClock::wallclock();
-        assert!(matches!(c.set_time(ZTime::zero()), Err(ClockError::NotLogical)));
+        assert!(matches!(
+            c.set_time(ZTime::zero()),
+            Err(ClockError::NotLogical)
+        ));
     }
 
     #[test]
@@ -611,10 +661,16 @@ mod tests {
     fn legacy_time_aliases_still_work() {
         let t = ZTime::from_system_time(SystemTime::UNIX_EPOCH + Duration::from_secs(1));
         assert_eq!(t.as_unix_nanos(), 1_000_000_000);
-        assert_eq!(t.to_system_time(), SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(
+            t.to_system_time(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1)
+        );
         assert_eq!(ZTime::from_unix_nanos(5).as_nanos(), 5);
 
-        assert!(matches!(ZClock::system().set_time(ZTime::zero()), Err(ClockError::NotLogical)));
+        assert!(matches!(
+            ZClock::system().set_time(ZTime::zero()),
+            Err(ClockError::NotLogical)
+        ));
         assert_eq!(ZClock::simulated(ZTime::zero()).now(), ZTime::zero());
     }
 
