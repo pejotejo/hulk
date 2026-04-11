@@ -5,9 +5,15 @@ edition.workspace = true
 license.workspace = true
 homepage.workspace = true
 
+[package.metadata.pepsi]
+cross-compile = true
+
 [dependencies]
+booster.workspace = true
+booster_sdk.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre = { workspace = true }
+log.workspace = true
 ros-z = { workspace = true }
 ros-z-config = { workspace = true }
 ros-z-msgs = { workspace = true, features = ["sensor_msgs"] }

@@ -90,6 +90,7 @@ async fn spawn_all(ctx: Arc<ros_z::context::ZContext>) -> Result<RunningStack> {
     join_set.spawn(nodes::state_estimator::run(ctx.clone()));
     join_set.spawn(nodes::behavior::run(ctx.clone()));
     join_set.spawn(nodes::motion::run(ctx.clone()));
+    join_set.spawn(nodes::robot_hw::run(ctx.clone()));
     join_set.spawn(nodes::vision::run(ctx));
 
     Ok(RunningStack { join_set })

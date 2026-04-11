@@ -5122,8 +5122,11 @@ dependencies = [
 name = "hulk_ros_z"
 version = "0.1.0"
 dependencies = [
+ "booster",
+ "booster_sdk",
  "clap",
  "color-eyre",
+ "log",
  "ros-z",
  "ros-z-config",
  "ros-z-msgs",
