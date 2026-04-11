@@ -46,7 +46,10 @@ async fn main() -> Result<()> {
         .with_config_layers(config_layers);
 
     builder = match args.router {
-        Some(router) => builder.with_router_endpoint(router).into_eyre()?,
+        Some(router) => builder
+            .with_mode("client")
+            .with_router_endpoint(router)
+            .into_eyre()?,
         None => builder
             .with_mode("router")
             .disable_multicast_scouting()
