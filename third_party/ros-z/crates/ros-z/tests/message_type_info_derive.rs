@@ -25,6 +25,19 @@ struct RobotTelemetry {
     payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ros_z::MessageTypeInfo)]
+#[ros_msg(type_name = "custom_msgs/msg/GenericTelemetry")]
+struct GenericTelemetry<T> {
+    data: Vec<T>,
+    foo: T,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ros_z::MessageTypeInfo)]
+#[ros_msg(type_name = "custom_msgs/msg/NestedGenericTelemetry")]
+struct NestedGenericTelemetry<T> {
+    inner: GenericTelemetry<T>,
+}
+
 impl ros_z::msg::ZMessage for RobotTelemetry {
     type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
@@ -136,6 +149,77 @@ fn derive_generates_type_info_and_schema() {
         assert_eq!(reported_hash, TypeHash::zero());
     } else {
         assert_eq!(reported_hash, expected_hash);
+    }
+}
+
+#[test]
+fn derive_generates_distinct_generic_type_info_per_instantiation() {
+    let u32_schema = GenericTelemetry::<u32>::message_schema().expect("u32 schema");
+    let string_schema = GenericTelemetry::<String>::message_schema().expect("string schema");
+
+    assert_eq!(
+        GenericTelemetry::<u32>::type_name(),
+        "custom_msgs/msg/GenericTelemetry__u32"
+    );
+    assert_eq!(
+        GenericTelemetry::<String>::type_name(),
+        "custom_msgs/msg/GenericTelemetry__string"
+    );
+    assert_ne!(
+        GenericTelemetry::<u32>::type_name(),
+        GenericTelemetry::<String>::type_name()
+    );
+
+    assert_eq!(u32_schema.type_name, GenericTelemetry::<u32>::type_name());
+    assert_eq!(
+        string_schema.type_name,
+        GenericTelemetry::<String>::type_name()
+    );
+    assert_ne!(u32_schema.type_name, string_schema.type_name);
+    assert_ne!(
+        GenericTelemetry::<u32>::type_hash(),
+        GenericTelemetry::<String>::type_hash()
+    );
+
+    let foo = u32_schema.field("foo").expect("foo field");
+    assert!(matches!(foo.field_type, FieldType::Uint32));
+
+    let data = string_schema.field("data").expect("data field");
+    match &data.field_type {
+        FieldType::Sequence(inner) => {
+            assert!(matches!(inner.as_ref(), FieldType::String));
+        }
+        other => panic!("expected string sequence field, got {:?}", other),
+    }
+}
+
+#[test]
+fn derive_supports_nested_generic_message_fields() {
+    let schema = GenericTelemetry::<Position2D>::message_schema().expect("generic schema");
+    assert_eq!(
+        GenericTelemetry::<Position2D>::type_name(),
+        "custom_msgs/msg/GenericTelemetry__custom_msgs_msg_position2d"
+    );
+
+    let foo = schema.field("foo").expect("foo field");
+    match &foo.field_type {
+        FieldType::Message(nested) => {
+            assert_eq!(nested.type_name, "custom_msgs/msg/Position2D");
+        }
+        other => panic!("expected nested message field, got {:?}", other),
+    }
+
+    let nested_schema =
+        NestedGenericTelemetry::<Position2D>::message_schema().expect("nested schema");
+    let inner = nested_schema.field("inner").expect("inner field");
+    match &inner.field_type {
+        FieldType::Message(nested) => {
+            assert_eq!(
+                nested.type_name,
+                GenericTelemetry::<Position2D>::type_name()
+            );
+        }
+        other => panic!("expected nested generic message field, got {:?}", other),
     }
 }
 

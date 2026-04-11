@@ -1,0 +1,5 @@
+error: MessageTypeInfo derive does not support tuple structs in v1
+ --> tests/ui/message_type_info/generic_tuple_struct.rs:6:8
+  |
+6 | struct GenericTuple<T>(T);
+  |        ^^^^^^^^^^^^

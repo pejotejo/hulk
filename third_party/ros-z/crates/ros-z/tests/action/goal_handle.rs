@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ros_z::{Builder, Result, context::ZContextBuilder, define_action};
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,12 @@ pub struct TestFeedback {
 // Define the action type
 pub struct TestAction;
 
+static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn next_test_id() -> usize {
+    TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 define_action! {
     TestAction,
     action_name: "test_action",
@@ -35,14 +43,19 @@ async fn setup_test() -> Result<(
     ros_z::action::server::ZActionServer<TestAction>,
 )> {
     let ctx = ZContextBuilder::default().build()?;
-    let node = ctx.create_node("test_goal_handle_node").build()?;
+    let test_id = next_test_id();
+    let action_name = format!("/test_action_{}", test_id);
+    let node = ctx
+        .create_node("test_goal_handle_node")
+        .with_namespace(format!("/goal_handle_{}", test_id))
+        .build()?;
 
     let client = node
-        .create_action_client::<TestAction>("test_action")
+        .create_action_client::<TestAction>(&action_name)
         .build()?;
 
     let server = node
-        .create_action_server::<TestAction>("test_action")
+        .create_action_server::<TestAction>(&action_name)
         .build()?;
 
     // Wait for discovery

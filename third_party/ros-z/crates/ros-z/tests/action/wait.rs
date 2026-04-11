@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use ros_z::{Builder, Result, context::ZContextBuilder, define_action};
 use serde::{Deserialize, Serialize};
@@ -24,6 +30,20 @@ pub struct TestFeedback {
 // Define the action type
 pub struct TestAction;
 
+static TEST_NAMESPACE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn next_test_id() -> usize {
+    TEST_NAMESPACE_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+fn test_namespace(id: usize) -> String {
+    format!("/action_wait_{id}")
+}
+
+fn test_action_name(id: usize) -> String {
+    format!("/test_action_wait_name_{id}")
+}
+
 define_action! {
     TestAction,
     action_name: "test_action",
@@ -36,7 +56,11 @@ define_action! {
 #[allow(dead_code)]
 async fn setup_test_base() -> Result<(ros_z::node::ZNode,)> {
     let ctx = ZContextBuilder::default().build()?;
-    let node = ctx.create_node("test_action_wait_node").build()?;
+    let test_id = next_test_id();
+    let node = ctx
+        .create_node("test_action_wait_node")
+        .with_namespace(test_namespace(test_id))
+        .build()?;
 
     // Wait for discovery
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -53,20 +77,29 @@ async fn setup_test_with_client_server() -> Result<(
 )> {
     let ctx = ZContextBuilder::default().build()?;
 
-    let client_node = ctx.create_node("test_action_client_wait_node").build()?;
-    let server_node = ctx.create_node("test_action_server_wait_node").build()?;
+    let test_id = next_test_id();
+    let namespace = test_namespace(test_id);
+    let action_name = test_action_name(test_id);
+    let client_node = ctx
+        .create_node("test_action_client_wait_node")
+        .with_namespace(namespace.clone())
+        .build()?;
+    let server_node = ctx
+        .create_node("test_action_server_wait_node")
+        .with_namespace(namespace)
+        .build()?;
 
     // Wait for discovery
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let client = Arc::new(
         client_node
-            .create_action_client::<TestAction>("/test_action_wait_name")
+            .create_action_client::<TestAction>(&action_name)
             .build()?,
     );
 
     let server = server_node
-        .create_action_server::<TestAction>("/test_action_wait_name")
+        .create_action_server::<TestAction>(&action_name)
         .build()?;
 
     Ok((client_node, server_node, client, server))
@@ -245,11 +278,18 @@ mod tests {
         let mid_status = *status_watch.borrow();
         tracing::debug!("Mid status: {:?}", mid_status);
 
-        // Wait for final status change (Executing -> Succeeded)
-        time::timeout(Duration::from_secs(5), status_watch.changed())
-            .await
-            .expect("timeout waiting for final status change")?;
-        let final_status = *status_watch.borrow();
+        // Fast server-side transitions may coalesce multiple updates into a
+        // single observed change, so keep waiting until we reach a terminal status.
+        let final_status = loop {
+            let current = *status_watch.borrow();
+            if current.is_terminal() {
+                break current;
+            }
+
+            time::timeout(Duration::from_secs(5), status_watch.changed())
+                .await
+                .expect("timeout waiting for final status change")?;
+        };
         tracing::debug!("Final status: {:?}", final_status);
 
         Ok(())

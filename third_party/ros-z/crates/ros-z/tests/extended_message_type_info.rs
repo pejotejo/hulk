@@ -39,6 +39,20 @@ struct RobotEnvelope {
     state: RobotState,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ros_z::ExtendedMessageTypeInfo)]
+#[ros_msg(type_name = "custom_msgs/msg/GenericEnvelope")]
+struct GenericEnvelope<T> {
+    payload: T,
+    items: Vec<T>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ros_z::ExtendedMessageTypeInfo)]
+#[ros_msg(type_name = "custom_msgs/msg/GenericOptionalEnvelope")]
+struct GenericOptionalEnvelope<T> {
+    payload: Option<T>,
+    items: Vec<T>,
+}
+
 impl ros_z::msg::ZMessage for RobotEnvelope {
     type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
@@ -107,6 +121,57 @@ fn extended_derive_keeps_standard_schema_for_compatible_structs() {
         RobotState::message_schema().is_none(),
         "extended enums should not expose a standard schema"
     );
+}
+
+#[test]
+fn extended_derive_generates_distinct_generic_names_and_hashes() {
+    let u32_schema = GenericEnvelope::<u32>::message_schema().expect("u32 schema");
+    let msg_schema = GenericEnvelope::<TelemetryLite>::message_schema().expect("message schema");
+
+    assert_eq!(
+        GenericEnvelope::<u32>::type_name(),
+        "custom_msgs/msg/GenericEnvelope__u32"
+    );
+    assert_eq!(
+        GenericEnvelope::<TelemetryLite>::type_name(),
+        "custom_msgs/msg/GenericEnvelope__custom_msgs_msg_telemetrylite"
+    );
+    assert_ne!(
+        GenericEnvelope::<u32>::type_hash(),
+        GenericEnvelope::<TelemetryLite>::type_hash()
+    );
+
+    let payload = msg_schema.field("payload").expect("payload field");
+    match &payload.field_type {
+        ros_z::dynamic::FieldType::Message(nested) => {
+            assert_eq!(nested.type_name, "custom_msgs/msg/TelemetryLite");
+        }
+        other => panic!("expected nested message payload, got {:?}", other),
+    }
+
+    assert_eq!(u32_schema.type_name, GenericEnvelope::<u32>::type_name());
+}
+
+#[test]
+fn extended_derive_keeps_extended_only_generic_instantiations_on_extended_path() {
+    let schema = GenericOptionalEnvelope::<u32>::extended_message_schema();
+    assert!(schema.uses_extended_types());
+    assert_eq!(
+        GenericOptionalEnvelope::<u32>::type_name(),
+        "custom_msgs/msg/GenericOptionalEnvelope__u32"
+    );
+    assert!(
+        GenericOptionalEnvelope::<u32>::message_schema().is_none(),
+        "optional generic instantiations should stay on the extended path"
+    );
+
+    let payload = schema.field("payload").expect("payload field");
+    match &payload.field_type {
+        ros_z::dynamic::FieldType::Optional(inner) => {
+            assert!(matches!(inner.as_ref(), ros_z::dynamic::FieldType::Uint32));
+        }
+        other => panic!("expected optional payload field, got {:?}", other),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

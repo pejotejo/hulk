@@ -1,0 +1,5 @@
+error: MessageTypeInfo derive does not support lifetime parameters in v1
+ --> tests/ui/message_type_info/lifetime_generic.rs:6:24
+  |
+6 | struct LifetimeGeneric<'a> {
+  |                        ^^

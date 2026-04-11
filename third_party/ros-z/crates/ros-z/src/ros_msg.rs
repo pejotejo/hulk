@@ -1,3 +1,6 @@
+use sha2::Digest;
+
+use crate::dynamic::FieldType;
 use crate::entity::{TypeHash, TypeInfo};
 
 /// Convert a canonical ROS type name such as `std_msgs/msg/String` into the
@@ -21,8 +24,118 @@ pub fn dds_type_name_to_canonical(type_name: &str) -> String {
         .to_string()
 }
 
+fn sanitize_generic_name_fragment(fragment: &str) -> String {
+    let mut sanitized = String::with_capacity(fragment.len());
+    let mut previous_was_underscore = false;
+
+    for ch in fragment.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() { ch } else { '_' };
+        if normalized == '_' {
+            if !previous_was_underscore {
+                sanitized.push('_');
+                previous_was_underscore = true;
+            }
+        } else {
+            sanitized.push(normalized.to_ascii_lowercase());
+            previous_was_underscore = false;
+        }
+    }
+
+    sanitized.trim_matches('_').to_string()
+}
+
+fn short_stable_hash(value: &str) -> String {
+    let digest = sha2::Sha256::digest(value.as_bytes());
+    let mut hash = String::with_capacity(12);
+    for byte in &digest[..6] {
+        use std::fmt::Write;
+        let _ = write!(&mut hash, "{:02x}", byte);
+    }
+    hash
+}
+
+fn field_type_generic_arg_name(field_type: &FieldType) -> String {
+    match field_type {
+        FieldType::Bool => "bool".to_string(),
+        FieldType::Int8 => "i8".to_string(),
+        FieldType::Int16 => "i16".to_string(),
+        FieldType::Int32 => "i32".to_string(),
+        FieldType::Int64 => "i64".to_string(),
+        FieldType::Uint8 => "u8".to_string(),
+        FieldType::Uint16 => "u16".to_string(),
+        FieldType::Uint32 => "u32".to_string(),
+        FieldType::Uint64 => "u64".to_string(),
+        FieldType::Float32 => "f32".to_string(),
+        FieldType::Float64 => "f64".to_string(),
+        FieldType::String => "string".to_string(),
+        FieldType::BoundedString(capacity) => format!("string_{}", capacity),
+        FieldType::Message(schema) => schema.type_name.clone(),
+        FieldType::Optional(inner) => {
+            format!("option_{}", field_type_generic_arg_name(inner.as_ref()))
+        }
+        FieldType::Enum(schema) => schema.type_name.clone(),
+        FieldType::Array(inner, len) => {
+            format!(
+                "array_{}_{}",
+                len,
+                field_type_generic_arg_name(inner.as_ref())
+            )
+        }
+        FieldType::Sequence(inner) => {
+            format!("vec_{}", field_type_generic_arg_name(inner.as_ref()))
+        }
+        FieldType::BoundedSequence(inner, max) => {
+            format!(
+                "vec_{}_{}",
+                max,
+                field_type_generic_arg_name(inner.as_ref())
+            )
+        }
+    }
+}
+
+pub fn format_generic_message_type_name(
+    base_type_name: &str,
+    generic_arg_names: &[String],
+) -> String {
+    if generic_arg_names.is_empty() {
+        return base_type_name.to_string();
+    }
+
+    let mut parts = base_type_name.rsplitn(2, '/');
+    let leaf_name = parts.next().unwrap_or(base_type_name);
+    let prefix = parts.next().unwrap_or_default();
+
+    let mut suffix = generic_arg_names
+        .iter()
+        .map(|name| sanitize_generic_name_fragment(name))
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>()
+        .join("__");
+
+    if suffix.is_empty() {
+        suffix = short_stable_hash(base_type_name);
+    } else if suffix.len() > 96 {
+        let hash = short_stable_hash(&suffix);
+        suffix.truncate(72);
+        suffix.push_str("__");
+        suffix.push_str(&hash);
+    }
+
+    let qualified_leaf = format!("{}__{}", leaf_name, suffix);
+    if prefix.is_empty() {
+        qualified_leaf
+    } else {
+        format!("{}/{}", prefix, qualified_leaf)
+    }
+}
+
 pub trait FieldTypeInfo {
     fn field_type() -> crate::dynamic::FieldType;
+
+    fn generic_arg_name() -> String {
+        field_type_generic_arg_name(&Self::field_type())
+    }
 }
 
 /// Trait for ROS messages that provides message metadata
@@ -135,6 +248,55 @@ pub trait WithTypeInfo: MessageTypeInfo {}
 impl<T: MessageTypeInfo> FieldTypeInfo for T {
     fn field_type() -> crate::dynamic::FieldType {
         <T as MessageTypeInfo>::field_type()
+    }
+
+    fn generic_arg_name() -> String {
+        <T as MessageTypeInfo>::type_name().to_string()
+    }
+}
+
+macro_rules! impl_primitive_field_type_info {
+    ($ty:ty, $field_type:expr, $generic_arg_name:expr) => {
+        impl FieldTypeInfo for $ty {
+            fn field_type() -> crate::dynamic::FieldType {
+                $field_type
+            }
+
+            fn generic_arg_name() -> String {
+                $generic_arg_name.to_string()
+            }
+        }
+    };
+}
+
+impl_primitive_field_type_info!(bool, FieldType::Bool, "bool");
+impl_primitive_field_type_info!(i8, FieldType::Int8, "i8");
+impl_primitive_field_type_info!(u8, FieldType::Uint8, "u8");
+impl_primitive_field_type_info!(i16, FieldType::Int16, "i16");
+impl_primitive_field_type_info!(u16, FieldType::Uint16, "u16");
+impl_primitive_field_type_info!(i32, FieldType::Int32, "i32");
+impl_primitive_field_type_info!(u32, FieldType::Uint32, "u32");
+impl_primitive_field_type_info!(i64, FieldType::Int64, "i64");
+impl_primitive_field_type_info!(u64, FieldType::Uint64, "u64");
+impl_primitive_field_type_info!(f32, FieldType::Float32, "f32");
+impl_primitive_field_type_info!(f64, FieldType::Float64, "f64");
+impl_primitive_field_type_info!(String, FieldType::String, "string");
+
+impl<T: FieldTypeInfo> FieldTypeInfo for Vec<T> {
+    fn field_type() -> crate::dynamic::FieldType {
+        FieldType::Sequence(Box::new(T::field_type()))
+    }
+}
+
+impl<T: FieldTypeInfo> FieldTypeInfo for Option<T> {
+    fn field_type() -> crate::dynamic::FieldType {
+        FieldType::Optional(Box::new(T::field_type()))
+    }
+}
+
+impl<T: FieldTypeInfo, const N: usize> FieldTypeInfo for [T; N] {
+    fn field_type() -> crate::dynamic::FieldType {
+        FieldType::Array(Box::new(T::field_type()), N)
     }
 }
 

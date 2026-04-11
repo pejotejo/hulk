@@ -111,7 +111,7 @@ pub use entity::{TypeHash, TypeInfo};
 pub use extended_schema::ExtendedMessageTypeInfo;
 pub use ros_msg::{
     ActionTypeInfo, FieldTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
-    canonical_type_name_to_dds, dds_type_name_to_canonical,
+    canonical_type_name_to_dds, dds_type_name_to_canonical, format_generic_message_type_name,
 };
 pub use ros_z_derive::{ExtendedMessageTypeInfo, MessageTypeInfo};
 pub use zbuf::ZBuf;

@@ -1,0 +1,5 @@
+error: ExtendedMessageTypeInfo derive does not support generic enums in v1
+ --> tests/ui/message_type_info/generic_enum.rs:6:17
+  |
+6 | enum GenericEnum<T> {
+  |                 ^^^
