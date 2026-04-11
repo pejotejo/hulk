@@ -5,7 +5,7 @@ use ros_z::{
     attachment::Attachment,
     context::ZContextBuilder,
     ros_msg::MessageTypeInfo,
-    time::{ZClock, ZDuration, ZTime},
+    time::{Duration, ZClock, ZTime},
 };
 use ros_z_msgs::std_msgs::ByteMultiArray;
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,7 @@ async fn test_large_payload() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_logical_clock_is_used_for_attachment_timestamps() {
     let clock = ZClock::logical(ZTime::zero());
-    clock.advance(ZDuration::from_secs(5)).unwrap();
+    clock.advance(Duration::from_secs(5)).unwrap();
 
     let ctx = ZContextBuilder::default()
         .with_clock(clock.clone())

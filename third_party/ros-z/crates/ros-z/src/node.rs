@@ -513,7 +513,7 @@ impl ZNode {
     ///
     /// This is a thin convenience wrapper around [`crate::time::ZClock::timer`]
     /// so node code can express periodic work directly from the node handle.
-    pub fn create_timer(&self, period: impl Into<crate::time::ZDuration>) -> crate::time::ZTimer {
+    pub fn create_timer(&self, period: impl Into<Duration>) -> crate::time::ZTimer {
         self.clock.timer(period)
     }
 

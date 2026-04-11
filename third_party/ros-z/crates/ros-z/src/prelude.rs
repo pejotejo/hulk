@@ -66,4 +66,4 @@ pub use crate::lifecycle::{
 };
 
 /// Time and clock support.
-pub use crate::time::{ZClock, ZDuration, ZInterval, ZSleep, ZTime, ZTimer};
+pub use crate::time::{ZClock, ZInterval, ZSleep, ZTime, ZTimer};

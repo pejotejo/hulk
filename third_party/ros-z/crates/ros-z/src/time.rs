@@ -17,41 +17,6 @@ use crate::{
     dynamic::{FieldSchema, FieldType, MessageSchema, MessageSchemaTypeDescription},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ZDuration(Duration);
-
-impl ZDuration {
-    pub fn from_secs(secs: u64) -> Self {
-        Self(Duration::from_secs(secs))
-    }
-
-    pub fn from_millis(millis: u64) -> Self {
-        Self(Duration::from_millis(millis))
-    }
-
-    pub fn as_std(self) -> Duration {
-        self.0
-    }
-}
-
-impl Default for ZDuration {
-    fn default() -> Self {
-        Self(Duration::ZERO)
-    }
-}
-
-impl From<Duration> for ZDuration {
-    fn from(value: Duration) -> Self {
-        Self(value)
-    }
-}
-
-impl From<ZDuration> for Duration {
-    fn from(value: ZDuration) -> Self {
-        value.0
-    }
-}
-
 /// A clock-relative instant used throughout ros-z.
 ///
 /// `ZTime` is intentionally generic: it represents an instant on some clock's
@@ -160,20 +125,20 @@ impl ZTime {
         self.as_nanos()
     }
 
-    pub fn saturating_add(self, duration: ZDuration) -> Self {
+    pub fn saturating_add(self, duration: Duration) -> Self {
         Self {
-            since_origin: self.since_origin.saturating_add(duration.0),
+            since_origin: self.since_origin.saturating_add(duration),
         }
     }
 
-    pub fn saturating_sub(self, duration: ZDuration) -> Self {
+    pub fn saturating_sub(self, duration: Duration) -> Self {
         Self {
-            since_origin: self.since_origin.saturating_sub(duration.0),
+            since_origin: self.since_origin.saturating_sub(duration),
         }
     }
 
-    pub fn duration_since(self, earlier: ZTime) -> ZDuration {
-        ZDuration(self.since_origin.saturating_sub(earlier.since_origin))
+    pub fn duration_since(self, earlier: ZTime) -> Duration {
+        self.since_origin.saturating_sub(earlier.since_origin)
     }
 }
 
@@ -183,27 +148,11 @@ impl From<SystemTime> for ZTime {
     }
 }
 
-impl Add<ZDuration> for ZTime {
-    type Output = Self;
-
-    fn add(self, rhs: ZDuration) -> Self::Output {
-        self.saturating_add(rhs)
-    }
-}
-
 impl Add<Duration> for ZTime {
     type Output = Self;
 
     fn add(self, rhs: Duration) -> Self::Output {
-        self.saturating_add(rhs.into())
-    }
-}
-
-impl Sub<ZDuration> for ZTime {
-    type Output = Self;
-
-    fn sub(self, rhs: ZDuration) -> Self::Output {
-        self.saturating_sub(rhs)
+        self.saturating_add(rhs)
     }
 }
 
@@ -211,7 +160,7 @@ impl Sub<Duration> for ZTime {
     type Output = Self;
 
     fn sub(self, rhs: Duration) -> Self::Output {
-        self.saturating_sub(rhs.into())
+        self.saturating_sub(rhs)
     }
 }
 
@@ -320,7 +269,7 @@ impl ZClock {
         }
     }
 
-    pub fn advance(&self, delta: ZDuration) -> Result<ZTime, ClockError> {
+    pub fn advance(&self, delta: Duration) -> Result<ZTime, ClockError> {
         match self.inner.as_ref() {
             ClockInner::Wallclock => Err(ClockError::NotLogical),
             ClockInner::Logical(state) => {
@@ -367,12 +316,12 @@ impl ZClock {
         }
     }
 
-    pub fn sleep(&self, duration: impl Into<ZDuration>) -> ZSleep {
+    pub fn sleep(&self, duration: impl Into<Duration>) -> ZSleep {
         let deadline = self.now().saturating_add(duration.into());
         self.sleep_until(deadline)
     }
 
-    pub fn interval(&self, period: impl Into<ZDuration>) -> ZInterval {
+    pub fn interval(&self, period: impl Into<Duration>) -> ZInterval {
         let period = period.into();
         ZInterval {
             clock: self.clone(),
@@ -386,7 +335,7 @@ impl ZClock {
     /// Unlike [`ZInterval`], a [`ZTimer`] exposes convenience methods to inspect
     /// and reset its cadence, making it a better fit for long-lived robotics
     /// tasks that need explicit periodic scheduling.
-    pub fn timer(&self, period: impl Into<ZDuration>) -> ZTimer {
+    pub fn timer(&self, period: impl Into<Duration>) -> ZTimer {
         ZTimer::new(self.clone(), period)
     }
 }
@@ -406,7 +355,7 @@ impl Future for ZSleep {
 
 pub struct ZInterval {
     clock: ZClock,
-    period: ZDuration,
+    period: Duration,
     next_deadline: ZTime,
 }
 
@@ -422,12 +371,12 @@ impl ZInterval {
 #[derive(Debug, Clone)]
 pub struct ZTimer {
     clock: ZClock,
-    period: ZDuration,
+    period: Duration,
     start: ZTime,
 }
 
 impl ZTimer {
-    pub fn new(clock: ZClock, period: impl Into<ZDuration>) -> Self {
+    pub fn new(clock: ZClock, period: impl Into<Duration>) -> Self {
         let period = period.into();
         Self {
             start: clock.now(),
@@ -436,7 +385,7 @@ impl ZTimer {
         }
     }
 
-    pub fn period(&self) -> ZDuration {
+    pub fn period(&self) -> Duration {
         self.period
     }
 
@@ -448,7 +397,7 @@ impl ZTimer {
         self.start = self.clock.now();
     }
 
-    pub fn set_period(&mut self, period: impl Into<ZDuration>) {
+    pub fn set_period(&mut self, period: impl Into<Duration>) {
         self.period = period.into();
     }
 
@@ -477,13 +426,13 @@ mod tests {
     #[tokio::test]
     async fn logical_clock_can_advance_manually() {
         let clock = ZClock::logical(ZTime::zero());
-        let mut interval = clock.interval(ZDuration::from_secs(1));
+        let mut interval = clock.interval(Duration::from_secs(1));
 
         let waiter = tokio::spawn(async move { interval.tick().await });
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
 
-        clock.advance(ZDuration::from_secs(1)).unwrap();
+        clock.advance(Duration::from_secs(1)).unwrap();
         let tick = waiter.await.unwrap();
         assert_eq!(tick, ZTime::from_nanos(1_000_000_000));
     }
@@ -491,26 +440,26 @@ mod tests {
     #[tokio::test]
     async fn logical_sleep_follows_logical_time() {
         let clock = ZClock::logical(ZTime::zero());
-        let sleep = clock.sleep(ZDuration::from_millis(10));
+        let sleep = clock.sleep(Duration::from_millis(10));
 
         let waiter = tokio::spawn(sleep);
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
 
-        clock.advance(ZDuration::from_millis(10)).unwrap();
+        clock.advance(Duration::from_millis(10)).unwrap();
         waiter.await.unwrap();
     }
 
     #[tokio::test]
     async fn logical_ztimer_follows_logical_time() {
         let clock = ZClock::logical(ZTime::zero());
-        let mut timer = clock.timer(ZDuration::from_millis(10));
+        let mut timer = clock.timer(Duration::from_millis(10));
 
         let waiter = tokio::spawn(async move { timer.tick().await });
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
 
-        clock.advance(ZDuration::from_millis(10)).unwrap();
+        clock.advance(Duration::from_millis(10)).unwrap();
         let tick = waiter.await.unwrap();
         assert_eq!(tick, ZTime::from_nanos(10_000_000));
     }
@@ -518,10 +467,10 @@ mod tests {
     #[test]
     fn ztimer_reset_uses_current_clock_time() {
         let clock = ZClock::logical(ZTime::zero());
-        let mut timer = clock.timer(ZDuration::from_secs(2));
+        let mut timer = clock.timer(Duration::from_secs(2));
         assert_eq!(timer.deadline(), ZTime::from_nanos(2_000_000_000));
 
-        clock.advance(ZDuration::from_secs(5)).unwrap();
+        clock.advance(Duration::from_secs(5)).unwrap();
         timer.reset();
 
         assert_eq!(timer.deadline(), ZTime::from_nanos(7_000_000_000));
@@ -530,9 +479,9 @@ mod tests {
     #[test]
     fn ztimer_set_period_before_first_tick_preserves_creation_anchor() {
         let clock = ZClock::logical(ZTime::zero());
-        let mut timer = clock.timer(ZDuration::from_secs(2));
+        let mut timer = clock.timer(Duration::from_secs(2));
 
-        timer.set_period(ZDuration::from_secs(5));
+        timer.set_period(Duration::from_secs(5));
 
         assert_eq!(timer.deadline(), ZTime::from_nanos(5_000_000_000));
     }
@@ -540,16 +489,16 @@ mod tests {
     #[tokio::test]
     async fn ztimer_set_period_after_tick_preserves_last_fire_phase() {
         let clock = ZClock::logical(ZTime::zero());
-        let mut timer = clock.timer(ZDuration::from_secs(2));
+        let mut timer = clock.timer(Duration::from_secs(2));
 
         let waiter = tokio::spawn(async move {
             let first_tick = timer.tick().await;
-            timer.set_period(ZDuration::from_secs(5));
+            timer.set_period(Duration::from_secs(5));
             (first_tick, timer.deadline())
         });
 
         tokio::task::yield_now().await;
-        clock.advance(ZDuration::from_secs(2)).unwrap();
+        clock.advance(Duration::from_secs(2)).unwrap();
 
         let (first_tick, next_deadline) = waiter.await.unwrap();
         assert_eq!(first_tick, ZTime::from_nanos(2_000_000_000));
@@ -562,31 +511,31 @@ mod tests {
         // future is ever polled.  Without the enable() fix this would hang forever
         // because notify_waiters() fires before the future registers as a waiter.
         let clock = ZClock::logical(ZTime::zero());
-        let sleep = clock.sleep(ZDuration::from_millis(10));
+        let sleep = clock.sleep(Duration::from_millis(10));
         // Advance BEFORE yielding — the future has not been polled yet.
-        clock.advance(ZDuration::from_millis(10)).unwrap();
+        clock.advance(Duration::from_millis(10)).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(1), sleep)
             .await
             .expect("sleep should resolve without hanging");
     }
 
-    // --- ZDuration ---
+    // --- Duration ---
 
     #[test]
-    fn zduration_from_secs_and_as_std() {
-        let d = ZDuration::from_secs(3);
+    fn duration_from_secs_and_as_std() {
+        let d = Duration::from_secs(3);
         assert_eq!(d.as_std(), Duration::from_secs(3));
     }
 
     #[test]
-    fn zduration_default_is_zero() {
-        assert_eq!(ZDuration::default().as_std(), Duration::ZERO);
+    fn duration_default_is_zero() {
+        assert_eq!(Duration::default().as_std(), Duration::ZERO);
     }
 
     #[test]
-    fn zduration_roundtrip_from_std() {
+    fn duration_roundtrip_from_std() {
         let std_d = Duration::from_millis(500);
-        let zd = ZDuration::from(std_d);
+        let zd = Duration::from(std_d);
         let back: Duration = zd.into();
         assert_eq!(back, std_d);
     }
@@ -615,7 +564,7 @@ mod tests {
     #[test]
     fn ztime_saturating_add_sub() {
         let t = ZTime::from_nanos(5_000_000_000);
-        let d = ZDuration::from_secs(2);
+        let d = Duration::from_secs(2);
         assert_eq!(t.saturating_add(d).as_nanos(), 7_000_000_000);
         assert_eq!(t.saturating_sub(d).as_nanos(), 3_000_000_000);
         // sub below zero saturates
@@ -708,7 +657,7 @@ mod tests {
     #[test]
     fn advance_on_wallclock_errors() {
         let err = ZClock::wallclock()
-            .advance(ZDuration::from_secs(1))
+            .advance(Duration::from_secs(1))
             .unwrap_err();
         assert!(matches!(err, ClockError::NotLogical));
     }
@@ -717,6 +666,6 @@ mod tests {
 
     #[tokio::test]
     async fn wallclock_sleep_zero_completes() {
-        ZClock::wallclock().sleep(ZDuration::default()).await;
+        ZClock::wallclock().sleep(Duration::default()).await;
     }
 }
