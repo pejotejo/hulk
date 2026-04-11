@@ -1,17 +1,14 @@
-use std::{sync::Arc, time::Duration};
+use std::{f32::consts::PI, sync::Arc, time::Duration};
 
 use color_eyre::Result;
+use linear_algebra::{Rotation2, Vector2};
 use ros_z::{Builder, context::ZContext};
 use ros_z_config::prelude::*;
 
 use crate::{
-    IntoEyreResultExt,
-    config::BehaviorConfig,
-    msgs::{
-        BUTTON_EVENT_DOUBLE_CLICK, BUTTON_EVENT_LONG_PRESS_START, BUTTON_EVENT_SINGLE_CLICK,
-        DemoMode, MotionIntent, RobotState, timestamp_now,
-    },
+    IntoEyreResultExt, config::BehaviorConfig, msgs::maybe_ball_position::MaybeBallPosition,
 };
+use types::motion_command::{HeadMotion, ImageRegion, MotionCommand};
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
@@ -26,9 +23,9 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     config
         .add_validation_hook(|cfg: &BehaviorConfig| {
             for (name, value, min, max) in [
-                ("behavior.walk.forward", cfg.walk.forward, -1.0, 1.0),
-                ("behavior.walk.lateral", cfg.walk.lateral, -1.0, 1.0),
-                ("behavior.walk.angular", cfg.walk.angular, -2.0, 2.0),
+                ("behavior.walk.forward", cfg.walk.forward, 0.0, 5.0),
+                ("behavior.walk.angular_scale", cfg.walk.angular_scale, 0.0, 5.0),
+                ("behavior.walk.angular_max", cfg.walk.angular_max, 0.0, 5.0),
             ] {
                 if !value.is_finite() {
                     return Err(format!("{name} must be finite"));
@@ -41,65 +38,44 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         })
         .into_eyre()?;
 
-    let state_sub = node
-        .create_sub::<RobotState>("state/robot_state")
+    let maybe_ball_position_sub = node
+        .create_sub::<MaybeBallPosition>("ball_filter/ball_position")
         .build()
         .into_eyre()?;
-    let intent_pub = node
-        .create_pub::<MotionIntent>("behavior/motion_intent")
+    let motion_command_pub = node
+        .create_pub::<MotionCommand>("behavior/motion_command")
         .build()
         .into_eyre()?;
 
-    let mut latest_state: Option<RobotState> = None;
-    let mut current_mode = DemoMode::Stand;
-    let mut last_button_timestamp_ns = 0u64;
+    let mut maybe_ball_position = MaybeBallPosition { position: None };
     let mut timer = node.clock().timer(Duration::from_secs_f64(1.0 / 30.0));
 
     loop {
         let cfg = config.snapshot().typed().clone();
 
         tokio::select! {
-            msg = state_sub.async_recv() => {
-                    let state = msg.into_eyre()?;
-                    if state.has_button_event {
-                        let button_event = &state.last_button_event;
-                        if cfg.mode.allow_button_override && button_event.timestamp_ns > last_button_timestamp_ns {
-                            current_mode = match button_event.event_type.as_str() {
-                                BUTTON_EVENT_SINGLE_CLICK => cfg.buttons.single_click_mode,
-                                BUTTON_EVENT_DOUBLE_CLICK => cfg.buttons.double_click_mode,
-                                BUTTON_EVENT_LONG_PRESS_START => cfg.buttons.long_press_mode,
-                                _ => current_mode,
-                            };
-                            last_button_timestamp_ns = button_event.timestamp_ns;
-                        }
-                    }
-                    latest_state = Some(state);
+            msg = maybe_ball_position_sub.async_recv() => {
+                    maybe_ball_position = msg.into_eyre()?;
+               }
+            _ = timer.tick() => {
+
+                let mut motion_command = MotionCommand::Stand{ head: HeadMotion::LookAround};
+
+                if let Some(ball_position) = maybe_ball_position.position  {
+                    let ball_coordinates_in_ground = ball_position.position.coords();
+
+                    let normalized_angle_to_ball =
+                    Rotation2::rotation_between(Vector2::x_axis(), ball_coordinates_in_ground).angle()
+                        / (0.5 * PI);
+
+                    motion_command = MotionCommand::WalkWithVelocity {
+                        head: HeadMotion::LookAt { target: ball_position.position, image_region_target: ImageRegion::Bottom },
+                        velocity: ball_coordinates_in_ground.normalize() * cfg.walk.forward,
+                        angular_velocity: (normalized_angle_to_ball * cfg.walk.angular_scale).clamp(-cfg.walk.angular_max, cfg.walk.angular_max),
+                    };
                 }
-                _ = timer.tick() => {
-                let default_mode = cfg.mode.default;
-                if !cfg.mode.allow_button_override {
-                    current_mode = default_mode;
-                }
+                motion_command_pub.async_publish(&motion_command).await.into_eyre()?;
 
-                let mode = match latest_state.as_ref() {
-                    Some(state) if !state.is_upright() => DemoMode::Stand,
-                    Some(_) => current_mode,
-                    None => default_mode,
-                };
-
-                let walk = if matches!(mode, DemoMode::Walk) {
-                    (cfg.walk.forward, cfg.walk.lateral, cfg.walk.angular)
-                } else {
-                    (0.0, 0.0, 0.0)
-                };
-
-                intent_pub.async_publish(&MotionIntent {
-                    timestamp_ns: timestamp_now(),
-                    mode,
-                    forward: walk.0,
-                    lateral: walk.1,
-                    angular: walk.2,
-                }).await.into_eyre()?;
             }
         }
     }

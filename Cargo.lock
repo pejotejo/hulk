@@ -5126,6 +5126,8 @@ dependencies = [
  "booster_sdk",
  "clap",
  "color-eyre",
+ "coordinate_systems",
+ "linear_algebra",
  "log",
  "ros-z",
  "ros-z-config",
@@ -5135,6 +5137,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "types",
  "zenoh",
 ]
 
@@ -11019,6 +11022,7 @@ dependencies = [
  "num-traits",
  "ordered-float 4.6.0",
  "path_serde",
+ "ros-z",
  "ros2",
  "serde",
  "splines",

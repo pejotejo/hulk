@@ -1,16 +1,7 @@
 {
-  mode: {
-    default: "Stand",
-    allow_button_override: true,
-  },
-  buttons: {
-    single_click_mode: "Walk",
-    double_click_mode: "Stand",
-    long_press_mode: "Idle",
-  },
   walk: {
-    forward: 0.2,
-    lateral: 0.0,
-    angular: 0.0,
+    forward: 1.0,
+    angular_scale: 2.0,
+    angular_max: 1.0,
   },
 }

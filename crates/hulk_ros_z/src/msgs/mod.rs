@@ -5,6 +5,7 @@ use ros_z_msgs::{builtin_interfaces::Time, std_msgs::Header};
 pub mod button_event;
 pub mod fall_down_state;
 pub mod low_level_command;
+pub mod maybe_ball_position;
 pub mod motion_intent;
 pub mod odometry_state;
 pub mod robot_state;

@@ -1,3 +1,7 @@
+use ros_z::{
+    MessageTypeInfo, WithTypeInfo,
+    msg::{SerdeCdrSerdes, ZMessage},
+};
 use serde::{Deserialize, Serialize};
 
 use coordinate_systems::{Field, Ground};
@@ -101,6 +105,21 @@ pub enum MotionCommand {
         kick_power: KickPower,
     },
 }
+
+impl MessageTypeInfo for MotionCommand {
+    fn type_name() -> &'static str {
+        "hulk_ros_z/msg/MotionCommand"
+    }
+
+    fn type_hash() -> ros_z::TypeHash {
+        ros_z::TypeHash::zero()
+    }
+}
+
+impl ZMessage for MotionCommand {
+    type Serdes = SerdeCdrSerdes<Self>;
+}
+impl WithTypeInfo for MotionCommand {}
 
 impl MotionCommand {
     pub fn head_motion(&self) -> Option<HeadMotion> {
