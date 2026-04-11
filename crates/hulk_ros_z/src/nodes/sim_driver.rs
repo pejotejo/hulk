@@ -13,7 +13,6 @@ use crate::{
         BUTTON_EVENT_SINGLE_CLICK, BUTTON_F1, ButtonEvent, FALL_DOWN_IS_READY, FallDownState,
         OdometryState, header, timestamp_now,
     },
-    topics,
 };
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -51,23 +50,23 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let odom_pub = node
-        .create_pub::<OdometryState>(topics::SENSORS_ODOMETRY)
+        .create_pub::<OdometryState>("sensors/odometry")
         .build()
         .into_eyre()?;
     let fall_pub = node
-        .create_pub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
+        .create_pub::<FallDownState>("sensors/fall_down_state")
         .build()
         .into_eyre()?;
     let button_pub = node
-        .create_pub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
+        .create_pub::<ButtonEvent>("sensors/button_event")
         .build()
         .into_eyre()?;
     let image_pub = node
-        .create_pub::<Image>(topics::SENSORS_IMAGE)
+        .create_pub::<Image>("sensors/image")
         .build()
         .into_eyre()?;
     let camera_info_pub = node
-        .create_pub::<CameraInfo>(topics::SENSORS_CAMERA_INFO)
+        .create_pub::<CameraInfo>("sensors/camera_info")
         .build()
         .into_eyre()?;
 

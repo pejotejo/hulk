@@ -11,7 +11,6 @@ use crate::{
         BUTTON_EVENT_DOUBLE_CLICK, BUTTON_EVENT_LONG_PRESS_START, BUTTON_EVENT_SINGLE_CLICK,
         DemoMode, MotionIntent, RobotState, timestamp_now,
     },
-    topics,
 };
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -43,11 +42,11 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let state_sub = node
-        .create_sub::<RobotState>(topics::STATE_ROBOT_STATE)
+        .create_sub::<RobotState>("state/robot_state")
         .build()
         .into_eyre()?;
     let intent_pub = node
-        .create_pub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
+        .create_pub::<MotionIntent>("behavior/motion_intent")
         .build()
         .into_eyre()?;
 

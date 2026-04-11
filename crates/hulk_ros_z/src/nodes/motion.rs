@@ -9,7 +9,6 @@ use crate::{
     IntoEyreResultExt,
     config::MotionConfig,
     msgs::{LowLevelCommand, MotionIntent, timestamp_now},
-    topics,
 };
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -44,11 +43,11 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let intent_sub = node
-        .create_sub::<MotionIntent>(topics::BEHAVIOR_MOTION_INTENT)
+        .create_sub::<MotionIntent>("behavior/motion_intent")
         .build()
         .into_eyre()?;
     let command_pub = node
-        .create_pub::<LowLevelCommand>(topics::CONTROL_LOW_LEVEL_COMMAND)
+        .create_pub::<LowLevelCommand>("control/low_level_command")
         .build()
         .into_eyre()?;
 

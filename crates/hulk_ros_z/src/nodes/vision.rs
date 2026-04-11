@@ -10,7 +10,6 @@ use crate::{
     IntoEyreResultExt,
     config::VisionConfig,
     msgs::{VisionStatus, timestamp_now},
-    topics,
 };
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -36,15 +35,15 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let image_sub = node
-        .create_sub::<Image>(topics::SENSORS_IMAGE)
+        .create_sub::<Image>("sensors/image")
         .build()
         .into_eyre()?;
     let camera_info_sub = node
-        .create_sub::<CameraInfo>(topics::SENSORS_CAMERA_INFO)
+        .create_sub::<CameraInfo>("sensors/camera_info")
         .build()
         .into_eyre()?;
     let status_pub = node
-        .create_pub::<VisionStatus>(topics::VISION_STATUS)
+        .create_pub::<VisionStatus>("vision/status")
         .build()
         .into_eyre()?;
 

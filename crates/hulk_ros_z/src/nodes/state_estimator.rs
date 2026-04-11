@@ -8,7 +8,6 @@ use crate::{
     IntoEyreResultExt,
     config::StateEstimatorConfig,
     msgs::{ButtonEvent, FallDownState, OdometryState, RobotState, timestamp_now},
-    topics,
 };
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -23,19 +22,19 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let odom_sub = node
-        .create_sub::<OdometryState>(topics::SENSORS_ODOMETRY)
+        .create_sub::<OdometryState>("sensors/odometry")
         .build()
         .into_eyre()?;
     let fall_sub = node
-        .create_sub::<FallDownState>(topics::SENSORS_FALL_DOWN_STATE)
+        .create_sub::<FallDownState>("sensors/fall_down_state")
         .build()
         .into_eyre()?;
     let button_sub = node
-        .create_sub::<ButtonEvent>(topics::SENSORS_BUTTON_EVENT)
+        .create_sub::<ButtonEvent>("sensors/button_event")
         .build()
         .into_eyre()?;
     let robot_state_pub = node
-        .create_pub::<RobotState>(topics::STATE_ROBOT_STATE)
+        .create_pub::<RobotState>("state/robot_state")
         .build()
         .into_eyre()?;
 
