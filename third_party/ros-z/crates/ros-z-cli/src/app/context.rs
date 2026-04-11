@@ -36,7 +36,7 @@ impl AppContext {
         };
 
         let context = ZContextBuilder::default()
-            .with_mode("peer")
+            .with_mode("client")
             .with_connect_endpoints([router])
             .with_domain_id(domain_id)
             .keyexpr_format(keyexpr_format)
