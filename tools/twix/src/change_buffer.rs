@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
-use color_eyre::eyre::{self, eyre};
 use color_eyre::Result;
+use color_eyre::eyre::{self, eyre};
 use tokio::sync::watch;
 
 use crate::backend::TwixTime;

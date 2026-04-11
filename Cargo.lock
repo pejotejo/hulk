@@ -10936,6 +10936,7 @@ dependencies = [
  "rmp-serde",
  "ros-z",
  "ros-z-config",
+ "ros-z-msgs",
  "ros2",
  "serde",
  "serde_json",
@@ -10945,6 +10946,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "types",
+ "zenoh-buffers",
 ]
 
 [[package]]

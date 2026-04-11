@@ -1,9 +1,9 @@
-use std::{env::temp_dir, fs::create_dir_all, path::PathBuf, sync::Arc};
+use std::{env::temp_dir, fs::create_dir_all, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use color_eyre::{
-    eyre::{bail, eyre, Context as _},
     Result,
+    eyre::{Context as _, bail, eyre},
 };
 use eframe::egui::{
     ColorImage, ComboBox, Context, Response, SizeHint, TextureId, TextureOptions, Ui, Widget,
@@ -12,14 +12,20 @@ use geometry::rectangle::Rectangle;
 use image::{EncodableLayout, RgbImage};
 use linear_algebra::{point, vector};
 use log::{info, warn};
-use ros2::sensor_msgs::image::Image;
-use serde_json::{json, Value};
+use ros_z_msgs::sensor_msgs::Image as RosZImage;
+use ros2::{
+    builtin_interfaces::time::Time as Ros2Time, sensor_msgs::image::Image as Ros2Image,
+    std_msgs::header::Header as Ros2Header,
+};
+use serde_json::{Value, json};
+use zenoh_buffers::buffer::SplitBuffer;
 
 use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
 
 use crate::{
     panel::{Panel, PanelCreationContext},
     robot::Robot,
+    topic_completion_edit::TopicCompletionEdit,
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
     zoom_and_pan::ZoomAndPanTransform,
@@ -31,9 +37,16 @@ pub mod overlay;
 mod overlays;
 
 enum ImageBuffer {
-    Raw(BufferHandle<Image>),
+    LegacyRaw(BufferHandle<Ros2Image>),
     YCbCr(BufferHandle<YCbCr422Image>),
     Jpeg(BufferHandle<JpegImage>),
+    TopicRaw(BufferHandle<RosZImage>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageSourceMode {
+    Topic,
+    Legacy,
 }
 
 pub struct ImagePanel {
@@ -41,19 +54,87 @@ pub struct ImagePanel {
     image_buffer: ImageBuffer,
     overlays: Overlays,
     zoom_and_pan: ZoomAndPanTransform,
-    last_image_path: String,
+    source_mode: ImageSourceMode,
+    use_jpeg: bool,
     current_image_path: String,
-    current_image_label: String,
+    current_topic: String,
 }
 
-fn subscribe_image(robot: &Arc<Robot>, is_jpeg: bool, image_path: &str) -> ImageBuffer {
+const DEFAULT_IMAGE_PATH: &str = "Vision.main_outputs.image";
+const DEFAULT_TOPIC: &str = "/alpha/sensors/image";
+const LEGACY_YCBCR_PATH: &str = "Vision.main_outputs.ycbcr422_image";
+
+fn subscribe_image(
+    robot: &Arc<Robot>,
+    source_mode: ImageSourceMode,
+    is_jpeg: bool,
+    image_path: &str,
+    topic: &str,
+) -> ImageBuffer {
+    if source_mode == ImageSourceMode::Topic {
+        return ImageBuffer::TopicRaw(robot.subscribe_topic_value(topic, Duration::ZERO));
+    }
+
     if is_jpeg {
         let path = format!("{image_path}.jpeg");
         ImageBuffer::Jpeg(robot.subscribe_value(path))
     } else if image_path.ends_with("ycbcr422_image") {
         ImageBuffer::YCbCr(robot.subscribe_value(image_path.to_string()))
     } else {
-        ImageBuffer::Raw(robot.subscribe_value(image_path.to_string()))
+        ImageBuffer::LegacyRaw(robot.subscribe_value(image_path.to_string()))
+    }
+}
+
+impl ImageSourceMode {
+    fn from_value(value: Option<&Value>) -> Self {
+        match value
+            .and_then(|value| value.get("source"))
+            .and_then(Value::as_str)
+        {
+            Some("legacy") => Self::Legacy,
+            Some("topic") => Self::Topic,
+            _ => Self::Topic,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Topic => "topic",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Topic => "ROS-Z Topic",
+            Self::Legacy => "Legacy Path",
+        }
+    }
+}
+
+fn ros_z_image_to_ros2_image(image: RosZImage) -> Ros2Image {
+    Ros2Image {
+        header: Ros2Header {
+            stamp: Ros2Time {
+                sec: image.header.stamp.sec,
+                nanosec: image.header.stamp.nanosec,
+            },
+            frame_id: image.header.frame_id,
+        },
+        height: image.height,
+        width: image.width,
+        encoding: image.encoding,
+        is_bigendian: image.is_bigendian,
+        step: image.step,
+        data: image.data.contiguous().to_vec(),
+    }
+}
+
+fn legacy_image_label(image_path: &str) -> &str {
+    match image_path {
+        DEFAULT_IMAGE_PATH => "Image Left Raw",
+        LEGACY_YCBCR_PATH => "ycbcr422_image",
+        _ => image_path,
     }
 }
 
@@ -61,16 +142,32 @@ impl<'a> Panel<'a> for ImagePanel {
     const NAME: &'static str = "Image";
 
     fn new(context: PanelCreationContext) -> Self {
-        let is_jpeg = context
+        let use_jpeg = context
             .value
             .and_then(|value| value.get("is_jpeg"))
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
+        let source_mode = ImageSourceMode::from_value(context.value);
+        let current_image_path = context
+            .value
+            .and_then(|value| value.get("image_path"))
+            .and_then(Value::as_str)
+            .unwrap_or(DEFAULT_IMAGE_PATH)
+            .to_string();
+        let current_topic = context
+            .value
+            .and_then(|value| value.get("topic"))
+            .and_then(Value::as_str)
+            .unwrap_or(DEFAULT_TOPIC)
+            .to_string();
 
-        let default_image_path = "Vision.main_outputs.image".to_string();
-        let default_image_label = "Image Left Raw".to_string();
-
-        let image_buffer = subscribe_image(&context.robot, is_jpeg, &default_image_path);
+        let image_buffer = subscribe_image(
+            &context.robot,
+            source_mode,
+            use_jpeg,
+            &current_image_path,
+            &current_topic,
+        );
 
         let overlays = Overlays::new(
             context.robot.clone(),
@@ -81,9 +178,10 @@ impl<'a> Panel<'a> for ImagePanel {
             image_buffer,
             overlays,
             zoom_and_pan: ZoomAndPanTransform::default(),
-            current_image_path: default_image_path.clone(),
-            last_image_path: default_image_path,
-            current_image_label: default_image_label,
+            source_mode,
+            use_jpeg,
+            current_image_path,
+            current_topic,
         }
     }
 
@@ -91,8 +189,10 @@ impl<'a> Panel<'a> for ImagePanel {
         let overlays = self.overlays.save();
 
         json!({
-            "is_jpeg": matches!(self.image_buffer, ImageBuffer::Jpeg(_)),
-            "cycler": "Vision",
+            "is_jpeg": self.use_jpeg,
+            "source": self.source_mode.as_str(),
+            "image_path": self.current_image_path.clone(),
+            "topic": self.current_topic.clone(),
             "overlays": overlays,
         })
     }
@@ -107,11 +207,20 @@ fn save_jpeg_image(buffer: &BufferHandle<JpegImage>, path: PathBuf) -> Result<()
     Ok(())
 }
 
-fn save_raw_image(buffer: &BufferHandle<Image>, path: PathBuf) -> Result<()> {
+fn save_raw_image(buffer: &BufferHandle<Ros2Image>, path: PathBuf) -> Result<()> {
     let buffer = buffer
         .get_last_value()?
         .ok_or_else(|| eyre!("no image available"))?;
     buffer.save_to_file(&path)?;
+    info!("image saved to '{}'", path.display());
+    Ok(())
+}
+
+fn save_topic_raw_image(buffer: &BufferHandle<RosZImage>, path: PathBuf) -> Result<()> {
+    let buffer = buffer
+        .get_last_value()?
+        .ok_or_else(|| eyre!("no image available"))?;
+    ros_z_image_to_ros2_image(buffer).save_to_file(&path)?;
     info!("image saved to '{}'", path.display());
     Ok(())
 }
@@ -127,37 +236,62 @@ fn save_ycbcr422_image(buffer: &BufferHandle<YCbCr422Image>, path: PathBuf) -> R
 
 impl Widget for &mut ImagePanel {
     fn ui(self, ui: &mut Ui) -> Response {
+        let topic_state = self.robot.topic_list_state();
+
         ui.horizontal(|ui| {
-            let mut jpeg = matches!(self.image_buffer, ImageBuffer::Jpeg(_));
             self.overlays.combo_box(ui);
-            if ui.checkbox(&mut jpeg, "JPEG").changed() {
-                self.resubscribe(jpeg);
+            let mut source_mode = self.source_mode;
+            ComboBox::from_label("Source")
+                .selected_text(source_mode.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut source_mode, ImageSourceMode::Topic, "ROS-Z Topic");
+                    ui.selectable_value(&mut source_mode, ImageSourceMode::Legacy, "Legacy Path");
+                });
+            if source_mode != self.source_mode {
+                self.source_mode = source_mode;
+                self.resubscribe();
             }
 
-            ComboBox::from_label("Image Topic")
-                .selected_text(self.current_image_label.clone())
-                .show_ui(ui, |ui| {
-                    let mut selectable_item = |value: &str, label: &str| {
-                        let is_selected = self.current_image_path == value;
+            match self.source_mode {
+                ImageSourceMode::Topic => {
+                    ui.label("Topic");
+                    let response = ui.add(TopicCompletionEdit::new(
+                        ui.id().with("image-topic"),
+                        &topic_state,
+                        &mut self.current_topic,
+                    ));
+                    if response.changed() {
+                        self.resubscribe();
+                    }
+                }
+                ImageSourceMode::Legacy => {
+                    if ui.checkbox(&mut self.use_jpeg, "JPEG").changed() {
+                        self.resubscribe();
+                    }
 
-                        if ui.selectable_label(is_selected, label).clicked() {
-                            self.current_image_path = value.to_string();
-                            self.current_image_label = label.to_string();
-                        }
-                    };
+                    ComboBox::from_label("Image")
+                        .selected_text(legacy_image_label(&self.current_image_path))
+                        .show_ui(ui, |ui| {
+                            let mut selectable_item = |value: &str, label: &str| {
+                                let is_selected = self.current_image_path == value;
 
-                    selectable_item("Vision.main_outputs.image", "Image Left Raw");
-                    selectable_item("Vision.main_outputs.ycbcr422_image", "ycbcr422_image");
-                });
-            if self.last_image_path != self.current_image_path {
-                self.resubscribe(jpeg);
-                self.last_image_path = self.current_image_path.clone();
+                                if ui.selectable_label(is_selected, label).clicked() {
+                                    self.current_image_path = value.to_string();
+                                    self.resubscribe();
+                                }
+                            };
+
+                            selectable_item(DEFAULT_IMAGE_PATH, "Image Left Raw");
+                            selectable_item(LEGACY_YCBCR_PATH, "ycbcr422_image");
+                        });
+                }
             }
 
             let maybe_timestamp = match &self.image_buffer {
-                ImageBuffer::Raw(buffer) => buffer.get_last_timestamp(),
+                ImageBuffer::LegacyRaw(buffer) => buffer.get_last_timestamp(),
                 ImageBuffer::Jpeg(buffer) => buffer.get_last_timestamp(),
                 ImageBuffer::YCbCr(buffer) => buffer.get_last_timestamp(),
+                ImageBuffer::TopicRaw(buffer) => buffer.get_last_timestamp(),
             };
             if let Ok(Some(timestamp)) = maybe_timestamp {
                 let date: DateTime<Utc> = timestamp.as_system_time().into();
@@ -171,11 +305,12 @@ impl Widget for &mut ImagePanel {
                 } else {
                     let path = directory.join(format!("image_vision_{time_stamp}.png"));
                     let result = match &self.image_buffer {
-                        ImageBuffer::Raw(buffer) => save_raw_image(buffer, path),
+                        ImageBuffer::LegacyRaw(buffer) => save_raw_image(buffer, path),
                         ImageBuffer::Jpeg(buffer) => {
                             save_jpeg_image(buffer, path.with_extension("jpeg"))
                         }
                         ImageBuffer::YCbCr(buffer) => save_ycbcr422_image(buffer, path),
+                        ImageBuffer::TopicRaw(buffer) => save_topic_raw_image(buffer, path),
                     };
                     if let Err(error) = result {
                         warn!("failed to save image: {error}");
@@ -223,14 +358,20 @@ impl Widget for &mut ImagePanel {
 }
 
 impl ImagePanel {
-    fn resubscribe(&mut self, jpeg: bool) {
-        self.image_buffer = subscribe_image(&self.robot, jpeg, &self.current_image_path);
+    fn resubscribe(&mut self) {
+        self.image_buffer = subscribe_image(
+            &self.robot,
+            self.source_mode,
+            self.use_jpeg,
+            &self.current_image_path,
+            &self.current_topic,
+        );
     }
 
     fn load_latest_texture(&self, context: &Context) -> Result<(TextureId, (u32, u32))> {
         let image_identifier = "bytes://image-vision".to_string();
         match &self.image_buffer {
-            ImageBuffer::Raw(buffer) => {
+            ImageBuffer::LegacyRaw(buffer) => {
                 let ros_image = buffer
                     .get_last_value()?
                     .ok_or_else(|| eyre!("no image available"))?;
@@ -245,6 +386,32 @@ impl ImagePanel {
                 let rgb_image: RgbImage = ros_image
                     .try_into()
                     .map_err(|e: image::ImageError| eyre!(e))?;
+
+                let image = ColorImage::from_rgb(
+                    [rgb_image.width() as usize, rgb_image.height() as usize],
+                    rgb_image.as_bytes(),
+                );
+                let id = context
+                    .load_texture(&image_identifier, image, TextureOptions::NEAREST)
+                    .id();
+
+                Ok((id, (rgb_image.width(), rgb_image.height())))
+            }
+            ImageBuffer::TopicRaw(buffer) => {
+                let ros_image = buffer
+                    .get_last_value()?
+                    .ok_or_else(|| eyre!("no image available"))?;
+                if ros_image.height == 0 || ros_image.width == 0 {
+                    bail!(
+                        "Image has no pixels. Dimensions: {}x{}",
+                        ros_image.width,
+                        ros_image.height
+                    );
+                }
+
+                let rgb_image: RgbImage = ros_z_image_to_ros2_image(ros_image)
+                    .try_into()
+                    .map_err(|error: image::ImageError| eyre!(error))?;
 
                 let image = ColorImage::from_rgb(
                     [rgb_image.width() as usize, rgb_image.height() as usize],

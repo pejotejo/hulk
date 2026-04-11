@@ -1,5 +1,9 @@
 use std::{
-    convert::Into, env::current_dir, path::PathBuf, str::FromStr, sync::Arc,
+    convert::Into,
+    env::current_dir,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -11,8 +15,8 @@ use color_eyre::{
 use eframe::{
     App, CreationContext, Frame, NativeOptions, Renderer, Storage,
     egui::{
-        CentralPanel, Context, CornerRadius, Id, Label, Layout, Sense, StrokeKind, TopBottomPanel,
-        TextEdit, Ui, Widget, WidgetText,
+        CentralPanel, Context, CornerRadius, Id, Label, Layout, Sense, StrokeKind, TextEdit,
+        TopBottomPanel, Ui, Widget, WidgetText,
     },
     egui_wgpu::{WgpuConfiguration, WgpuSetup},
     emath::Align,
@@ -399,7 +403,8 @@ impl App for TwixApp {
         if matches!(
             self.robot.connection_status(),
             BackendConnectionStatus::Connected
-        ) && (self.robot.topic_list_state().discovering || self.robot.config_node_list_state().discovering)
+        ) && (self.robot.topic_list_state().discovering
+            || self.robot.config_node_list_state().discovering)
         {
             context.request_repaint_after(Duration::from_millis(250));
         }
@@ -661,7 +666,10 @@ impl App for TwixApp {
         let dock_state = self.dock_state.map_tabs(|tab| tab.save());
 
         storage.set_string("dock_state", to_string(&dock_state).unwrap());
-        storage.set_string(STORAGE_SCHEMA_VERSION_KEY, STORAGE_SCHEMA_VERSION.to_string());
+        storage.set_string(
+            STORAGE_SCHEMA_VERSION_KEY,
+            STORAGE_SCHEMA_VERSION.to_string(),
+        );
         storage.set_string("endpoint", self.endpoint.to_string());
         storage.set_string(
             "connection_intent",

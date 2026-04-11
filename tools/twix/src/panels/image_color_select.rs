@@ -1,12 +1,12 @@
 use std::ops::RangeInclusive;
 
-use color_eyre::{eyre::ContextCompat, Result};
+use color_eyre::{Result, eyre::ContextCompat};
 use coordinate_systems::Pixel;
 use eframe::{
     egui::{
-        self, load::SizedTexture, panel::TopBottomSide, CentralPanel, Color32, ColorImage,
-        ComboBox, Image, PointerButton, Response, Sense, Stroke, TextureOptions, TopBottomPanel,
-        Ui, Widget,
+        self, CentralPanel, Color32, ColorImage, ComboBox, Image, PointerButton, Response, Sense,
+        Stroke, TextureOptions, TopBottomPanel, Ui, Widget, load::SizedTexture,
+        panel::TopBottomSide,
     },
     epaint::Vec2,
 };
@@ -14,10 +14,10 @@ use eframe::{
 use egui_plot::{HLine, Points, VLine};
 use geometry::rectangle::Rectangle;
 use itertools::iproduct;
-use linear_algebra::{point, vector, Point2};
+use linear_algebra::{Point2, point, vector};
 use nalgebra::Similarity2;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use types::{
     color::{Hsv, RgChromaticity, Rgb, YCbCr444},
     field_color::FieldColorParameters,

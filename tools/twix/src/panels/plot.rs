@@ -9,7 +9,7 @@ use egui_plot::{Line, MarkerShape, Plot as EguiPlot, PlotPoints, Points};
 use itertools::Itertools;
 use mlua::{Function, Lua, LuaSerdeExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, to_string_pretty, Value};
+use serde_json::{Value, json, to_string_pretty};
 
 use crate::{
     backend::TwixTime,

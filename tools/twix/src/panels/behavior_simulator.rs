@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use eframe::egui::{Align, Color32, Layout, Response, Slider, Ui, Widget};
 use hulk_widgets::SegmentedControl;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     backend::BackendCapability,
