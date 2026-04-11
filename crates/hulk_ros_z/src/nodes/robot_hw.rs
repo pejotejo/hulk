@@ -1,14 +1,22 @@
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use booster_sdk::{
     client::{BoosterClient, light_control::LightControlClient},
     types::RobotMode,
 };
 use color_eyre::Result;
-use ros_z::{Builder, ExtendedMessageTypeInfo, context::ZContext};
+use ros_z::{
+    Builder, ExtendedMessageTypeInfo, context::ZContext, msg::SerdeCdrSerdes, pubsub::ZPub,
+};
+use ros2::sensor_msgs::image::Image;
 use serde::{Deserialize, Serialize};
 
-use crate::IntoEyreResultExt;
+use crate::{IntoEyreResultExt, x5_receiver::X5Receiver};
+
+const X5_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 127, 10)), 7654);
 
 #[derive(Serialize, Deserialize, ExtendedMessageTypeInfo)]
 #[ros_msg(type_name = "hulk_ros_z/msg/LedCommand")]
@@ -52,6 +60,18 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     //     .bind_config_with_metadata_as::<RobotHwConfig>("robot_hw")
     //     .into_eyre()?;
 
+    // TODO: camera info service
+    let left_image_pub = node
+        .create_pub::<Image>("robot_hw/left_image")
+        .build()
+        .into_eyre()?;
+    let right_image_pub = node
+        .create_pub::<Image>("robot_hw/right_image")
+        .build()
+        .into_eyre()?;
+    tokio::spawn(image_publisher_task(left_image_pub, right_image_pub));
+
+    // TODO: get robot state service
     let led_command_sub = node
         .create_sub::<LedCommand>("robot_hw/led_command")
         .build()
@@ -155,5 +175,23 @@ async fn handle_high_level_command(
             .reset_odometry()
             .await
             .into_eyre(),
+    }
+}
+
+async fn image_publisher_task(
+    left_image_pub: ZPub<Image, SerdeCdrSerdes<Image>>,
+    right_image_pub: ZPub<Image, SerdeCdrSerdes<Image>>,
+) -> Result<()> {
+    let x5_receiver = X5Receiver::new(X5_ADDRESS);
+
+    loop {
+        tokio::select! {
+            left_frame = x5_receiver.next_left_frame() => {
+                left_image_pub.async_publish(&left_frame.into()).await.into_eyre()?;
+            }
+            right_frame = x5_receiver.next_right_frame() => {
+                right_image_pub.async_publish(&right_frame.into()).await.into_eyre()?;
+            }
+        }
     }
 }

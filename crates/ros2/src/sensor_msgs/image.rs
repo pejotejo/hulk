@@ -2,6 +2,7 @@ use crate::std_msgs::header::Header;
 use color_eyre::{Result, eyre::eyre};
 use image::{ImageError, RgbImage, error::DecodingError};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::MessageTypeInfo;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use yuv::{
@@ -16,8 +17,17 @@ use pyo3::{pyclass, pymethods};
 #[cfg_attr(feature = "pyo3", pyclass(frozen))]
 #[repr(C)]
 #[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "ros2/msg/Image")]
 pub struct Image {
     /// Header timestamp should be acquisition time of image
     /// Header frame_id should be optical frame of camera
@@ -49,6 +59,10 @@ pub struct Image {
     pub step: u32,
     /// actual matrix data, size is (step * rows)
     pub data: Vec<u8>,
+}
+
+impl ros_z::msg::ZMessage for Image {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 #[cfg(feature = "pyo3")]

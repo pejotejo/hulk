@@ -1,6 +1,7 @@
 pub mod config;
 pub mod msgs;
 pub mod nodes;
+pub mod x5_receiver;
 
 pub trait IntoEyreResultExt<T> {
     fn into_eyre(self) -> color_eyre::Result<T>;

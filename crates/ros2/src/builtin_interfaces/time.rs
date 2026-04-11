@@ -1,4 +1,5 @@
 use color_eyre::Result;
+use ros_z::MessageTypeInfo;
 use std::time::{Duration, SystemTime};
 
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
@@ -8,8 +9,17 @@ use serde::{Deserialize, Serialize};
 /// https://design.ros2.org/articles/clock_and_time.html
 #[repr(C)]
 #[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "ros2/msg/Time")]
 pub struct Time {
     /// The seconds component, valid over all int32 values.
     pub sec: i32,
@@ -19,6 +29,10 @@ pub struct Time {
     /// The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}
     /// The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}
     pub nanosec: u32,
+}
+
+impl ros_z::msg::ZMessage for Time {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 impl From<Time> for SystemTime {

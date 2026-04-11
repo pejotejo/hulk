@@ -14,11 +14,13 @@ booster_sdk.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre = { workspace = true }
 coordinate_systems = { workspace = true }
+futures-util.workspace = true
 linear_algebra = { workspace = true }
 log.workspace = true
 ros-z = { workspace = true }
 ros-z-config = { workspace = true }
 ros-z-msgs = { workspace = true, features = ["sensor_msgs"] }
+ros2.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util = { workspace = true }

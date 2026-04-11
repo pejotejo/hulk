@@ -5,12 +5,22 @@
 /// width fields for the associated image; or height = width = 0
 /// indicates that the full resolution image was captured.
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::MessageTypeInfo;
 use serde::{Deserialize, Serialize};
 
 #[repr(C)]
 #[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "ros2/msg/RegionOfInterest")]
 pub struct RegionOfInterest {
     /// Leftmost pixel of the ROI
     /// (0 if the ROI includes the left edge of the image)
@@ -28,4 +38,8 @@ pub struct RegionOfInterest {
     /// is captured (ROI not used), and True if a subwindow is captured (ROI
     /// used).
     pub do_rectify: bool,
+}
+
+impl ros_z::msg::ZMessage for RegionOfInterest {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }

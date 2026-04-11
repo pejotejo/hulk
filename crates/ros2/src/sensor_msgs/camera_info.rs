@@ -37,6 +37,7 @@
 /// The image dimensions with which the camera was calibrated.
 /// Normally this will be the full camera resolution in pixels.
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::MessageTypeInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::{sensor_msgs::region_of_interest::RegionOfInterest, std_msgs::header::Header};
@@ -47,8 +48,17 @@ use pyo3::{pyclass, pymethods};
 #[cfg_attr(feature = "pyo3", pyclass(frozen))]
 #[repr(C)]
 #[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "ros2/msg/CameraInfo")]
 pub struct CameraInfo {
     /// Time of image acquisition, camera coordinate frame ID
     /// Header timestamp should be acquisition time of image
@@ -146,6 +156,10 @@ pub struct CameraInfo {
     /// The default setting of roi (all values 0) is considered the same as
     /// full resolution (roi.width = width, roi.height = height).
     pub roi: RegionOfInterest,
+}
+
+impl ros_z::msg::ZMessage for CameraInfo {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 impl CameraInfo {

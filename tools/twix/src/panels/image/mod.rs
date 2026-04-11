@@ -40,7 +40,7 @@ enum ImageBuffer {
     LegacyRaw(BufferHandle<Ros2Image>),
     YCbCr(BufferHandle<YCbCr422Image>),
     Jpeg(BufferHandle<JpegImage>),
-    TopicRaw(BufferHandle<RosZImage>),
+    TopicRaw(BufferHandle<Ros2Image>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,7 +61,7 @@ pub struct ImagePanel {
 }
 
 const DEFAULT_IMAGE_PATH: &str = "Vision.main_outputs.image";
-const DEFAULT_TOPIC: &str = "/alpha/sensors/image";
+const DEFAULT_TOPIC: &str = "/alpha/robot_hw/left_image";
 const LEGACY_YCBCR_PATH: &str = "Vision.main_outputs.ycbcr422_image";
 
 fn subscribe_image(
@@ -109,24 +109,6 @@ impl ImageSourceMode {
             Self::Topic => "ROS-Z Topic",
             Self::Legacy => "Legacy Path",
         }
-    }
-}
-
-fn ros_z_image_to_ros2_image(image: RosZImage) -> Ros2Image {
-    Ros2Image {
-        header: Ros2Header {
-            stamp: Ros2Time {
-                sec: image.header.stamp.sec,
-                nanosec: image.header.stamp.nanosec,
-            },
-            frame_id: image.header.frame_id,
-        },
-        height: image.height,
-        width: image.width,
-        encoding: image.encoding,
-        is_bigendian: image.is_bigendian,
-        step: image.step,
-        data: image.data.contiguous().to_vec(),
     }
 }
 
@@ -216,11 +198,11 @@ fn save_raw_image(buffer: &BufferHandle<Ros2Image>, path: PathBuf) -> Result<()>
     Ok(())
 }
 
-fn save_topic_raw_image(buffer: &BufferHandle<RosZImage>, path: PathBuf) -> Result<()> {
+fn save_topic_raw_image(buffer: &BufferHandle<Ros2Image>, path: PathBuf) -> Result<()> {
     let buffer = buffer
         .get_last_value()?
         .ok_or_else(|| eyre!("no image available"))?;
-    ros_z_image_to_ros2_image(buffer).save_to_file(&path)?;
+    buffer.save_to_file(&path)?;
     info!("image saved to '{}'", path.display());
     Ok(())
 }
@@ -409,7 +391,7 @@ impl ImagePanel {
                     );
                 }
 
-                let rgb_image: RgbImage = ros_z_image_to_ros2_image(ros_image)
+                let rgb_image: RgbImage = ros_image
                     .try_into()
                     .map_err(|error: image::ImageError| eyre!(error))?;
 
