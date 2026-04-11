@@ -229,7 +229,7 @@ impl_zmessage!(
 
 impl MessageTypeInfo for NodeConfigEvent {
     fn type_name() -> &'static str {
-        "ros_z_config::msg::dds_::NodeConfigEvent_"
+        "ros_z_config/msg/NodeConfigEvent"
     }
 
     fn type_hash() -> TypeHash {
@@ -260,47 +260,47 @@ impl_service!(
     GetNodeConfigSnapshotSrv,
     GetNodeConfigSnapshotRequest,
     GetNodeConfigSnapshotResponse,
-    "ros_z_config::srv::dds_::GetNodeConfigSnapshot_"
+    "ros_z_config/srv/GetNodeConfigSnapshot"
 );
 impl_service!(
     GetNodeConfigValueSrv,
     GetNodeConfigValueRequest,
     GetNodeConfigValueResponse,
-    "ros_z_config::srv::dds_::GetNodeConfigValue_"
+    "ros_z_config/srv/GetNodeConfigValue"
 );
 impl_service!(
     SetNodeConfigSrv,
     SetNodeConfigRequest,
     SetNodeConfigResponse,
-    "ros_z_config::srv::dds_::SetNodeConfig_"
+    "ros_z_config/srv/SetNodeConfig"
 );
 impl_service!(
     SetNodeConfigAtomicallySrv,
     SetNodeConfigAtomicallyRequest,
     SetNodeConfigAtomicallyResponse,
-    "ros_z_config::srv::dds_::SetNodeConfigAtomically_"
+    "ros_z_config/srv/SetNodeConfigAtomically"
 );
 impl_service!(
     ResetNodeConfigSrv,
     ResetNodeConfigRequest,
     ResetNodeConfigResponse,
-    "ros_z_config::srv::dds_::ResetNodeConfig_"
+    "ros_z_config/srv/ResetNodeConfig"
 );
 impl_service!(
     ReloadNodeConfigSrv,
     ReloadNodeConfigRequest,
     ReloadNodeConfigResponse,
-    "ros_z_config::srv::dds_::ReloadNodeConfig_"
+    "ros_z_config/srv/ReloadNodeConfig"
 );
 impl_service!(
     ListNodeConfigPathsSrv,
     ListNodeConfigPathsRequest,
     ListNodeConfigPathsResponse,
-    "ros_z_config::srv::dds_::ListNodeConfigPaths_"
+    "ros_z_config/srv/ListNodeConfigPaths"
 );
 impl_service!(
     GetNodeConfigMetadataSrv,
     GetNodeConfigMetadataRequest,
     GetNodeConfigMetadataResponse,
-    "ros_z_config::srv::dds_::GetNodeConfigMetadata_"
+    "ros_z_config/srv/GetNodeConfigMetadata"
 );

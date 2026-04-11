@@ -87,7 +87,7 @@ impl MessageTypeInfo for RosMessage {
     // Static methods return placeholder values since RosMessage is a generic wrapper
     // The actual type info varies per instance
     fn type_name() -> &'static str {
-        "rcl_z::RosMessage"
+        "rcl_z/msg/RosMessage"
     }
 
     fn type_hash() -> TypeHash {
@@ -97,7 +97,7 @@ impl MessageTypeInfo for RosMessage {
 
     // Dynamic methods fetch real type info from C++ type support
     fn type_name_dyn(&self) -> String {
-        self.ts.get_type_prefix()
+        self.ts.get_ros_type_name()
     }
 
     fn type_hash_dyn(&self) -> TypeHash {
@@ -124,7 +124,7 @@ impl ZService for RosService {
 impl ServiceTypeInfo for RosService {
     // Static method returns placeholder value since RosService is a generic wrapper
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new("rcl_z::RosService", TypeHash::zero())
+        TypeInfo::new("rcl_z/srv/RosService", TypeHash::zero())
     }
 
     // Note: Dynamic method would need to be implemented differently for services

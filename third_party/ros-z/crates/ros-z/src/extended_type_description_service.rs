@@ -47,10 +47,7 @@ impl ZService for GetExtendedTypeDescription {
 
 impl ServiceTypeInfo for GetExtendedTypeDescription {
     fn service_type_info() -> TypeInfo {
-        TypeInfo::new(
-            "ros_z::srv::dds_::GetExtendedTypeDescription_",
-            TypeHash::zero(),
-        )
+        TypeInfo::new("ros_z/srv/GetExtendedTypeDescription", TypeHash::zero())
     }
 }
 

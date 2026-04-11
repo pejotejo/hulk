@@ -2,6 +2,7 @@
 //!
 //! These tests verify the low-level protocol communication between action clients and servers.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ros_z::{Builder, Result, context::ZContextBuilder, define_action, msg::ZSerializer};
@@ -27,6 +28,8 @@ pub struct TestFeedback {
 
 pub struct TestAction;
 
+static TEST_NAMESPACE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 define_action! {
     TestAction,
     action_name: "test_action_comm",
@@ -43,7 +46,14 @@ async fn setup_test() -> Result<(
     ros_z::action::server::ZActionServer<TestAction>,
 )> {
     let ctx = ZContextBuilder::default().build()?;
-    let node = ctx.create_node("test_action_comm_node").build()?;
+    let namespace = format!(
+        "/action_comm_{}",
+        TEST_NAMESPACE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let node = ctx
+        .create_node("test_action_comm_node")
+        .with_namespace(namespace)
+        .build()?;
 
     let server = node
         .create_action_server::<TestAction>("test_action_comm")

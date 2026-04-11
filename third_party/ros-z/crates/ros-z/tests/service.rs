@@ -16,7 +16,7 @@ struct AddTwoIntsRequest {
 
 impl MessageTypeInfo for AddTwoIntsRequest {
     fn type_name() -> &'static str {
-        "test_msgs::srv::dds_::AddTwoInts_Request_"
+        "test_msgs/srv/AddTwoInts_Request"
     }
 
     fn type_hash() -> TypeHash {
@@ -38,7 +38,7 @@ struct AddTwoIntsResponse {
 
 impl MessageTypeInfo for AddTwoIntsResponse {
     fn type_name() -> &'static str {
-        "test_msgs::srv::dds_::AddTwoInts_Response_"
+        "test_msgs/srv/AddTwoInts_Response"
     }
 
     fn type_hash() -> TypeHash {
@@ -57,7 +57,7 @@ struct AddTwoInts;
 
 impl ServiceTypeInfo for AddTwoInts {
     fn service_type_info() -> ros_z::entity::TypeInfo {
-        ros_z::entity::TypeInfo::new("test_msgs::srv::dds_::AddTwoInts_", TypeHash::zero())
+        ros_z::entity::TypeInfo::new("test_msgs/srv/AddTwoInts", TypeHash::zero())
     }
 }
 

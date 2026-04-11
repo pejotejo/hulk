@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ros_z::{
     Builder, Result,
@@ -39,6 +40,15 @@ define_action! {
 mod tests {
     use super::*;
 
+    static TEST_NAMESPACE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn next_test_namespace() -> String {
+        format!(
+            "/action_server_{}",
+            TEST_NAMESPACE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
     // Helper function to create test setup
     async fn setup_test() -> Result<(
         ros_z::node::ZNode,
@@ -46,7 +56,10 @@ mod tests {
         ros_z::action::server::ZActionServer<TestAction>,
     )> {
         let ctx = ZContextBuilder::default().build()?;
-        let node = ctx.create_node("test_action_server_node").build()?;
+        let node = ctx
+            .create_node("test_action_server_node")
+            .with_namespace(next_test_namespace())
+            .build()?;
 
         let client = node
             .create_action_client::<TestAction>("test_action_server_name")
@@ -65,7 +78,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_action_server_init_fini() -> Result<()> {
         let ctx = ZContextBuilder::default().build()?;
-        let node = ctx.create_node("test_action_server_node").build()?;
+        let node = ctx
+            .create_node("test_action_server_node")
+            .with_namespace(next_test_namespace())
+            .build()?;
 
         // Test successful initialization with valid arguments
         let server = node
@@ -247,7 +263,10 @@ mod tests {
         use std::time::Duration;
 
         let ctx = ZContextBuilder::default().build()?;
-        let node = ctx.create_node("test_timeout_node").build()?;
+        let node = ctx
+            .create_node("test_timeout_node")
+            .with_namespace(next_test_namespace())
+            .build()?;
 
         // Create server with goal timeout
         let server = node
@@ -264,7 +283,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_action_server_qos_configuration() -> Result<()> {
         let ctx = ZContextBuilder::default().build()?;
-        let node = ctx.create_node("test_qos_node").build()?;
+        let node = ctx
+            .create_node("test_qos_node")
+            .with_namespace(next_test_namespace())
+            .build()?;
 
         // Create custom QoS profile
         let custom_qos = QosProfile {

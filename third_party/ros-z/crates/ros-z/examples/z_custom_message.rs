@@ -54,7 +54,7 @@ pub struct NavigateTo;
 
 impl ServiceTypeInfo for NavigateTo {
     fn service_type_info() -> ros_z::entity::TypeInfo {
-        ros_z::entity::TypeInfo::new("custom_msgs::srv::dds_::NavigateTo_", TypeHash::zero())
+        ros_z::entity::TypeInfo::new("custom_msgs/srv/NavigateTo", TypeHash::zero())
     }
 }
 

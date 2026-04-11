@@ -291,8 +291,8 @@ impl ProtobufMessageGenerator {
                 proto_struct_name
             );
 
-            // ROS2 type name
-            let ros2_type_name = format!("{}::msg::dds_::{}_", package, msg_name);
+            // Canonical ROS type name
+            let ros2_type_name = format!("{}/msg/{}", package, msg_name);
 
             // Get hash
             let hash = msg.type_hash.to_rihs_string();

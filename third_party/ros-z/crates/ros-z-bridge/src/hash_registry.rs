@@ -1,4 +1,4 @@
-//! Static registry of ROS type_name → Jazzy TypeHash.
+//! Static registry of canonical ROS type_name -> Jazzy TypeHash.
 //!
 //! Built at startup from the generated ros-z-msgs types.  All types compiled
 //! into this binary with the `jazzy` feature are registered here.  At runtime
@@ -6,14 +6,15 @@
 //!
 //! Note: the generated Rust module structure is:
 //!   ros_z_msgs::ros::std_msgs::String    (flat — no msg/ submodule in Rust)
-//! But the ROS type name string is:
-//!   "std_msgs::msg::dds_::String_"
-//! The registry maps the ROS type name string to its TypeHash.
+//! But the canonical ROS type name string is:
+//!   "std_msgs/msg/String"
+//! The registry maps canonical ROS type names to their TypeHash and accepts
+//! DDS-form lookups for compatibility.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use ros_z::{MessageTypeInfo, ServiceTypeInfo};
+use ros_z::{MessageTypeInfo, ServiceTypeInfo, dds_type_name_to_canonical};
 use ros_z_protocol::TypeHash;
 
 // ---------------------------------------------------------------------------
@@ -33,7 +34,12 @@ pub fn registry() -> &'static HashMap<String, TypeHash> {
 /// Returns `None` if the type is not registered (not compiled into this
 /// binary, or the name does not match exactly).
 pub fn lookup(type_name: &str) -> Option<&'static TypeHash> {
-    registry().get(type_name)
+    if let Some(hash) = registry().get(type_name) {
+        return Some(hash);
+    }
+
+    let canonical = dds_type_name_to_canonical(type_name);
+    registry().get(&canonical)
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +184,7 @@ fn build_registry() -> HashMap<String, TypeHash> {
     {
         reg!(m, example_interfaces::AddTwoIntsRequest);
         reg!(m, example_interfaces::AddTwoIntsResponse);
-        // Service type (type_name = "example_interfaces::srv::dds_::AddTwoInts_")
-        // Humble rmw_zenoh_cpp advertises the service entity under this name.
+        // Service type lookup accepts both canonical and DDS spellings.
         reg_service!(m, example_interfaces::srv::AddTwoInts);
     }
 
@@ -198,8 +203,7 @@ mod tests {
     #[cfg(feature = "jazzy")]
     #[test]
     fn std_msgs_string_registered() {
-        // type_name() returns "std_msgs::msg::dds_::String_"
-        let hash = lookup("std_msgs::msg::dds_::String_");
+        let hash = lookup("std_msgs/msg/String");
         assert!(hash.is_some(), "std_msgs/String should be in the registry");
         // Jazzy hashes are non-zero
         let h = hash.unwrap();
@@ -212,7 +216,7 @@ mod tests {
     #[cfg(feature = "jazzy")]
     #[test]
     fn geometry_msgs_twist_registered() {
-        let hash = lookup("geometry_msgs::msg::dds_::Twist_");
+        let hash = lookup("geometry_msgs/msg/Twist");
         assert!(
             hash.is_some(),
             "geometry_msgs/Twist should be in the registry"
@@ -222,15 +226,22 @@ mod tests {
     #[cfg(feature = "jazzy")]
     #[test]
     fn add_two_ints_service_registered() {
-        let hash = lookup("example_interfaces::srv::dds_::AddTwoInts_");
+        let hash = lookup("example_interfaces/srv/AddTwoInts");
         assert!(
             hash.is_some(),
             "example_interfaces/AddTwoInts service type should be in the registry"
         );
     }
 
+    #[cfg(feature = "jazzy")]
+    #[test]
+    fn dds_name_lookup_is_still_supported() {
+        let hash = lookup("std_msgs::msg::dds_::String_");
+        assert!(hash.is_some(), "DDS-form names should still resolve");
+    }
+
     #[test]
     fn unknown_type_returns_none() {
-        assert!(lookup("nonexistent::msg::dds_::Bogus_").is_none());
+        assert!(lookup("nonexistent/msg/Bogus").is_none());
     }
 }

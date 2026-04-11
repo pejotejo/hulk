@@ -16,7 +16,7 @@ pub use generated::{CalculateRequest, CalculateResponse, SensorData};
 
 impl MessageTypeInfo for SensorData {
     fn type_name() -> &'static str {
-        "examples::msg::dds_::SensorData_"
+        "examples/msg/SensorData"
     }
 
     fn type_hash() -> TypeHash {
@@ -36,7 +36,7 @@ impl ZMessage for SensorData {
 
 impl MessageTypeInfo for CalculateRequest {
     fn type_name() -> &'static str {
-        "examples::srv::dds_::Calculate_Request_"
+        "examples/srv/Calculate_Request"
     }
 
     fn type_hash() -> TypeHash {
@@ -55,7 +55,7 @@ impl ZMessage for CalculateRequest {
 
 impl MessageTypeInfo for CalculateResponse {
     fn type_name() -> &'static str {
-        "examples::srv::dds_::Calculate_Response_"
+        "examples/srv/Calculate_Response"
     }
 
     fn type_hash() -> TypeHash {
@@ -76,7 +76,7 @@ pub struct Calculate;
 
 impl ServiceTypeInfo for Calculate {
     fn service_type_info() -> ros_z::entity::TypeInfo {
-        ros_z::entity::TypeInfo::new("examples::srv::dds_::Calculate_", TypeHash::zero())
+        ros_z::entity::TypeInfo::new("examples/srv/Calculate", TypeHash::zero())
     }
 }
 

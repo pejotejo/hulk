@@ -112,10 +112,8 @@ fn impl_message_type_info(input: &DeriveInput) -> syn::Result<TokenStream2> {
     })?;
     let type_name_lit = LitStr::new(&canonical_type_name, proc_macro2::Span::call_site());
     let (package, _kind, message_name) = parse_canonical_type_name(&canonical_type_name)?;
-    let dds_type_name = canonical_to_dds_name(&canonical_type_name)?;
     let package_lit = LitStr::new(&package, proc_macro2::Span::call_site());
     let message_name_lit = LitStr::new(&message_name, proc_macro2::Span::call_site());
-    let dds_type_name_lit = LitStr::new(&dds_type_name, proc_macro2::Span::call_site());
 
     match &input.data {
         Data::Struct(data) => impl_message_type_info_for_struct(
@@ -124,7 +122,6 @@ fn impl_message_type_info(input: &DeriveInput) -> syn::Result<TokenStream2> {
             &type_name_lit,
             &package_lit,
             &message_name_lit,
-            &dds_type_name_lit,
         ),
         Data::Enum(data) => impl_message_type_info_for_enum(
             name,
@@ -132,7 +129,6 @@ fn impl_message_type_info(input: &DeriveInput) -> syn::Result<TokenStream2> {
             &type_name_lit,
             &package_lit,
             &message_name_lit,
-            &dds_type_name_lit,
         ),
         Data::Union(_) => Err(syn::Error::new_spanned(
             input,
@@ -160,10 +156,8 @@ fn impl_standard_message_type_info(input: &DeriveInput) -> syn::Result<TokenStre
     })?;
     let type_name_lit = LitStr::new(&canonical_type_name, proc_macro2::Span::call_site());
     let (package, _kind, message_name) = parse_canonical_type_name(&canonical_type_name)?;
-    let dds_type_name = canonical_to_dds_name(&canonical_type_name)?;
     let package_lit = LitStr::new(&package, proc_macro2::Span::call_site());
     let message_name_lit = LitStr::new(&message_name, proc_macro2::Span::call_site());
-    let dds_type_name_lit = LitStr::new(&dds_type_name, proc_macro2::Span::call_site());
 
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
@@ -192,7 +186,7 @@ fn impl_standard_message_type_info(input: &DeriveInput) -> syn::Result<TokenStre
     Ok(quote! {
         impl ::ros_z::MessageTypeInfo for #name {
             fn type_name() -> &'static str {
-                #dds_type_name_lit
+                #type_name_lit
             }
 
             #message_type_hash_impl
@@ -227,7 +221,6 @@ fn impl_message_type_info_for_struct(
     type_name_lit: &LitStr,
     package_lit: &LitStr,
     message_name_lit: &LitStr,
-    dds_type_name_lit: &LitStr,
 ) -> syn::Result<TokenStream2> {
     let message_type_hash_impl = extended_message_type_hash_impl_tokens();
 
@@ -270,7 +263,7 @@ fn impl_message_type_info_for_struct(
 
         impl ::ros_z::MessageTypeInfo for #name {
             fn type_name() -> &'static str {
-                #dds_type_name_lit
+                #type_name_lit
             }
 
             #message_type_hash_impl
@@ -310,7 +303,6 @@ fn impl_message_type_info_for_enum(
     type_name_lit: &LitStr,
     package_lit: &LitStr,
     message_name_lit: &LitStr,
-    dds_type_name_lit: &LitStr,
 ) -> syn::Result<TokenStream2> {
     let message_type_hash_impl = extended_message_type_hash_impl_tokens();
 
@@ -374,7 +366,7 @@ fn impl_message_type_info_for_enum(
 
         impl ::ros_z::MessageTypeInfo for #name {
             fn type_name() -> &'static str {
-                #dds_type_name_lit
+                #type_name_lit
             }
 
             #message_type_hash_impl
@@ -857,11 +849,6 @@ fn parse_canonical_type_name(type_name: &str) -> syn::Result<(String, String, St
             "ros_msg type_name kind must be one of: msg, srv, action",
         )),
     }
-}
-
-fn canonical_to_dds_name(type_name: &str) -> syn::Result<String> {
-    let (package, kind, name) = parse_canonical_type_name(type_name)?;
-    Ok(format!("{package}::{kind}::dds_::{name}_"))
 }
 
 /// Generate extraction code for a single field.

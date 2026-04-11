@@ -2,23 +2,10 @@ use tracing::warn;
 
 use crate::dynamic::{MessageSchema, MessageSchemaTypeDescription};
 use crate::entity::{TypeHash, TypeInfo};
-
-pub(crate) fn dds_type_name_from_schema(schema: &MessageSchema) -> String {
-    schema
-        .type_name
-        .replace("/msg/", "::msg::dds_::")
-        .replace("/srv/", "::srv::dds_::")
-        .replace("/action/", "::action::dds_::")
-        + "_"
-}
+use crate::ros_msg::dds_type_name_to_canonical;
 
 pub(crate) fn ros_type_name_from_dds(dds_name: &str) -> String {
-    dds_name
-        .replace("::msg::dds_::", "/msg/")
-        .replace("::srv::dds_::", "/srv/")
-        .replace("::action::dds_::", "/action/")
-        .trim_end_matches('_')
-        .to_string()
+    dds_type_name_to_canonical(dds_name)
 }
 
 pub(crate) fn schema_hash(schema: &MessageSchema) -> TypeHash {
@@ -39,7 +26,7 @@ pub(crate) fn schema_hash(schema: &MessageSchema) -> TypeHash {
 
 pub(crate) fn schema_type_info(schema: &MessageSchema) -> TypeInfo {
     TypeInfo {
-        name: dds_type_name_from_schema(schema),
+        name: schema.type_name.clone(),
         hash: schema_hash(schema),
     }
 }
@@ -49,7 +36,7 @@ pub(crate) fn schema_type_info_with_hash(
     discovered_hash: &str,
 ) -> TypeInfo {
     TypeInfo {
-        name: dds_type_name_from_schema(schema),
+        name: schema.type_name.clone(),
         hash: TypeHash::from_rihs_string(discovered_hash).unwrap_or_else(TypeHash::zero),
     }
 }

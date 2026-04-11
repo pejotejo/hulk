@@ -1,5 +1,26 @@
 use crate::entity::{TypeHash, TypeInfo};
 
+/// Convert a canonical ROS type name such as `std_msgs/msg/String` into the
+/// corresponding DDS-facing name such as `std_msgs::msg::dds_::String_`.
+pub fn canonical_type_name_to_dds(type_name: &str) -> String {
+    type_name
+        .replace("/msg/", "::msg::dds_::")
+        .replace("/srv/", "::srv::dds_::")
+        .replace("/action/", "::action::dds_::")
+        + "_"
+}
+
+/// Convert a DDS-facing type name such as `std_msgs::msg::dds_::String_` into
+/// the canonical ROS form `std_msgs/msg/String`.
+pub fn dds_type_name_to_canonical(type_name: &str) -> String {
+    type_name
+        .replace("::msg::dds_::", "/msg/")
+        .replace("::srv::dds_::", "/srv/")
+        .replace("::action::dds_::", "/action/")
+        .trim_end_matches('_')
+        .to_string()
+}
+
 pub trait FieldTypeInfo {
     fn field_type() -> crate::dynamic::FieldType;
 }
@@ -14,9 +35,14 @@ pub trait FieldTypeInfo {
 /// For wrapper types where type info must be queried at runtime (e.g., rcl-z RosMessage).
 /// Default implementations delegate to static methods for backward compatibility.
 pub trait MessageTypeInfo {
-    /// Returns the ROS message type name (e.g., "geometry_msgs::msg::dds_::Vector3_")
+    /// Returns the canonical ROS message type name (e.g., `geometry_msgs/msg/Vector3`).
     /// Static method for compile-time known types
     fn type_name() -> &'static str;
+
+    /// Returns the DDS-facing type name derived from [`Self::type_name()`].
+    fn dds_type_name() -> String {
+        canonical_type_name_to_dds(Self::type_name())
+    }
 
     /// Returns the type hash (RIHS01 for ROS2, MD5 for ROS1)
     /// Static method for compile-time known types
@@ -31,7 +57,7 @@ pub trait MessageTypeInfo {
     /// Returns the package name (extracted from type name)
     /// Static method for compile-time known types
     fn package_name() -> &'static str {
-        Self::type_name().split("::").next().unwrap_or("unknown")
+        Self::type_name().split('/').next().unwrap_or("unknown")
     }
 
     /// Returns whether this message has a fixed size (for optimization)
@@ -70,10 +96,15 @@ pub trait MessageTypeInfo {
 
     // === Dynamic Methods (Runtime) ===
 
-    /// Returns the ROS message type name at runtime
+    /// Returns the canonical ROS message type name at runtime.
     /// Override this for types that need to query type info dynamically
     fn type_name_dyn(&self) -> String {
         Self::type_name().to_string()
+    }
+
+    /// Returns the DDS-facing type name at runtime.
+    fn dds_type_name_dyn(&self) -> String {
+        canonical_type_name_to_dds(&self.type_name_dyn())
     }
 
     /// Returns the type hash at runtime
@@ -91,7 +122,7 @@ pub trait MessageTypeInfo {
     /// Returns the package name at runtime
     fn package_name_dyn(&self) -> String {
         self.type_name_dyn()
-            .split("::")
+            .split('/')
             .next()
             .unwrap_or("unknown")
             .to_string()

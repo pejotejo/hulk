@@ -40,7 +40,7 @@ struct MockMessage {
 
 impl MessageTypeInfo for MockMessage {
     fn type_name() -> &'static str {
-        "mock::StaticMessage"
+        "mock/msg/StaticMessage"
     }
 
     fn type_hash() -> TypeHash {
@@ -74,7 +74,7 @@ fn test_static_type_info() {
     let static_hash = MockMessage::type_hash();
     let static_info = MockMessage::type_info();
 
-    assert_eq!(static_name, "mock::StaticMessage");
+    assert_eq!(static_name, "mock/msg/StaticMessage");
 
     #[cfg(feature = "no-type-hash")]
     {
@@ -88,7 +88,7 @@ fn test_static_type_info() {
         );
     }
 
-    assert_eq!(static_info.name, "mock::StaticMessage");
+    assert_eq!(static_info.name, "mock/msg/StaticMessage");
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn test_dynamic_type_info() {
     // Dynamic methods work with instance-specific data
     // Skip this test for Humble since it uses hardcoded RIHS01 hashes
     let msg1 = MockMessage {
-        name: "geometry_msgs::msg::dds_::Vector3_".to_string(),
+        name: "geometry_msgs/msg/Vector3".to_string(),
         hash: TypeHash::from_rihs_string(
             "RIHS01_2222222222222222222222222222222222222222222222222222222222222222",
         )
@@ -105,7 +105,7 @@ fn test_dynamic_type_info() {
     };
 
     let msg2 = MockMessage {
-        name: "std_msgs::msg::dds_::String_".to_string(),
+        name: "std_msgs/msg/String".to_string(),
         hash: TypeHash::from_rihs_string(
             "RIHS01_3333333333333333333333333333333333333333333333333333333333333333",
         )
@@ -113,13 +113,13 @@ fn test_dynamic_type_info() {
     };
 
     // Each instance returns its own type info
-    assert_eq!(msg1.type_name_dyn(), "geometry_msgs::msg::dds_::Vector3_");
+    assert_eq!(msg1.type_name_dyn(), "geometry_msgs/msg/Vector3");
     assert_eq!(
         msg1.type_hash_dyn().to_rihs_string(),
         "RIHS01_2222222222222222222222222222222222222222222222222222222222222222"
     );
 
-    assert_eq!(msg2.type_name_dyn(), "std_msgs::msg::dds_::String_");
+    assert_eq!(msg2.type_name_dyn(), "std_msgs/msg/String");
     assert_eq!(
         msg2.type_hash_dyn().to_rihs_string(),
         "RIHS01_3333333333333333333333333333333333333333333333333333333333333333"
@@ -127,7 +127,7 @@ fn test_dynamic_type_info() {
 
     // type_info_dyn() combines both
     let info1 = msg1.type_info_dyn();
-    assert_eq!(info1.name, "geometry_msgs::msg::dds_::Vector3_");
+    assert_eq!(info1.name, "geometry_msgs/msg/Vector3");
     assert_eq!(
         info1.hash.to_rihs_string(),
         "RIHS01_2222222222222222222222222222222222222222222222222222222222222222"
@@ -141,7 +141,7 @@ fn test_default_dynamic_delegates_to_static() {
 
     impl MessageTypeInfo for SimpleMessage {
         fn type_name() -> &'static str {
-            "simple::Message"
+            "simple/msg/Message"
         }
 
         fn type_hash() -> TypeHash {
@@ -162,7 +162,7 @@ fn test_default_dynamic_delegates_to_static() {
     let msg = SimpleMessage;
 
     // Dynamic methods delegate to static by default
-    assert_eq!(msg.type_name_dyn(), "simple::Message");
+    assert_eq!(msg.type_name_dyn(), "simple/msg/Message");
     assert!(SimpleMessage::message_schema().is_none());
 
     #[cfg(feature = "no-type-hash")]

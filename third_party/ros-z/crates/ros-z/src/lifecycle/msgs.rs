@@ -52,7 +52,7 @@ pub struct LcState {
 
 impl MessageTypeInfo for LcState {
     fn type_name() -> &'static str {
-        "lifecycle_msgs::msg::dds_::State_"
+        "lifecycle_msgs/msg/State"
     }
     fn type_hash() -> TypeHash {
         // RIHS01 hash of lifecycle_msgs/msg/State (uint8 id, string label).
@@ -96,7 +96,7 @@ pub struct LcTransition {
 
 impl MessageTypeInfo for LcTransition {
     fn type_name() -> &'static str {
-        "lifecycle_msgs::msg::dds_::Transition_"
+        "lifecycle_msgs/msg/Transition"
     }
     fn type_hash() -> TypeHash {
         // RIHS01 hash of lifecycle_msgs/msg/Transition (uint8 id, string label).
@@ -204,7 +204,7 @@ pub struct LcTransitionEvent {
 
 impl MessageTypeInfo for LcTransitionEvent {
     fn type_name() -> &'static str {
-        "lifecycle_msgs::msg::dds_::TransitionEvent_"
+        "lifecycle_msgs/msg/TransitionEvent"
     }
     fn type_hash() -> TypeHash {
         // RIHS01 hash of lifecycle_msgs/msg/TransitionEvent
@@ -314,7 +314,7 @@ impl ZService for ChangeState {
 impl ServiceTypeInfo for ChangeState {
     fn service_type_info() -> TypeInfo {
         TypeInfo::new(
-            "lifecycle_msgs::srv::dds_::ChangeState_",
+            "lifecycle_msgs/srv/ChangeState",
             // RIHS01 service hash for lifecycle_msgs/srv/ChangeState
             // (Request: Transition transition / Response: bool success).
             // Source: crates/ros-z-codegen/assets/jazzy/lifecycle_msgs/srv/ChangeState.srv
@@ -383,7 +383,7 @@ impl ZService for GetState {
 impl ServiceTypeInfo for GetState {
     fn service_type_info() -> TypeInfo {
         TypeInfo::new(
-            "lifecycle_msgs::srv::dds_::GetState_",
+            "lifecycle_msgs/srv/GetState",
             // RIHS01 service hash for lifecycle_msgs/srv/GetState
             // (Request: empty / Response: State current_state).
             // Source: crates/ros-z-codegen/assets/jazzy/lifecycle_msgs/srv/GetState.srv
@@ -452,7 +452,7 @@ impl ZService for GetAvailableStates {
 impl ServiceTypeInfo for GetAvailableStates {
     fn service_type_info() -> TypeInfo {
         TypeInfo::new(
-            "lifecycle_msgs::srv::dds_::GetAvailableStates_",
+            "lifecycle_msgs/srv/GetAvailableStates",
             // RIHS01 service hash for lifecycle_msgs/srv/GetAvailableStates
             // (Request: empty / Response: State[] available_states).
             // Source: crates/ros-z-codegen/assets/jazzy/lifecycle_msgs/srv/GetAvailableStates.srv
@@ -521,7 +521,7 @@ impl ZService for GetAvailableTransitions {
 impl ServiceTypeInfo for GetAvailableTransitions {
     fn service_type_info() -> TypeInfo {
         TypeInfo::new(
-            "lifecycle_msgs::srv::dds_::GetAvailableTransitions_",
+            "lifecycle_msgs/srv/GetAvailableTransitions",
             // RIHS01 service hash for lifecycle_msgs/srv/GetAvailableTransitions
             // (Request: empty / Response: TransitionDescription[] available_transitions).
             // Shared by both ~/get_available_transitions and ~/get_transition_graph services.

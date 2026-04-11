@@ -20,7 +20,7 @@ struct TestMessage {
 
 impl MessageTypeInfo for TestMessage {
     fn type_name() -> &'static str {
-        "test_msgs::msg::dds_::TestMessage_"
+        "test_msgs/msg/TestMessage"
     }
 
     fn type_hash() -> TypeHash {

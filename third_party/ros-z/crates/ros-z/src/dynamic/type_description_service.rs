@@ -346,7 +346,7 @@ impl ServiceTypeInfo for GetTypeDescription {
     fn service_type_info() -> TypeInfo {
         // Hash for GetTypeDescription service (matches ROS 2 Jazzy)
         TypeInfo::new(
-            "type_description_interfaces::srv::dds_::GetTypeDescription_",
+            "type_description_interfaces/srv/GetTypeDescription",
             TypeHash::from_rihs_string(
                 "RIHS01_69b9c19c1021405984cc60dbbb1edceb147a6538b411d812ba6afabeed962cd5",
             )

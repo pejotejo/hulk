@@ -81,7 +81,7 @@ fn derive_generates_type_info_and_schema() {
 
     assert_eq!(
         RobotTelemetry::type_name(),
-        "custom_msgs::msg::dds_::RobotTelemetry_"
+        "custom_msgs/msg/RobotTelemetry"
     );
     assert_eq!(schema.type_name, "custom_msgs/msg/RobotTelemetry");
     assert_eq!(schema.field_count(), 5);

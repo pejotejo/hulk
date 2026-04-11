@@ -23,7 +23,10 @@ pub async fn run_talker(
 ) -> Result<()> {
     // ANCHOR: node_setup
     // Create a node named "talker"
-    let node = ctx.create_node("talker").build()?;
+    let node = ctx
+        .create_node("talker")
+        .with_type_description_service()
+        .build()?;
     // ANCHOR_END: node_setup
 
     // ANCHOR: publisher_setup

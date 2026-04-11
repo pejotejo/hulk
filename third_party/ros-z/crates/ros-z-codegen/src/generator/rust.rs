@@ -933,7 +933,7 @@ fn generate_message_type_info(
     ctx: &GenerationContext,
 ) -> TokenStream {
     let name_ident = format_ident!("{}", name);
-    let type_name = format!("{}::msg::dds_::{}_", package, name);
+    let type_name = format!("{}/msg/{}", package, name);
     let schema_type_name = format!("{}/msg/{}", package, name);
     let hash_str = type_hash.to_rihs_string();
     let schema_field_tokens: Vec<TokenStream> = fields
@@ -1230,7 +1230,7 @@ pub fn generate_service_impl(srv: &ResolvedService) -> Result<TokenStream> {
     let name = format_ident!("{}", srv.parsed.name);
     let request_type = format_ident!("{}Request", srv.parsed.name);
     let response_type = format_ident!("{}Response", srv.parsed.name);
-    let service_type_name = format!("{}::srv::dds_::{}_", srv.parsed.package, srv.parsed.name);
+    let service_type_name = format!("{}/srv/{}", srv.parsed.package, srv.parsed.name);
     let hash_str = srv.type_hash.to_rihs_string();
 
     Ok(quote! {
@@ -1261,23 +1261,20 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
     let goal_type = format_ident!("{}Goal", action.parsed.name);
     let result_type = format_ident!("{}Result", action.parsed.name);
     let feedback_type = format_ident!("{}Feedback", action.parsed.name);
-    let action_type_name = format!(
-        "{}::action::dds_::{}_",
-        action.parsed.package, action.parsed.name
-    );
+    let action_type_name = format!("{}/action/{}", action.parsed.package, action.parsed.name);
     let hash_str = action.type_hash.to_rihs_string();
 
-    // Type names for action-related services and messages (ROS2 format with underscore)
+    // Canonical ROS type names for action-related services and messages.
     let send_goal_type_name = format!(
-        "{}::action::dds_::{}_SendGoal_",
+        "{}/action/{}_SendGoal",
         action.parsed.package, action.parsed.name
     );
     let get_result_type_name = format!(
-        "{}::action::dds_::{}_GetResult_",
+        "{}/action/{}_GetResult",
         action.parsed.package, action.parsed.name
     );
     let feedback_msg_type_name = format!(
-        "{}::action::dds_::{}_FeedbackMessage_",
+        "{}/action/{}_FeedbackMessage",
         action.parsed.package, action.parsed.name
     );
 
@@ -1318,7 +1315,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
 
             fn cancel_goal_type_info() -> ::ros_z::entity::TypeInfo {
                 ::ros_z::entity::TypeInfo::new(
-                    "action_msgs::srv::dds_::CancelGoal_",
+                    "action_msgs/srv/CancelGoal",
                     ::ros_z::entity::TypeHash::from_rihs_string(#cancel_goal_hash_str)
                         .expect("Invalid RIHS hash")
                 )
@@ -1334,7 +1331,7 @@ pub fn generate_action_impl(action: &crate::types::ResolvedAction) -> Result<Tok
 
             fn status_type_info() -> ::ros_z::entity::TypeInfo {
                 ::ros_z::entity::TypeInfo::new(
-                    "action_msgs::msg::dds_::GoalStatusArray_",
+                    "action_msgs/msg/GoalStatusArray",
                     ::ros_z::entity::TypeHash::from_rihs_string(#status_hash_str)
                         .expect("Invalid RIHS hash")
                 )
