@@ -17,6 +17,10 @@ impl Repository {
             .await
             .wrap_err("failed to link etc directory")?;
 
+        symlink(self.root.join("config"), upload_directory.join("config"))
+            .await
+            .wrap_err("failed to link etc directory")?;
+
         create_dir_all(upload_directory.join("bin"))
             .await
             .wrap_err("failed to create directory for binaries")?;
@@ -46,5 +50,5 @@ pub fn get_hulk_binary(profile: &str) -> String {
         other => other,
     };
 
-    format!("target/aarch64-unknown-linux-gnu/{profile_directory}/hulk_booster")
+    format!("target/aarch64-unknown-linux-gnu/{profile_directory}/hulk_ros_z")
 }
