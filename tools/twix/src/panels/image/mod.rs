@@ -12,13 +12,8 @@ use geometry::rectangle::Rectangle;
 use image::{EncodableLayout, RgbImage};
 use linear_algebra::{point, vector};
 use log::{info, warn};
-use ros_z_msgs::sensor_msgs::Image as RosZImage;
-use ros2::{
-    builtin_interfaces::time::Time as Ros2Time, sensor_msgs::image::Image as Ros2Image,
-    std_msgs::header::Header as Ros2Header,
-};
+use ros2::sensor_msgs::image::Image as Ros2Image;
 use serde_json::{Value, json};
-use zenoh_buffers::buffer::SplitBuffer;
 
 use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
 
