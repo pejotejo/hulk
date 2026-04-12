@@ -23,6 +23,7 @@ pub use fall_down_state::{
     FallDownState,
 };
 pub use low_level_command::LowLevelCommand;
+pub use maybe_ball_position::{MaybeBallPosition, ZBallPosition};
 pub use motion_intent::{DemoMode, MotionIntent};
 pub use object_detection_status::ObjectDetectionStatus;
 pub use odometry_state::OdometryState;
