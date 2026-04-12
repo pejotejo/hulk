@@ -2,11 +2,24 @@ use std::ops::{Index, IndexMut};
 
 use booster::ButtonEventType;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::{
+    ExtendedMessageTypeInfo,
+    msg::{SerdeCdrSerdes, ZMessage},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    Clone, Copy, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect, Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    Debug,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "hulk_ros_z/msg/ButtonPressType")]
 pub enum ButtonPressType {
     Short,
     Long,
@@ -38,7 +51,9 @@ impl ButtonPressType {
     PathDeserialize,
     PathIntrospect,
     Debug,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "hulk_ros_z/msg/Buttons")]
 pub struct Buttons<T> {
     pub f1: T,
     pub stand: T,
@@ -67,4 +82,8 @@ impl<T> IndexMut<i32> for Buttons<T> {
             _ => panic!("out of bounds: {index}"),
         }
     }
+}
+
+impl ZMessage for Buttons<Option<ButtonPressType>> {
+    type Serdes = SerdeCdrSerdes<Self>;
 }

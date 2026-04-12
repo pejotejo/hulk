@@ -1,5 +1,6 @@
 pub mod ball_filter;
 pub mod behavior;
+pub mod button_event_handler;
 pub mod motion;
 pub mod object_detection;
 pub mod robot_hw;
