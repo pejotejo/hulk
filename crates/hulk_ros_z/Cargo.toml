@@ -33,3 +33,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 types = { workspace = true }
 zenoh = { workspace = true }
+projection = {workspace = true}
+types = {workspace = true}
+coordinate_systems = {workspace = true}
+linear_algebra = {workspace = true}

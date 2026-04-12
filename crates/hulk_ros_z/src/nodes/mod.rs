@@ -1,3 +1,4 @@
+pub mod ball_filter;
 pub mod behavior;
 pub mod motion;
 pub mod object_detection;

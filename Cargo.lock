@@ -5205,6 +5205,7 @@ dependencies = [
  "log",
  "ndarray",
  "ort",
+ "projection",
  "ros-z",
  "ros-z-config",
  "ros-z-msgs",

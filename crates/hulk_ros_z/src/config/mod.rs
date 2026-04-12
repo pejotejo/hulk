@@ -1,3 +1,4 @@
+pub mod ball_filter;
 pub mod behavior;
 pub mod motion;
 pub mod object_detection;
@@ -6,6 +7,7 @@ pub mod sim_driver;
 pub mod state_estimator;
 pub mod vision;
 
+pub use ball_filter::BallFilterConfig;
 pub use behavior::BehaviorConfig;
 pub use motion::MotionConfig;
 pub use object_detection::ObjectDetectionConfig;
