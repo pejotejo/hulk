@@ -1,17 +1,18 @@
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
 
 use color_eyre::Result;
 use linear_algebra::vector;
 use projection::{Projection, camera_matrix::CameraMatrix};
-use ros_z::{Builder, MessageTypeInfo, TypeHash, WithTypeInfo, context::ZContext};
+use ros_z::{Builder, MessageTypeInfo, TypeHash, context::ZContext};
 use ros_z_config::prelude::*;
 use serde::{Deserialize, Serialize};
-use types::{
-    ball_position::BallPosition,
-    object_detection::{Detection, NaoLabelPartyObjectDetectionLabel},
-};
+use types::object_detection::{Detection, NaoLabelPartyObjectDetectionLabel};
 
-use crate::{IntoEyreResultExt, config::BallFilterConfig};
+use crate::{
+    IntoEyreResultExt,
+    config::BallFilterConfig,
+    msgs::{MaybeBallPosition, ZBallPosition},
+};
 use coordinate_systems::Ground;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +28,6 @@ impl MessageTypeInfo for CameraMatrixOption {
         TypeHash::zero()
     }
 }
-impl WithTypeInfo for CameraMatrixOption {}
 impl ros_z::msg::ZMessage for CameraMatrixOption {
     type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
@@ -52,7 +52,6 @@ impl MessageTypeInfo for DetectionVec {
         TypeHash::zero()
     }
 }
-impl WithTypeInfo for DetectionVec {}
 impl ros_z::msg::ZMessage for DetectionVec {
     type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
@@ -62,24 +61,6 @@ impl DetectionVec {
             detected_objects: Vec::new(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BallPositionOption {
-    ball_position: Option<BallPosition<Ground>>,
-}
-impl MessageTypeInfo for BallPositionOption {
-    fn type_name() -> &'static str {
-        "ros_z_config::msg::dds_::NodeConfigEvent_"
-    }
-
-    fn type_hash() -> TypeHash {
-        TypeHash::zero()
-    }
-}
-impl WithTypeInfo for BallPositionOption {}
-impl ros_z::msg::ZMessage for BallPositionOption {
-    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
@@ -102,7 +83,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .build()
         .into_eyre()?;
     let ball_position_pub = node
-        .create_pub::<BallPositionOption>("ball_position")
+        .create_pub::<MaybeBallPosition>("ball_filter/ball_position")
         .build()
         .into_eyre()?;
 
@@ -117,7 +98,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             }
             msg = detected_objects_sub.async_recv() => {
                 let latest_detected_objects = msg.into_eyre()?;
-                let ball_positions: Vec<BallPosition<Ground>> = latest_detected_objects.detected_objects
+                let ball_positions: Vec<ZBallPosition<Ground>> = latest_detected_objects.detected_objects
                     .into_iter()
                     .filter_map(|detection| {
                         if detection.label != NaoLabelPartyObjectDetectionLabel::Ball {
@@ -127,13 +108,13 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
                         let position = latest_camera_matrix.camera_matrix.as_ref()?
                             .pixel_to_ground_with_z(area.center(), cfg.ball_radius)
                             .ok()?;
-                        Some(BallPosition{
+                        Some(ZBallPosition{
                             position: position,
                             velocity: vector![0.0, 0.0],
-                            last_seen: SystemTime::now(),
+                            last_seen: node.clock().now(),
                         })
                     }).collect();
-                    ball_position_pub.async_publish(&BallPositionOption { ball_position: ball_positions.first().copied()}).await.into_eyre()?;
+                    ball_position_pub.async_publish(&MaybeBallPosition { position: ball_positions.first().copied()}).await.into_eyre()?;
             }
         }
     }
