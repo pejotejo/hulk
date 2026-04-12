@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use tracing::{debug, warn};
 
+use crate::entity::TYPE_HASH_NOT_SUPPORTED;
 use crate::{Builder, node::ZNode, topic_name::qualify_remote_private_service_name};
 
 #[cfg(test)]
@@ -14,6 +15,14 @@ use super::type_description_service::{
     wire_to_schema_type_description,
 };
 use super::{discovery::TopicSchemaCandidate, error::DynamicError, schema::MessageSchema};
+
+fn request_type_hash(discovered_hash: &str) -> String {
+    if discovered_hash == TYPE_HASH_NOT_SUPPORTED {
+        String::new()
+    } else {
+        discovered_hash.to_string()
+    }
+}
 
 pub(crate) async fn query_type_description(
     node: &ZNode,
@@ -42,7 +51,7 @@ pub(crate) async fn query_type_description(
         .map_err(|e| DynamicError::SerializationError(e.to_string()))?;
     let request = GetTypeDescriptionRequest {
         type_name: candidate.type_name.clone(),
-        type_hash: candidate.type_hash.clone(),
+        type_hash: request_type_hash(&candidate.type_hash),
         include_type_sources: include_sources,
     };
 
@@ -87,7 +96,10 @@ mod tests {
     use crate::dynamic::type_description_service::{
         WireTypeDescription, schema_to_wire_type_description,
     };
-    use crate::entity::{EndpointEntity, EndpointKind, Entity, NodeEntity, TypeInfo};
+    use crate::entity::{
+        EndpointEntity, EndpointKind, Entity, NodeEntity, TYPE_HASH_NOT_SUPPORTED, TypeHash,
+        TypeInfo,
+    };
 
     fn publisher_entity(node_name: Option<&str>, type_name: Option<&str>) -> Arc<Entity> {
         let node = node_name.map(|name| {
@@ -216,5 +228,16 @@ mod tests {
             err,
             DynamicError::MissingNodeIdentity { ref topic } if topic == "/chatter"
         ));
+    }
+
+    #[test]
+    fn test_request_type_hash_omits_humble_sentinel() {
+        assert_eq!(request_type_hash(TYPE_HASH_NOT_SUPPORTED), "");
+    }
+
+    #[test]
+    fn test_request_type_hash_preserves_real_hash() {
+        let hash = TypeHash([0xab; 32]).to_rihs_string();
+        assert_eq!(request_type_hash(&hash), hash);
     }
 }

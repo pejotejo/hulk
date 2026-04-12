@@ -15,6 +15,7 @@ use ros_z::{
     entity::{EntityKind, NodeKey},
 };
 use ros_z_msgs::{example_interfaces::srv::AddTwoInts, std_msgs::String as RosString};
+
 /// Helper to create a test context and node
 async fn setup_test_node(
     node_name: &str,
@@ -26,6 +27,16 @@ async fn setup_test_node(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok((ctx, node))
+}
+
+fn unique_graph_name(prefix: &str) -> String {
+    format!(
+        "/{prefix}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
 }
 
 /// Helper to wait for publishers on a topic
@@ -70,6 +81,27 @@ async fn wait_for_subscribers(
     }
 }
 
+/// Helper to wait for services on a service name
+async fn wait_for_services(
+    node: &ros_z::node::ZNode,
+    service: &str,
+    expected_count: usize,
+    timeout_ms: u64,
+) -> Result<bool> {
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    loop {
+        let count = node.graph().count(EntityKind::Service, service);
+        if count >= expected_count {
+            return Ok(true);
+        }
+        if start.elapsed() >= timeout {
+            return Ok(false);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,18 +109,20 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_get_topic_names_and_types() -> Result<()> {
         let (_ctx, node) = setup_test_node("test_graph_node").await?;
+        let topic_name = unique_graph_name("test_graph_topic_names_and_types");
 
-        // Get topic names and types - should succeed
+        let _pub = node.create_pub::<RosString>(&topic_name).build()?;
+        assert!(
+            wait_for_publishers(&node, &topic_name, 1, 1_000).await?,
+            "Expected graph to discover publisher for {topic_name}"
+        );
+
         let graph = node.graph().clone();
         let topics = graph.get_topic_names_and_types();
 
-        // Should return a valid result (even if empty or contains only rosout)
-        // In a fresh system, we might see /rosout or /parameter_events
         assert!(
-            topics.is_empty()
-                || topics
-                    .iter()
-                    .any(|(name, _)| name.contains("rosout") || name.contains("parameter_events"))
+            topics.iter().any(|(name, _)| name == &topic_name),
+            "Expected to find {topic_name} in discovered topics, got: {topics:?}"
         );
 
         Ok(())
@@ -98,19 +132,20 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_get_service_names_and_types() -> Result<()> {
         let (_ctx, node) = setup_test_node("test_graph_node").await?;
+        let service_name = unique_graph_name("test_graph_service_names_and_types");
 
-        // Get service names and types - should succeed
+        let _service = node.create_service::<AddTwoInts>(&service_name).build()?;
+        assert!(
+            wait_for_services(&node, &service_name, 1, 1_000).await?,
+            "Expected graph to discover service for {service_name}"
+        );
+
         let graph = node.graph().clone();
         let services = graph.get_service_names_and_types();
 
-        // Should return a valid result (might have node-related services)
-        // Fresh node typically has parameter services
         assert!(
-            services.is_empty()
-                || services
-                    .iter()
-                    .any(|(name, _)| name.contains("parameter")
-                        || name.contains("describe_parameters"))
+            services.iter().any(|(name, _)| name == &service_name),
+            "Expected to find {service_name} in discovered services, got: {services:?}"
         );
 
         Ok(())

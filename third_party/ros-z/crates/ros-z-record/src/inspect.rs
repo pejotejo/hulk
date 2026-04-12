@@ -6,11 +6,11 @@ use std::{
 
 use anyhow::{Context, Result};
 use mcap::{
+    MessageStream,
     read::{LinearReader, Summary},
     records::{Channel, Header, Record, SchemaHeader},
-    MessageStream,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::ResolvedTopic;
 
@@ -399,9 +399,5 @@ fn decode_metadata_json<T: DeserializeOwned>(
 }
 
 fn non_empty(value: String) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }

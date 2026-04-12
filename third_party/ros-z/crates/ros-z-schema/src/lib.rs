@@ -16,7 +16,7 @@ mod type_id;
 
 pub use hash::{calculate_hash, to_ros2_json};
 pub use type_description::{
-    to_hash_version, FieldDescription, FieldTypeDescription, TypeDescription, TypeDescriptionMsg,
+    FieldDescription, FieldTypeDescription, TypeDescription, TypeDescriptionMsg, to_hash_version,
 };
 pub use type_id::TypeId;
 

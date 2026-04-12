@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fs::File, io::BufWriter};
 
-use mcap::{records::MessageHeader, write::Metadata, WriteOptions};
+use mcap::{WriteOptions, records::MessageHeader, write::Metadata};
 use tempfile::tempdir;
 
 use crate::inspect_file;

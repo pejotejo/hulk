@@ -83,7 +83,9 @@ mod tests {
             file.path().to_str().expect("temp file path"),
         ]);
 
-        let error = run(cli).await.expect_err("empty file should not inspect successfully");
+        let error = run(cli)
+            .await
+            .expect_err("empty file should not inspect successfully");
         assert!(!error.to_string().contains("failed to build ros-z context"));
     }
 }

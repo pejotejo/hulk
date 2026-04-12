@@ -223,7 +223,7 @@ impl App {
 
         for i in 0..width.saturating_sub(2) {
             let sec = (i as f64 / chars_per_sec) as usize;
-            if sec.is_multiple_of(tick_interval) && i > 0 {
+            if sec % tick_interval == 0 && i > 0 {
                 axis_chars.push('┴');
             } else {
                 axis_chars.push('─');

@@ -177,8 +177,11 @@ mod tests {
     #[test]
     fn publisher_type_hash_formats_present_hash() {
         let hash = TypeHash([0xab; 32]);
-        let type_info = TypeInfo::with_hash("std_msgs/msg/String", hash.clone());
+        let type_info = TypeInfo::with_hash("std_msgs/msg/String", hash);
 
-        assert_eq!(publisher_type_hash(Some(&type_info)), Some(hash.to_rihs_string()));
+        assert_eq!(
+            publisher_type_hash(Some(&type_info)),
+            Some(hash.to_rihs_string())
+        );
     }
 }

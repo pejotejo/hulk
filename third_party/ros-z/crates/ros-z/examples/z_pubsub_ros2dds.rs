@@ -32,10 +32,7 @@
 use std::time::Duration;
 
 use clap::Parser;
-use ros_z::{
-    TypeHash,
-    entity::{NodeEntity, TypeInfo},
-};
+use ros_z::entity::{NodeEntity, TypeInfo};
 use ros_z_cdr::{CdrSerializer, LittleEndian};
 use ros_z_protocol::entity::{EndpointEntity, EndpointKind};
 use serde::{Deserialize, Serialize};

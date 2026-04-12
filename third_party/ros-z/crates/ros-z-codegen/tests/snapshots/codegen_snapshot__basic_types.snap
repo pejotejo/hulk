@@ -29,7 +29,7 @@ pub struct BasicTypes {
 impl BasicTypes {}
 impl ::ros_z::MessageTypeInfo for BasicTypes {
     fn type_name() -> &'static str {
-        "test_interface_files::msg::dds_::BasicTypes_"
+        "test_interface_files/msg/BasicTypes"
     }
     fn type_hash() -> ::ros_z::entity::TypeHash {
         ::ros_z::entity::TypeHash::from_rihs_string(

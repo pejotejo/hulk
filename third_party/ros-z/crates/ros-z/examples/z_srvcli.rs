@@ -1,9 +1,8 @@
 #[cfg(not(test))]
 use clap::{Parser, ValueEnum};
-use ros_z::{
-    Builder, Result,
-    context::{ZContext, ZContextBuilder},
-};
+#[cfg(not(test))]
+use ros_z::context::ZContextBuilder;
+use ros_z::{Builder, Result, context::ZContext};
 use ros_z_msgs::example_interfaces::{AddTwoIntsRequest, AddTwoIntsResponse, srv::AddTwoInts};
 
 #[cfg(not(test))]

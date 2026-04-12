@@ -224,8 +224,8 @@ mod tests {
 
     use super::*;
     use ros_z::dynamic::{
-        EnumPayloadValue, EnumSchema, EnumValue, EnumVariantSchema, FieldSchema, FieldType,
-        MessageSchema,
+        DynamicNamedValue, EnumPayloadSchema, EnumPayloadValue, EnumSchema, EnumValue,
+        EnumVariantSchema, FieldSchema, FieldType, MessageSchema,
     };
 
     #[test]
@@ -302,7 +302,7 @@ mod tests {
         let enum_value = DynamicValue::Enum(EnumValue::new(
             1,
             "Error",
-            EnumPayloadValue::Struct(vec![crate::dynamic::DynamicNamedValue {
+            EnumPayloadValue::Struct(vec![DynamicNamedValue {
                 name: "code".to_string(),
                 value: DynamicValue::Uint32(42),
             }]),
@@ -318,13 +318,10 @@ mod tests {
         let status_schema = Arc::new(EnumSchema::new(
             "test_msgs/msg/Status",
             vec![
-                EnumVariantSchema::new("Idle", crate::dynamic::EnumPayloadSchema::Unit),
+                EnumVariantSchema::new("Idle", EnumPayloadSchema::Unit),
                 EnumVariantSchema::new(
                     "Error",
-                    crate::dynamic::EnumPayloadSchema::Struct(vec![FieldSchema::new(
-                        "code",
-                        FieldType::Uint32,
-                    )]),
+                    EnumPayloadSchema::Struct(vec![FieldSchema::new("code", FieldType::Uint32)]),
                 ),
             ],
         ));
@@ -342,7 +339,7 @@ mod tests {
             EnumValue::new(
                 1,
                 "Error",
-                EnumPayloadValue::Struct(vec![crate::dynamic::DynamicNamedValue {
+                EnumPayloadValue::Struct(vec![DynamicNamedValue {
                     name: "code".to_string(),
                     value: DynamicValue::Uint32(5),
                 }]),

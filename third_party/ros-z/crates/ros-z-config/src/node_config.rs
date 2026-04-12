@@ -263,7 +263,10 @@ fn snapshot_from_parts<T>(
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    let layers = layers.iter().map(|path| layer_path(path)).collect::<Vec<_>>();
+    let layers = layers
+        .iter()
+        .map(|path| layer_path(path))
+        .collect::<Vec<_>>();
     let merge_inputs = layers
         .iter()
         .zip(layer_overlays.iter())

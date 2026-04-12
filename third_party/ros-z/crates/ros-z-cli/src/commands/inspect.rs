@@ -1,8 +1,8 @@
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 
 use crate::{
     cli::InspectArgs,
-    render::{json, text, OutputMode},
+    render::{OutputMode, json, text},
 };
 
 pub fn run(output_mode: OutputMode, args: &InspectArgs) -> Result<()> {

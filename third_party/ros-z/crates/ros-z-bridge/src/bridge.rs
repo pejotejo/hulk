@@ -251,7 +251,7 @@ impl Bridge {
         // the real RIHS01 hash from the compile-time registry.
         let jazzy_hash = match from_distro {
             Distro::Jazzy => match discovered_hash {
-                Some(hash) => hash.clone(),
+                Some(hash) => *hash,
                 None => {
                     tracing::warn!(
                         "Missing Jazzy hash for type {} — cannot bridge",
@@ -261,7 +261,7 @@ impl Bridge {
                 }
             },
             Distro::Humble => match hash_registry::lookup(&key.type_name) {
-                Some(h) => h.clone(),
+                Some(h) => *h,
                 None => {
                     tracing::warn!(
                         "Unknown type {} — cannot bridge (no hash in registry)",

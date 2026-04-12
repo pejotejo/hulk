@@ -43,7 +43,7 @@ impl MessageTypeInfo for MockMessage {
     }
 
     fn type_hash_dyn(&self) -> TypeHash {
-        self.hash.clone()
+        self.hash
     }
 }
 

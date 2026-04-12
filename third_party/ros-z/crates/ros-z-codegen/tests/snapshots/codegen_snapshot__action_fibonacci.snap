@@ -8,11 +8,11 @@ impl ::ros_z::action::ZAction for Fibonacci {
     type Result = super::FibonacciResult;
     type Feedback = super::FibonacciFeedback;
     fn name() -> &'static str {
-        "test_interface_files::action::dds_::Fibonacci_"
+        "test_interface_files/action/Fibonacci"
     }
     fn send_goal_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "test_interface_files::action::dds_::Fibonacci_SendGoal_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "test_interface_files/action/Fibonacci_SendGoal",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_0000000000000000000000000000000000000000000000000000000000000000",
                 )
@@ -20,8 +20,8 @@ impl ::ros_z::action::ZAction for Fibonacci {
         )
     }
     fn get_result_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "test_interface_files::action::dds_::Fibonacci_GetResult_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "test_interface_files/action/Fibonacci_GetResult",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_0000000000000000000000000000000000000000000000000000000000000000",
                 )
@@ -29,8 +29,8 @@ impl ::ros_z::action::ZAction for Fibonacci {
         )
     }
     fn cancel_goal_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "action_msgs::srv::dds_::CancelGoal_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "action_msgs/srv/CancelGoal",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_0000000000000000000000000000000000000000000000000000000000000000",
                 )
@@ -38,8 +38,8 @@ impl ::ros_z::action::ZAction for Fibonacci {
         )
     }
     fn feedback_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "test_interface_files::action::dds_::Fibonacci_FeedbackMessage_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "test_interface_files/action/Fibonacci_FeedbackMessage",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_00dda06a3151125d7c8b1f8108fcb5ff3a63cf9dc1a6bc21ad2a44c32de880c9",
                 )
@@ -47,8 +47,8 @@ impl ::ros_z::action::ZAction for Fibonacci {
         )
     }
     fn status_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "action_msgs::msg::dds_::GoalStatusArray_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "action_msgs/msg/GoalStatusArray",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_b73abae85fae0438c779e2729c5b4c90d7aafdde7242ade4ef9e3c495610bdad",
                 )
@@ -58,8 +58,8 @@ impl ::ros_z::action::ZAction for Fibonacci {
 }
 impl ::ros_z::ActionTypeInfo for Fibonacci {
     fn action_type_info() -> ::ros_z::entity::TypeInfo {
-        ::ros_z::entity::TypeInfo::new(
-            "test_interface_files::action::dds_::Fibonacci_",
+        ::ros_z::entity::TypeInfo::with_hash(
+            "test_interface_files/action/Fibonacci",
             ::ros_z::entity::TypeHash::from_rihs_string(
                     "RIHS01_62386f9d87ee337d0377063c39ada617e5bba9ae8f3f8915b9d55471d4afa938",
                 )

@@ -2,10 +2,9 @@ use std::time::Duration;
 
 #[cfg(not(test))]
 use clap::Parser;
-use ros_z::{
-    Builder, MessageTypeInfo, Result, ServiceTypeInfo, context::ZContextBuilder,
-    msg::ZService,
-};
+#[cfg(not(test))]
+use ros_z::context::ZContextBuilder;
+use ros_z::{Builder, MessageTypeInfo, Result, ServiceTypeInfo, msg::ZService};
 use serde::{Deserialize, Serialize};
 
 // Custom message for pub/sub example
@@ -116,6 +115,7 @@ async fn main() -> Result<()> {
     }
 }
 
+#[cfg(not(test))]
 async fn run_status_publisher(robot_id: String) -> Result<()> {
     println!("Starting robot status publisher for robot: {robot_id}");
 
@@ -172,6 +172,7 @@ async fn run_status_publisher(robot_id: String) -> Result<()> {
     }
 }
 
+#[cfg(not(test))]
 async fn run_status_subscriber() -> Result<()> {
     println!("Starting robot status subscriber...");
 

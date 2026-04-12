@@ -13,6 +13,20 @@ use crate::app::state::*;
 
 use super::common::*;
 
+fn format_type_info_label(name: &str, hash: Option<&ros_z::entity::TypeHash>) -> String {
+    let hash_str = match hash {
+        Some(hash) => hash.to_rihs_string(),
+        None => "unknown".to_string(),
+    };
+    let hash_short = if hash_str.len() > HASH_TRUNCATE_LEN {
+        format!("{}...", &hash_str[..HASH_TRUNCATE_LEN])
+    } else {
+        hash_str
+    };
+
+    format!("{name} ({hash_short})")
+}
+
 impl App {
     /// Render topic list items
     pub fn render_topic_list_items(
@@ -156,13 +170,10 @@ impl App {
                         }
 
                         if let Some(ti) = &endpoint.type_info {
-                            let hash_str = ti.hash.to_rihs_string();
-                            let hash_short = if hash_str.len() > HASH_TRUNCATE_LEN {
-                                format!("{}...", &hash_str[..HASH_TRUNCATE_LEN])
-                            } else {
-                                hash_str
-                            };
-                            detail.push_str(&format!("    Type: {} ({})\n", ti.name, hash_short));
+                            detail.push_str(&format!(
+                                "    Type: {}\n",
+                                format_type_info_label(&ti.name, ti.hash.as_ref())
+                            ));
                         }
 
                         detail.push_str(&format_qos_detail(&endpoint.qos));
@@ -203,13 +214,10 @@ impl App {
                         }
 
                         if let Some(ti) = &endpoint.type_info {
-                            let hash_str = ti.hash.to_rihs_string();
-                            let hash_short = if hash_str.len() > HASH_TRUNCATE_LEN {
-                                format!("{}...", &hash_str[..HASH_TRUNCATE_LEN])
-                            } else {
-                                hash_str
-                            };
-                            detail.push_str(&format!("    Type: {} ({})\n", ti.name, hash_short));
+                            detail.push_str(&format!(
+                                "    Type: {}\n",
+                                format_type_info_label(&ti.name, ti.hash.as_ref())
+                            ));
                         }
 
                         detail.push_str(&format_qos_detail(&endpoint.qos));
@@ -222,5 +230,27 @@ impl App {
         }
 
         detail
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_type_info_label;
+    use ros_z::entity::TypeHash;
+
+    #[test]
+    fn format_type_info_label_uses_unknown_for_missing_hash() {
+        assert_eq!(
+            format_type_info_label("std_msgs/msg/String", None),
+            "std_msgs/msg/String (unknown)"
+        );
+    }
+
+    #[test]
+    fn format_type_info_label_truncates_present_hash() {
+        assert_eq!(
+            format_type_info_label("std_msgs/msg/String", Some(&TypeHash([0xab; 32]))),
+            "std_msgs/msg/String (RIHS01_ababababa...)"
+        );
     }
 }

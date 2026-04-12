@@ -10,10 +10,6 @@ mod inspect_tests;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use ros_z::{dynamic::MessageSchema, node::ZNode};
-use tokio::{sync::watch, task::JoinHandle};
-use tokio_util::sync::CancellationToken;
-
 pub use api::{
     RecorderOptions, RecordingReport, RecordingStartup, ResolvedPublisher, ResolvedTopic,
     StatsSnapshot, TopicStats,
@@ -21,6 +17,9 @@ pub use api::{
 pub use inspect::{InspectedTopic, InspectionReport, RosZInspection, inspect_file};
 pub use output::{format_output_timestamp, resolve_output_path};
 pub use prepare::normalize_topics;
+use ros_z::{dynamic::MessageSchema, node::ZNode};
+use tokio::{sync::watch, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 struct TopicPlan {
     startup: ResolvedTopic,

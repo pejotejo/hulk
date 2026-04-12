@@ -345,7 +345,7 @@ fn validate_integer_range(value: i64, range: &IntegerRange) -> Result<(), String
 
     if range.step != 0 {
         let offset = (value - range.from_value).unsigned_abs();
-        if !offset.is_multiple_of(range.step) {
+        if offset % range.step != 0 {
             // Upper bound is always valid
             if value != range.to_value {
                 return Err(format!(

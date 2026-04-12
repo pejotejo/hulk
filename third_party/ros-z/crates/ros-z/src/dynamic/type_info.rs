@@ -1,7 +1,7 @@
 use tracing::warn;
 
 use crate::dynamic::{MessageSchema, MessageSchemaTypeDescription};
-use crate::entity::{TypeHash, TypeInfo, TYPE_HASH_NOT_SUPPORTED};
+use crate::entity::{TYPE_HASH_NOT_SUPPORTED, TypeHash, TypeInfo};
 use crate::ros_msg::dds_type_name_to_canonical;
 
 pub(crate) fn ros_type_name_from_dds(dds_name: &str) -> String {

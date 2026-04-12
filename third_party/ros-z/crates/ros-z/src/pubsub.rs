@@ -1279,7 +1279,9 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
             .map(Received::into_message)
     }
 
-    pub async fn async_recv_with_metadata(&self) -> Result<Received<crate::dynamic::DynamicMessage>> {
+    pub async fn async_recv_with_metadata(
+        &self,
+    ) -> Result<Received<crate::dynamic::DynamicMessage>> {
         let schema = self
             .dyn_schema
             .as_ref()
@@ -1303,7 +1305,9 @@ impl ZSub<crate::dynamic::DynamicMessage, Sample, crate::dynamic::DynamicSerdeCd
             .map(|result| result.map(Received::into_message))
     }
 
-    pub fn try_recv_with_metadata(&self) -> Option<Result<Received<crate::dynamic::DynamicMessage>>> {
+    pub fn try_recv_with_metadata(
+        &self,
+    ) -> Option<Result<Received<crate::dynamic::DynamicMessage>>> {
         let schema = self.dyn_schema.as_ref()?;
         let queue = self.queue.as_ref()?;
 

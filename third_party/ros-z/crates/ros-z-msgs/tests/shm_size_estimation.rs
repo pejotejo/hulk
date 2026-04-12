@@ -14,6 +14,10 @@ use ros_z::{
 };
 use zenoh_buffers::buffer::Buffer;
 
+fn test_shm_pool_size(required_bytes: usize) -> usize {
+    required_bytes + (256 * 1024)
+}
+
 #[test]
 fn test_pointcloud2_shm_serialization_with_accurate_estimate() {
     use ros_z_msgs::{
@@ -76,7 +80,7 @@ fn test_pointcloud2_shm_serialization_with_accurate_estimate() {
 
     // Create SHM provider
     let provider = Arc::new(
-        ShmProviderBuilder::new(10 * 1024 * 1024)
+        ShmProviderBuilder::new(test_shm_pool_size(estimated))
             .build()
             .expect("Failed to create SHM provider"),
     );
@@ -143,7 +147,7 @@ fn test_image_shm_serialization_with_accurate_estimate() {
     );
 
     let provider = Arc::new(
-        ShmProviderBuilder::new(10 * 1024 * 1024)
+        ShmProviderBuilder::new(test_shm_pool_size(estimated))
             .build()
             .expect("Failed to create SHM provider"),
     );
@@ -276,7 +280,7 @@ fn test_multiple_messages_share_shm_pool() {
 
     // Create shared SHM pool
     let provider = Arc::new(
-        ShmProviderBuilder::new(20 * 1024 * 1024)
+        ShmProviderBuilder::new(test_shm_pool_size(5 * 100_000))
             .build()
             .expect("Failed to create SHM provider"),
     );

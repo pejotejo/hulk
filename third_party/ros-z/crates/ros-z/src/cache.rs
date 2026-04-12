@@ -48,13 +48,13 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::{debug, warn};
-use zenoh::liveliness::LivelinessToken;
 use zenoh::Result;
+use zenoh::liveliness::LivelinessToken;
 
+use crate::Builder;
 use crate::msg::{SerdeCdrSerdes, ZDeserializer, ZMessage};
 use crate::pubsub::ZSubBuilder;
 use crate::time::ZTime;
-use crate::Builder;
 
 // ---------------------------------------------------------------------------
 // Stamp strategy markers

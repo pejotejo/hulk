@@ -49,7 +49,7 @@ pub struct Arrays {
 impl Arrays {}
 impl ::ros_z::MessageTypeInfo for Arrays {
     fn type_name() -> &'static str {
-        "test_interface_files::msg::dds_::Arrays_"
+        "test_interface_files/msg/Arrays"
     }
     fn type_hash() -> ::ros_z::entity::TypeHash {
         ::ros_z::entity::TypeHash::from_rihs_string(

@@ -13,7 +13,7 @@ use zenoh::{key_expr::KeyExpr, session::ZenohId, Result};
 use crate::{
     entity::{
         EndpointEntity, EndpointKind, Entity, EntityConversionError, LivelinessKE, NodeEntity,
-        TopicKE, TypeHash, TypeInfo,
+        TopicKE, TypeInfo,
     },
     qos::{QosDurability, QosHistory, QosProfile, QosReliability},
 };

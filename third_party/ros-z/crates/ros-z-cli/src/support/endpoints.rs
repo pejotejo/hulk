@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use ros_z::entity::{entity_get_endpoint, Entity};
+use ros_z::entity::{Entity, entity_get_endpoint};
 
 use crate::{
     model::info::{EndpointSummary, NamedType},
@@ -72,7 +72,7 @@ mod tests {
             node: None,
             kind: EndpointKind::Publisher,
             topic: "/demo".to_string(),
-            type_info: Some(TypeInfo::with_hash("std_msgs/msg/String", hash.clone())),
+            type_info: Some(TypeInfo::with_hash("std_msgs/msg/String", hash)),
             qos: Default::default(),
         }))];
 

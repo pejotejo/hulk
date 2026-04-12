@@ -736,7 +736,10 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::watch;
 
-    use crate::{TopicPlan, api::{RecordingStartup, ResolvedPublisher, ResolvedTopic, StatsSnapshot}};
+    use crate::{
+        TopicPlan,
+        api::{RecordingStartup, ResolvedPublisher, ResolvedTopic, StatsSnapshot},
+    };
 
     use super::{
         McapRecorder, SampleEnvelope, SourceKey, normalize_sequence, parse_recording_encoding,

@@ -24,7 +24,7 @@ pub struct Strings {
 impl Strings {}
 impl ::ros_z::MessageTypeInfo for Strings {
     fn type_name() -> &'static str {
-        "test_interface_files::msg::dds_::Strings_"
+        "test_interface_files/msg/Strings"
     }
     fn type_hash() -> ::ros_z::entity::TypeHash {
         ::ros_z::entity::TypeHash::from_rihs_string(
