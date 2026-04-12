@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{Context, Result, anyhow, bail};
 use ros_z::{
     dynamic::DiscoveredTopicSchema,
-    entity::{Entity, EntityKind},
+    entity::{Entity, EntityKind, TypeInfo},
     extended_schema::schema_to_extension_json,
     node::ZNode,
 };
@@ -123,15 +123,16 @@ fn collect_publishers(node: &ZNode, discovered: &DiscoveredTopicSchema) -> Vec<R
         .filter_map(|entity| match entity.as_ref() {
             Entity::Endpoint(endpoint) => Some(ResolvedPublisher {
                 node_fqn: endpoint.node.as_ref().map(node_fqn),
-                type_hash: endpoint
-                    .type_info
-                    .as_ref()
-                    .map(|type_info| type_info.hash.to_rihs_string()),
+                type_hash: publisher_type_hash(endpoint.type_info.as_ref()),
                 qos: endpoint.qos.encode(),
             }),
             Entity::Node(_) => None,
         })
         .collect()
+}
+
+fn publisher_type_hash(type_info: Option<&TypeInfo>) -> Option<String> {
+    type_info.and_then(|type_info| type_info.hash.as_ref().map(|hash| hash.to_rihs_string()))
 }
 
 fn node_fqn(node: &ros_z::entity::NodeEntity) -> String {
@@ -150,7 +151,9 @@ fn node_fqn(node: &ros_z::entity::NodeEntity) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_topics;
+    use ros_z::entity::{TypeHash, TypeInfo};
+
+    use super::{normalize_topics, publisher_type_hash};
 
     #[test]
     fn normalize_topics_preserves_order() {
@@ -162,5 +165,20 @@ mod tests {
         ]);
 
         assert_eq!(normalized, vec!["/foo", "/bar", "/baz"]);
+    }
+
+    #[test]
+    fn publisher_type_hash_returns_none_when_missing() {
+        let type_info = TypeInfo::new("std_msgs/msg/String", None);
+
+        assert_eq!(publisher_type_hash(Some(&type_info)), None);
+    }
+
+    #[test]
+    fn publisher_type_hash_formats_present_hash() {
+        let hash = TypeHash([0xab; 32]);
+        let type_info = TypeInfo::with_hash("std_msgs/msg/String", hash.clone());
+
+        assert_eq!(publisher_type_hash(Some(&type_info)), Some(hash.to_rihs_string()));
     }
 }

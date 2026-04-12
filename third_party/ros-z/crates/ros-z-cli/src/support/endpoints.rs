@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use ros_z::entity::{Entity, entity_get_endpoint};
+use ros_z::entity::{entity_get_endpoint, Entity};
 
 use crate::{
     model::info::{EndpointSummary, NamedType},
@@ -19,7 +19,7 @@ pub fn summarize_endpoints(entities: Vec<Arc<Entity>>) -> Vec<EndpointSummary> {
             let type_hash = endpoint
                 .type_info
                 .as_ref()
-                .map(|type_info| type_info.hash.to_string());
+                .and_then(|type_info| type_info.hash.as_ref().map(|hash| hash.to_string()));
             endpoints.insert((node, type_hash));
         }
     }
@@ -36,4 +36,49 @@ pub fn named_types(entries: Vec<(String, String)>) -> Vec<NamedType> {
         .into_iter()
         .map(|(name, type_name)| NamedType::new(name, type_name))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use ros_z::entity::{EndpointEntity, EndpointKind, Entity, TypeHash, TypeInfo};
+
+    use super::summarize_endpoints;
+
+    #[test]
+    fn summarize_endpoints_keeps_missing_type_hash() {
+        let entities = vec![Arc::new(Entity::Endpoint(EndpointEntity {
+            id: 7,
+            node: None,
+            kind: EndpointKind::Publisher,
+            topic: "/demo".to_string(),
+            type_info: Some(TypeInfo::new("std_msgs/msg/String", None)),
+            qos: Default::default(),
+        }))];
+
+        let summaries = summarize_endpoints(entities);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].type_hash, None);
+    }
+
+    #[test]
+    fn summarize_endpoints_formats_present_type_hash() {
+        let hash = TypeHash([0xcd; 32]);
+        let expected = hash.to_string();
+        let entities = vec![Arc::new(Entity::Endpoint(EndpointEntity {
+            id: 7,
+            node: None,
+            kind: EndpointKind::Publisher,
+            topic: "/demo".to_string(),
+            type_info: Some(TypeInfo::with_hash("std_msgs/msg/String", hash.clone())),
+            qos: Default::default(),
+        }))];
+
+        let summaries = summarize_endpoints(entities);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].type_hash.as_deref(), Some(expected.as_str()));
+    }
 }
