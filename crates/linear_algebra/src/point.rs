@@ -1,5 +1,9 @@
 use nalgebra::{ClosedAddAssign, ClosedMulAssign, ClosedSubAssign, Scalar, SimdComplexField};
 use num_traits::{One, Zero};
+use ros_z::{
+    FieldTypeInfo,
+    dynamic::{FieldType, MessageSchema},
+};
 use simba::scalar::SupersetOf;
 
 use crate::{Framed, Vector};
@@ -8,6 +12,18 @@ pub type Point<Frame, const DIMENSION: usize, T = f32> =
     Framed<Frame, nalgebra::Point<T, DIMENSION>>;
 pub type Point2<Frame, T = f32> = Point<Frame, 2, T>;
 pub type Point3<Frame, T = f32> = Point<Frame, 3, T>;
+
+impl<T> FieldTypeInfo for Point2<T> {
+    fn field_type() -> FieldType {
+        FieldType::Message(
+            MessageSchema::builder("linear_algepra/msg/Point2")
+                .field("x", FieldType::Float32)
+                .field("y", FieldType::Float32)
+                .build()
+                .expect("failed to build schema for Point2"),
+        )
+    }
+}
 
 #[macro_export]
 macro_rules! point {

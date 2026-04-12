@@ -2707,6 +2707,7 @@ dependencies = [
  "approx",
  "approx_derive",
  "path_serde",
+ "ros-z",
  "serde",
 ]
 
@@ -5920,6 +5921,7 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "path_serde",
+ "ros-z",
  "serde",
  "simba",
 ]

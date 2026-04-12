@@ -1,5 +1,9 @@
 use nalgebra::{ClosedAddAssign, ClosedMulAssign, ComplexField, SVector, Scalar, SimdComplexField};
 use num_traits::{One, Signed, Zero};
+use ros_z::{
+    FieldTypeInfo,
+    dynamic::{FieldType, MessageSchema},
+};
 
 use crate::{Framed, Point};
 
@@ -7,6 +11,18 @@ pub type Vector<Frame, const DIMENSION: usize, Scalar = f32> =
     Framed<Frame, nalgebra::SVector<Scalar, DIMENSION>>;
 pub type Vector2<Frame, Scalar = f32> = Vector<Frame, 2, Scalar>;
 pub type Vector3<Frame, Scalar = f32> = Vector<Frame, 3, Scalar>;
+
+impl<T> FieldTypeInfo for Vector2<T> {
+    fn field_type() -> FieldType {
+        FieldType::Message(
+            MessageSchema::builder("linear_algepra/msg/Vector2")
+                .field("v0", FieldType::Float32)
+                .field("v1", FieldType::Float32)
+                .build()
+                .expect("failed to build schema for Vector2"),
+        )
+    }
+}
 
 #[macro_export]
 macro_rules! vector {

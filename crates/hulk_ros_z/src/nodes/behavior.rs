@@ -24,7 +24,12 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .add_validation_hook(|cfg: &BehaviorConfig| {
             for (name, value, min, max) in [
                 ("behavior.walk.forward", cfg.walk.forward, 0.0, 5.0),
-                ("behavior.walk.angular_scale", cfg.walk.angular_scale, 0.0, 5.0),
+                (
+                    "behavior.walk.angular_scale",
+                    cfg.walk.angular_scale,
+                    0.0,
+                    5.0,
+                ),
                 ("behavior.walk.angular_max", cfg.walk.angular_max, 0.0, 5.0),
             ] {
                 if !value.is_finite() {

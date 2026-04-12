@@ -1,5 +1,6 @@
 use approx_derive::{AbsDiffEq, RelativeEq};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::{MessageTypeInfo, dynamic::MessageSchema};
 use serde::{Deserialize, Serialize};
 
 macro_rules! generate_coordinate_system {
@@ -24,6 +25,18 @@ macro_rules! generate_coordinate_system {
             #[abs_diff_eq(epsilon_type = f32)]
             $(#[$doc])*
             pub struct $i;
+
+            impl MessageTypeInfo for $i {
+                fn type_name() -> &'static str {
+                    "hulk_coordinate_system/msg/coordinate_system"
+                }
+                fn type_hash() -> ros_z::TypeHash {
+                    ros_z::TypeHash::zero()
+                }
+                fn message_schema() -> Option<std::sync::Arc<MessageSchema>> {
+                    None
+                }
+            }
         )*
     }
 }
