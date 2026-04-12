@@ -1,0 +1,13 @@
+[package]
+name = "ros_z_streams"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ros-z = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+zenoh = { workspace = true }
+tokio = { workspace = true }
