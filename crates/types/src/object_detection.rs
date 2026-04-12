@@ -1,10 +1,44 @@
 use color_eyre::Result;
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::{
+    MessageTypeInfo, TypeHash,
+    dynamic::{FieldSchema, MessageSchema},
+};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc as SyncArc;
 
 use crate::bounding_box::BoundingBox;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
+)]
+#[ros_msg(type_name = "hulk_ros_z/msg/Detections")]
+pub struct Detections<T> {
+    pub detections: Vec<Detection<T>>,
+}
+
+impl ros_z::msg::ZMessage for Detections<NaoLabelPartyObjectDetectionLabel> {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PathIntrospect,
+    PathSerialize,
+    PathDeserialize,
+    MessageTypeInfo,
+)]
+#[ros_msg(type_name = "hulk_ros_z/msg/Detection")]
 pub struct Detection<T> {
     pub label: T,
     pub bounding_box: BoundingBox,
@@ -274,6 +308,7 @@ impl From<YOLOv8ObjectDetectionLabel> for String {
 #[derive(
     Debug, Clone, Serialize, Deserialize, PathIntrospect, PathSerialize, PathDeserialize, PartialEq,
 )]
+#[repr(u8)]
 pub enum NaoLabelPartyObjectDetectionLabel {
     Ball = 0,
     GoalPost = 1,
@@ -283,6 +318,30 @@ pub enum NaoLabelPartyObjectDetectionLabel {
     TSpot = 5,
     XSpot = 6,
     Person = 7,
+}
+
+impl MessageTypeInfo for NaoLabelPartyObjectDetectionLabel {
+    fn type_name() -> &'static str {
+        "hulk_ros_z/msg/NaoLabelPartyObjectDetectionLabel"
+    }
+
+    fn type_hash() -> TypeHash {
+        TypeHash::zero()
+    }
+
+    fn message_schema() -> Option<std::sync::Arc<ros_z::dynamic::MessageSchema>> {
+        Some(SyncArc::new(MessageSchema {
+            type_name: Self::type_name().to_owned(),
+            package: "hulk_ros_z".to_owned(),
+            name: "NaoLabelPartyObjectDetectionLabel".to_owned(),
+            fields: vec![FieldSchema {
+                name: "Label".to_owned(),
+                field_type: ros_z::dynamic::FieldType::Uint8,
+                default_value: None,
+            }],
+            type_hash: Some(Self::type_hash().to_rihs_string()),
+        }))
+    }
 }
 
 impl NaoLabelPartyObjectDetectionLabel {

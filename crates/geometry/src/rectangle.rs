@@ -1,4 +1,5 @@
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::MessageTypeInfo;
 use serde::{Deserialize, Serialize};
 
 use linear_algebra::{Point2, Vector2, point};
@@ -14,7 +15,9 @@ use linear_algebra::{Point2, Vector2, point};
     PathIntrospect,
     PathSerialize,
     Serialize,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "hulk_ros_z/msg/Rectangle")]
 pub struct Rectangle<Frame> {
     pub min: Point2<Frame>,
     pub max: Point2<Frame>,

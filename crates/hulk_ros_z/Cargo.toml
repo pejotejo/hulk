@@ -15,8 +15,12 @@ clap = { workspace = true, features = ["derive"] }
 color-eyre = { workspace = true }
 coordinate_systems = { workspace = true }
 futures-util.workspace = true
+geometry = { workspace = true }
+image = { workspace = true }
 linear_algebra = { workspace = true }
 log.workspace = true
+ndarray = { workspace = true }
+ort = { workspace = true, features = ["cuda", "tensorrt", "load-dynamic"] }
 ros-z = { workspace = true }
 ros-z-config = { workspace = true }
 ros-z-msgs = { workspace = true, features = ["sensor_msgs"] }

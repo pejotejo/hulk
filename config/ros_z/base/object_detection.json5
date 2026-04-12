@@ -1,0 +1,13 @@
+{
+  inputs: {
+    enabled: true,
+    rgb_neural_network_path: "etc/neural_networks/yolo26m-tuned.onnx",
+    nv12_neural_network_path: "etc/neural_networks/yolo26m-tuned-nv12.onnx",
+    maximum_intersection_over_union: 0.7,
+    confidence_threshold: 0.5,
+  },
+  status: {
+  },
+  debug: {
+  },
+}

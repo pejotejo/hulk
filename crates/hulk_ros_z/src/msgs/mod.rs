@@ -7,6 +7,7 @@ pub mod fall_down_state;
 pub mod low_level_command;
 pub mod maybe_ball_position;
 pub mod motion_intent;
+pub mod object_detection_status;
 pub mod odometry_state;
 pub mod robot_state;
 pub mod vision_status;
@@ -23,6 +24,7 @@ pub use fall_down_state::{
 };
 pub use low_level_command::LowLevelCommand;
 pub use motion_intent::{DemoMode, MotionIntent};
+pub use object_detection_status::ObjectDetectionStatus;
 pub use odometry_state::OdometryState;
 pub use robot_state::RobotState;
 pub use vision_status::VisionStatus;

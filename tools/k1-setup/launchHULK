@@ -28,7 +28,7 @@ sudo podman run --rm \
   --name hulk \
   hulk-runtime:latest \
   bash -c "cd /home/booster/hulk &&
-    ./bin/hulk --log-path ${INTERNAL_LOG_PATH} \
+    bin/hulk --robot alpha --location lab --config-root config/ros_z/ --router tcp/127.0.0.1:7447 \
      > >(tee ${INTERNAL_LOG_PATH}/hulk.out) \
     2> >(tee ${INTERNAL_LOG_PATH}/hulk.err)
   "

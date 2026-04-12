@@ -3,12 +3,13 @@ use std::sync::Arc;
 use color_eyre::Result;
 use coordinate_systems::Pixel;
 use eframe::egui::{Align2, Color32, FontId, Stroke};
-use types::object_detection::{Detection, NaoLabelPartyObjectDetectionLabel};
+use std::time::Duration;
+use types::object_detection::{Detection, Detections, NaoLabelPartyObjectDetectionLabel};
 
 use crate::{panels::image::overlay::Overlay, robot::Robot, value_buffer::BufferHandle};
 
 pub struct ObjectDetection {
-    object_detections: BufferHandle<Vec<Detection<NaoLabelPartyObjectDetectionLabel>>>,
+    object_detections: BufferHandle<Detections<NaoLabelPartyObjectDetectionLabel>>,
 }
 
 impl Overlay for ObjectDetection {
@@ -16,7 +17,7 @@ impl Overlay for ObjectDetection {
 
     fn new(robot: Arc<Robot>) -> Self {
         let object_detections =
-            robot.subscribe_value("ObjectDetection.main_outputs.detected_objects");
+            robot.subscribe_topic_value("/alpha/object_detection/detections", Duration::ZERO);
         Self { object_detections }
     }
 
@@ -25,7 +26,7 @@ impl Overlay for ObjectDetection {
             return Ok(());
         };
 
-        paint_bounding_boxes(painter, object_detections, Color32::LIGHT_RED);
+        paint_bounding_boxes(painter, object_detections.detections, Color32::LIGHT_RED);
 
         Ok(())
     }

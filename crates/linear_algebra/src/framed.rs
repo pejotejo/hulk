@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize, deserialize, serialize};
 
-#[derive(Debug)]
 // `repr(transparent)` ensures this struct has the same memory layout as `inner`.
 // This guarantees that transmuting between `Framed<Frame, Inner>` and `Inner` is safe.
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct Framed<Frame, Inner> {
     frame: PhantomData<Frame>,
     pub inner: Inner,

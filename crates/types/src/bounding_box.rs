@@ -1,12 +1,22 @@
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::MessageTypeInfo;
 use serde::{Deserialize, Serialize};
 
 use coordinate_systems::Pixel;
 use geometry::rectangle::Rectangle;
 
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    MessageTypeInfo,
 )]
+#[ros_msg(type_name = "hulk_ros_z/msg/BoundingBox")]
 pub struct BoundingBox {
     pub area: Rectangle<Pixel>,
     pub confidence: f32,

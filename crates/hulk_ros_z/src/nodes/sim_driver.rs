@@ -1,9 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use ros_z::{Builder, ZBuf, context::ZContext};
+use ros_z::{Builder, context::ZContext};
 use ros_z_config::prelude::*;
-use ros_z_msgs::sensor_msgs::{CameraInfo, Image};
+use ros2::{
+    builtin_interfaces::time::Time,
+    sensor_msgs::{camera_info::CameraInfo, image::Image},
+    std_msgs::header::Header,
+};
 use tracing::warn;
 
 use crate::{
@@ -11,7 +15,7 @@ use crate::{
     config::SimDriverConfig,
     msgs::{
         BUTTON_EVENT_SINGLE_CLICK, BUTTON_F1, ButtonEvent, FALL_DOWN_IS_READY, FallDownState,
-        OdometryState, header, timestamp_now,
+        OdometryState, timestamp_now,
     },
 };
 
@@ -168,22 +172,34 @@ fn make_image(config: &SimDriverConfig, timestamp_ns: u64) -> Image {
     }
 
     Image {
-        header: header("camera", timestamp_ns),
+        header: Header {
+            stamp: stamp_from_timestamp(timestamp_ns),
+            frame_id: "camera".to_owned(),
+        },
         height,
         width,
         encoding: "rgb8".to_owned(),
         is_bigendian: 0,
         step: width * 3,
-        data: ZBuf::from(data),
+        data,
     }
 }
 
 fn make_camera_info(config: &SimDriverConfig, timestamp_ns: u64) -> CameraInfo {
     CameraInfo {
-        header: header("camera", timestamp_ns),
+        header: Header {
+            stamp: stamp_from_timestamp(timestamp_ns),
+            frame_id: "camera".to_owned(),
+        },
         width: config.image.width,
         height: config.image.height,
         distortion_model: "plumb_bob".to_owned(),
         ..CameraInfo::default()
     }
+}
+
+fn stamp_from_timestamp(timestamp_ns: u64) -> Time {
+    let sec = (timestamp_ns / 1_000_000_000) as i32;
+    let nanosec = (timestamp_ns % 1_000_000_000) as u32;
+    Time { sec, nanosec }
 }
