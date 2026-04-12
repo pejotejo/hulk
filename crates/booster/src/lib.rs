@@ -3,6 +3,7 @@ use coordinate_systems::{Ground, Robot};
 use kinematics::joints::Joints;
 use linear_algebra::{Isometry2, Vector3, vector};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::{ExtendedMessageTypeInfo, MessageTypeInfo};
 use ros2::{geometry_msgs::transform_stamped::TransformStamped, std_msgs::header::Header};
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +13,17 @@ use pyo3::prelude::*;
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyclass(frozen))]
 #[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/LowState")]
 pub struct LowState {
     /// IMU feedback
     pub imu_state: ImuState,
@@ -21,6 +31,10 @@ pub struct LowState {
     pub motor_state_parallel: Vec<MotorState>,
     /// Serial structure joint feedback
     pub motor_state_serial: Vec<MotorState>,
+}
+
+impl ros_z::msg::ZMessage for LowState {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 #[cfg(feature = "pyo3")]
@@ -79,7 +93,9 @@ impl LowState {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/ImuState")]
 pub struct ImuState {
     #[serde(rename = "rpy")]
     /// Euler angle information (x -> roll, y -> pitch, z -> yaw)
@@ -130,7 +146,9 @@ impl ImuState {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/MotorState")]
 pub struct MotorState {
     #[serde(rename = "mode")]
     /// Current motor command type used.
@@ -237,7 +255,9 @@ impl JointsMotorState for Joints<MotorState> {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/CommandType")]
 pub enum CommandType {
     Parallel = 0,
     #[default]

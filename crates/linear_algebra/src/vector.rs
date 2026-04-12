@@ -24,6 +24,19 @@ impl<T> FieldTypeInfo for Vector2<T> {
     }
 }
 
+impl<T> FieldTypeInfo for Vector3<T> {
+    fn field_type() -> FieldType {
+        FieldType::Message(
+            MessageSchema::builder("linear_algepra/msg/Vector3")
+                .field("v0", FieldType::Float32)
+                .field("v1", FieldType::Float32)
+                .field("v2", FieldType::Float32)
+                .build()
+                .expect("failed to build schema for Vector3"),
+        )
+    }
+}
+
 #[macro_export]
 macro_rules! vector {
     (<$frame:ty>, $($parameters:expr),* $(,)?) => {

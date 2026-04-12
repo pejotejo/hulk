@@ -11,6 +11,7 @@ cross-compile = true
 [dependencies]
 booster.workspace = true
 booster_sdk.workspace = true
+cdr.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre = { workspace = true }
 coordinate_systems = { workspace = true }

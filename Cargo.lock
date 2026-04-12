@@ -2052,6 +2052,7 @@ dependencies = [
  "nalgebra",
  "path_serde",
  "pyo3",
+ "ros-z",
  "ros2",
  "serde",
  "serde_json",
@@ -5193,6 +5194,7 @@ version = "0.1.0"
 dependencies = [
  "booster",
  "booster_sdk",
+ "cdr",
  "clap",
  "color-eyre",
  "coordinate_systems",

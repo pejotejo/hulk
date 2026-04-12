@@ -3,13 +3,21 @@ use std::{
     sync::Arc,
 };
 
+use booster::LowState;
 use booster_sdk::{
     client::{BoosterClient, light_control::LightControlClient},
     types::RobotMode,
 };
-use color_eyre::Result;
+use color_eyre::{
+    Result,
+    eyre::{Context, eyre},
+};
 use ros_z::{
-    Builder, ExtendedMessageTypeInfo, context::ZContext, msg::SerdeCdrSerdes, pubsub::ZPub,
+    Builder, ExtendedMessageTypeInfo, MessageTypeInfo,
+    context::ZContext,
+    msg::{SerdeCdrSerdes, ZMessage},
+    node::ZNode,
+    pubsub::ZPub,
 };
 use ros2::sensor_msgs::image::Image;
 use serde::{Deserialize, Serialize};
@@ -17,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use crate::{IntoEyreResultExt, x5_receiver::X5Receiver};
 
 const X5_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 127, 10)), 7654);
+const ZENOH_LOCALHOST_ENDPOINT: &str = "tcp/127.0.0.1:7447";
+const LOW_STATE_ZENOH_TOPIC: &str = "rt/low_state";
+const LOW_STATE_ROSZ_TOPIC: &str = "robot_hw/low_state";
 
 #[derive(Serialize, Deserialize, ExtendedMessageTypeInfo)]
 #[ros_msg(type_name = "hulk_ros_z/msg/LedCommand")]
@@ -50,12 +61,13 @@ impl ros_z::msg::ZMessage for HighLevelCommand {
 }
 
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
-    let node = ctx
-        .create_node("robot_hw")
-        .with_type_description_service()
-        .with_extended_type_description_service()
-        .build()
-        .into_eyre()?;
+    let node = Arc::new(
+        ctx.create_node("robot_hw")
+            .with_type_description_service()
+            .with_extended_type_description_service()
+            .build()
+            .into_eyre()?,
+    );
     // let _config = node
     //     .bind_config_with_metadata_as::<RobotHwConfig>("robot_hw")
     //     .into_eyre()?;
@@ -70,6 +82,19 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .build()
         .into_eyre()?;
     tokio::spawn(image_publisher_task(left_image_pub, right_image_pub));
+
+    let zenoh_session = Arc::new(
+        zenoh::open(localhost_zenoh_config()?)
+            .await
+            .map_err(|error| eyre!("failed to create Zenoh session: {error}"))?,
+    );
+
+    tokio::spawn(zenoh_rosz_bridge::<LowState>(
+        zenoh_session,
+        node.clone(),
+        LOW_STATE_ZENOH_TOPIC,
+        LOW_STATE_ROSZ_TOPIC,
+    ));
 
     // TODO: get robot state service
     let led_command_sub = node
@@ -193,5 +218,43 @@ async fn image_publisher_task(
                 right_image_pub.async_publish(&right_frame.into()).await.into_eyre()?;
             }
         }
+    }
+}
+
+fn localhost_zenoh_config() -> Result<zenoh::Config> {
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5("mode", r#""client""#)
+        .map_err(|error| eyre!("failed to set Zenoh mode: {error}"))?;
+    config
+        .insert_json5(
+            "connect/endpoints",
+            &format!(r#"["{ZENOH_LOCALHOST_ENDPOINT}"]"#),
+        )
+        .map_err(|error| eyre!("failed to set Zenoh connect endpoint: {error}"))?;
+    Ok(config)
+}
+
+async fn zenoh_rosz_bridge<'de, T: MessageTypeInfo + Serialize + Deserialize<'de> + ZMessage>(
+    zenoh_session: Arc<zenoh::Session>,
+    rosz_node: Arc<ZNode>,
+    zenoh_topic: &str,
+    rosz_topic: &str,
+) -> Result<()> {
+    let zenoh_subscriber = zenoh_session
+        .declare_subscriber(zenoh_topic)
+        .await
+        .into_eyre()?;
+
+    let rosz_publisher = rosz_node.create_pub::<T>(rosz_topic).build().into_eyre()?;
+
+    loop {
+        let zenoh_sample = zenoh_subscriber.recv_async().await.into_eyre()?;
+        let deserialized_sample = cdr::deserialize(&zenoh_sample.payload().to_bytes())
+            .wrap_err("deserialization failed")?;
+        rosz_publisher
+            .async_publish(&deserialized_sample)
+            .await
+            .into_eyre()?;
     }
 }
