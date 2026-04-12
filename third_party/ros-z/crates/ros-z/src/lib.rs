@@ -83,7 +83,7 @@ pub mod python_bridge;
 pub mod qos;
 /// Internal message queues.
 pub mod queue;
-/// Message type metadata traits (`WithTypeInfo`, etc.).
+/// Message type metadata traits (`MessageTypeInfo`, etc.).
 pub mod ros_msg;
 /// ROS 2 service client and server.
 pub mod service;
@@ -110,8 +110,8 @@ pub use attachment::GidArray;
 pub use entity::{TypeHash, TypeInfo};
 pub use extended_schema::ExtendedMessageTypeInfo;
 pub use ros_msg::{
-    ActionTypeInfo, FieldTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
-    canonical_type_name_to_dds, dds_type_name_to_canonical, format_generic_message_type_name,
+    ActionTypeInfo, FieldTypeInfo, MessageTypeInfo, ServiceTypeInfo, canonical_type_name_to_dds,
+    dds_type_name_to_canonical, format_generic_message_type_name,
 };
 pub use ros_z_derive::{ExtendedMessageTypeInfo, MessageTypeInfo};
 pub use zbuf::ZBuf;

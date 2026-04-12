@@ -1,7 +1,6 @@
 use crate::type_support::MessageTypeSupport;
 use ros_z::entity::{TypeHash, TypeInfo};
 use ros_z::msg::{ZDeserializer, ZMessage, ZSerializer, ZService};
-use ros_z::ros_msg::WithTypeInfo;
 use ros_z::{MessageTypeInfo, ServiceTypeInfo};
 
 pub struct RosMessage {
@@ -57,8 +56,8 @@ impl ZSerializer for RosSerdes {
         let data = unsafe { ts.serialize_message(*msg) };
         let actual_size = data.len();
 
-        use zenoh::Wait;
         use zenoh::shm::{BlockOn, GarbageCollect};
+        use zenoh::Wait;
 
         let mut shm_buf = provider
             .alloc(actual_size)
@@ -108,8 +107,6 @@ impl MessageTypeInfo for RosMessage {
         self.ts.get_type_info()
     }
 }
-
-impl WithTypeInfo for RosMessage {}
 
 unsafe impl Sync for RosMessage {}
 unsafe impl Send for RosMessage {}

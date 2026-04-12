@@ -1,7 +1,7 @@
 use std::{ops::Mul, sync::Arc, time::SystemTime};
 
 use ros_z::{
-    MessageTypeInfo, WithTypeInfo,
+    MessageTypeInfo,
     dynamic::{FieldSchema, FieldType, MessageSchema},
     msg::{SerdeCdrSerdes, ZMessage},
 };
@@ -130,8 +130,6 @@ impl<Frame> MessageTypeInfo for BallPosition<Frame> {
 impl ZMessage for BallPosition<Ground> {
     type Serdes = SerdeCdrSerdes<Self>;
 }
-
-impl<Frame> WithTypeInfo for BallPosition<Frame> {}
 
 impl<Frame> BallPosition<Frame> {
     pub fn from_network_ball(

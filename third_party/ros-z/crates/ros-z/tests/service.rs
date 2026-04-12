@@ -24,8 +24,6 @@ impl MessageTypeInfo for AddTwoIntsRequest {
     }
 }
 
-impl ros_z::WithTypeInfo for AddTwoIntsRequest {}
-
 impl ros_z::msg::ZMessage for AddTwoIntsRequest {
     type Serdes = ros_z::msg::SerdeCdrSerdes<AddTwoIntsRequest>;
 }
@@ -45,8 +43,6 @@ impl MessageTypeInfo for AddTwoIntsResponse {
         TypeHash::zero()
     }
 }
-
-impl ros_z::WithTypeInfo for AddTwoIntsResponse {}
 
 impl ros_z::msg::ZMessage for AddTwoIntsResponse {
     type Serdes = ros_z::msg::SerdeCdrSerdes<AddTwoIntsResponse>;

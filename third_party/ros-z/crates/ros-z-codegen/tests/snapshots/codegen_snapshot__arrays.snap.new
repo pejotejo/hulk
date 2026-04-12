@@ -306,7 +306,6 @@ impl ::ros_z::MessageTypeInfo for Arrays {
         )
     }
 }
-impl ::ros_z::ros_msg::WithTypeInfo for Arrays {}
 impl crate::size_estimation::SizeEstimation for Arrays {
     fn estimated_cdr_size(&self) -> usize {
         let mut size = 0usize;

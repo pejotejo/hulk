@@ -37,7 +37,7 @@ use crate::{
     ServiceTypeInfo,
     entity::{TypeHash, TypeInfo},
     msg::ZService,
-    ros_msg::{MessageTypeInfo, WithTypeInfo},
+    ros_msg::MessageTypeInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,6 @@ impl MessageTypeInfo for LcState {
         .expect("invalid hash")
     }
 }
-impl WithTypeInfo for LcState {}
 
 impl CdrSerialize for LcState {
     fn cdr_serialize<BO: byteorder::ByteOrder, B: CdrBuffer>(&self, w: &mut CdrWriter<'_, BO, B>) {
@@ -107,7 +106,6 @@ impl MessageTypeInfo for LcTransition {
         .expect("invalid hash")
     }
 }
-impl WithTypeInfo for LcTransition {}
 
 impl CdrSerialize for LcTransition {
     fn cdr_serialize<BO: byteorder::ByteOrder, B: CdrBuffer>(&self, w: &mut CdrWriter<'_, BO, B>) {
@@ -217,7 +215,6 @@ impl MessageTypeInfo for LcTransitionEvent {
         .expect("invalid hash")
     }
 }
-impl WithTypeInfo for LcTransitionEvent {}
 
 impl CdrSerialize for LcTransitionEvent {
     fn cdr_serialize<BO: byteorder::ByteOrder, B: CdrBuffer>(&self, w: &mut CdrWriter<'_, BO, B>) {

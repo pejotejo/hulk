@@ -28,8 +28,6 @@ impl MessageTypeInfo for TestMessage {
     }
 }
 
-impl ros_z::ros_msg::WithTypeInfo for TestMessage {}
-
 impl ros_z::msg::ZMessage for TestMessage {
     type Serdes = ros_z::msg::SerdeCdrSerdes<TestMessage>;
 }

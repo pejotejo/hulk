@@ -124,12 +124,6 @@ impl MessageTypeInfo for std_msgs::String {
             .expect("Invalid hash")
     }
 }
-
-impl WithTypeInfo for std_msgs::String {
-    fn type_info() -> TypeInfo {
-        TypeInfo::new(Self::type_name(), Self::type_hash())
-    }
-}
 ```
 
 **These traits enable:**
@@ -289,7 +283,7 @@ pub struct RobotStatus {
 ### Implement Required Traits
 
 ```rust,ignore
-use ros_z::{MessageTypeInfo, WithTypeInfo, entity::TypeHash};
+use ros_z::{MessageTypeInfo, entity::TypeHash};
 
 impl MessageTypeInfo for RobotStatus {
     fn type_name() -> &'static str {
@@ -301,8 +295,6 @@ impl MessageTypeInfo for RobotStatus {
         TypeHash::zero()
     }
 }
-
-impl WithTypeInfo for RobotStatus {}
 ```
 
 ```admonish warning

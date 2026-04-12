@@ -4,7 +4,7 @@ use tracing::{debug, info, warn};
 use zenoh::{Result, Wait, query::Query};
 
 use crate::{
-    Builder, ServiceTypeInfo,
+    Builder, MessageTypeInfo, ServiceTypeInfo,
     context::ZContext,
     lifecycle::{
         msgs::{
@@ -182,7 +182,7 @@ impl ZLifecycleNode {
     /// Create a lifecycle-gated publisher registered as a managed entity.
     pub fn create_publisher<T>(&self, topic: &str) -> Result<Arc<ZLifecyclePublisher<T>>>
     where
-        T: ZMessage + crate::WithTypeInfo + serde::Serialize,
+        T: ZMessage + MessageTypeInfo + serde::Serialize,
         <T as ZMessage>::Serdes: Send + Sync,
     {
         let inner = self.inner.create_pub::<T>(topic).build()?;

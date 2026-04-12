@@ -100,7 +100,6 @@ impl ::ros_z::MessageTypeInfo for Strings {
         )
     }
 }
-impl ::ros_z::ros_msg::WithTypeInfo for Strings {}
 impl crate::size_estimation::SizeEstimation for Strings {
     fn estimated_cdr_size(&self) -> usize {
         let mut size = 0usize;

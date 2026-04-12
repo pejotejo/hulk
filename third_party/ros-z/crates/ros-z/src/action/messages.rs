@@ -157,7 +157,7 @@ where
 /// Feedback messages are published periodically during goal execution
 /// to provide progress updates to clients.
 ///
-/// Note: This type does NOT implement WithTypeInfo because the type hash
+/// Note: This type does NOT implement MessageTypeInfo because the type hash
 /// is action-specific and must be provided via A::feedback_type_info()
 #[derive(Debug, Clone)]
 pub struct FeedbackMessage<A: ZAction> {
@@ -211,7 +211,7 @@ where
 /// Published periodically to inform clients about the current status
 /// of all goals known to the action server.
 ///
-/// Note: This type does NOT implement WithTypeInfo because the type hash
+/// Note: This type does NOT implement MessageTypeInfo because the type hash
 /// is action-specific and must be provided via A::status_type_info()
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusMessage {

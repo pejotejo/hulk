@@ -193,10 +193,6 @@ fn test_type_info_generation() {
         "Missing MessageTypeInfo trait"
     );
     assert!(
-        type_info.contains("impl ::ros_z::WithTypeInfo"),
-        "Missing WithTypeInfo trait"
-    );
-    assert!(
         type_info.contains("impl ::ros_z::msg::ZMessage"),
         "Missing ZMessage trait"
     );

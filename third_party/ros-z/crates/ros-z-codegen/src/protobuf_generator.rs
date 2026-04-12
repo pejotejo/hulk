@@ -207,7 +207,6 @@ impl ProtobufMessageGenerator {
         combined_output.push_str("#[allow(unused_imports)]\n");
         combined_output.push_str("use ros_z::MessageTypeInfo;\n");
         combined_output.push_str("#[allow(unused_imports)]\n");
-        combined_output.push_str("use ros_z::ros_msg::WithTypeInfo;\n");
         combined_output.push_str("#[allow(unused_imports)]\n");
         combined_output.push_str("use ros_z::msg::ZMessage;\n");
         combined_output.push_str("#[allow(unused_imports)]\n");
@@ -308,8 +307,6 @@ impl ProtobufMessageGenerator {
             .expect("Invalid RIHS hash string")
     }}
 }}
-
-impl ::ros_z::WithTypeInfo for {proto_type} {{}}
 
 impl ::ros_z::msg::ZMessage for {proto_type} {{
     type Serdes = ::ros_z::msg::ProtobufSerdes<{proto_type}>;

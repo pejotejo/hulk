@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use ros_z::{
-    MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
+    MessageTypeInfo, ServiceTypeInfo,
     entity::{TypeHash, TypeInfo},
     msg::{SerdeCdrSerdes, ZMessage, ZService},
 };
@@ -236,8 +236,6 @@ impl MessageTypeInfo for NodeConfigEvent {
         TypeHash::zero()
     }
 }
-
-impl WithTypeInfo for NodeConfigEvent {}
 
 macro_rules! impl_service {
     ($srv:ident, $req:ty, $res:ty, $name:literal) => {

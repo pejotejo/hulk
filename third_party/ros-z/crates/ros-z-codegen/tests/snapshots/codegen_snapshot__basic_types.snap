@@ -67,7 +67,6 @@ impl ::ros_z::MessageTypeInfo for BasicTypes {
         )
     }
 }
-impl ::ros_z::ros_msg::WithTypeInfo for BasicTypes {}
 impl crate::size_estimation::SizeEstimation for BasicTypes {
     fn estimated_cdr_size(&self) -> usize {
         let mut size = 0usize;

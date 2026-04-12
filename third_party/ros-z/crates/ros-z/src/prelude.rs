@@ -41,7 +41,7 @@ pub use crate::action::ZAction;
 /// Trait bounds for custom messages and services.
 pub use crate::{
     ExtendedMessageTypeInfo,
-    ros_msg::{ActionTypeInfo, MessageTypeInfo, ServiceTypeInfo, WithTypeInfo},
+    ros_msg::{ActionTypeInfo, MessageTypeInfo, ServiceTypeInfo},
 };
 
 /// Type identity helpers for custom message definitions.

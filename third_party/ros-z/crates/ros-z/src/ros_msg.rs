@@ -242,9 +242,6 @@ pub trait MessageTypeInfo {
     }
 }
 
-/// Backward compatibility alias for existing code
-pub trait WithTypeInfo: MessageTypeInfo {}
-
 impl<T: MessageTypeInfo> FieldTypeInfo for T {
     fn field_type() -> crate::dynamic::FieldType {
         <T as MessageTypeInfo>::field_type()

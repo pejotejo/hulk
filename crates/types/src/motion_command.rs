@@ -1,5 +1,5 @@
 use ros_z::{
-    MessageTypeInfo, WithTypeInfo,
+    MessageTypeInfo,
     msg::{SerdeCdrSerdes, ZMessage},
 };
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,6 @@ impl MessageTypeInfo for MotionCommand {
 impl ZMessage for MotionCommand {
     type Serdes = SerdeCdrSerdes<Self>;
 }
-impl WithTypeInfo for MotionCommand {}
 
 impl MotionCommand {
     pub fn head_motion(&self) -> Option<HeadMotion> {

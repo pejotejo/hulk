@@ -968,8 +968,6 @@ fn generate_message_type_info(
                 )
             }
         }
-
-        impl ::ros_z::ros_msg::WithTypeInfo for #name_ident {}
     }
 }
 

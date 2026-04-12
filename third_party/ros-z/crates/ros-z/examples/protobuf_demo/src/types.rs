@@ -1,6 +1,6 @@
 /// Shared protobuf type definitions and trait implementations
 use ros_z::{
-    MessageTypeInfo, ServiceTypeInfo, WithTypeInfo,
+    MessageTypeInfo, ServiceTypeInfo,
     entity::TypeHash,
     msg::{ProtobufSerdes, ZMessage, ZService},
 };
@@ -24,8 +24,6 @@ impl MessageTypeInfo for SensorData {
     }
 }
 
-impl WithTypeInfo for SensorData {}
-
 impl ZMessage for SensorData {
     type Serdes = ros_z::msg::SerdeCdrSerdes<SensorData>;
 }
@@ -44,8 +42,6 @@ impl MessageTypeInfo for CalculateRequest {
     }
 }
 
-impl WithTypeInfo for CalculateRequest {}
-
 // Explicitly implement ZMessage to use ProtobufSerdes for pure protobuf serialization
 impl ZMessage for CalculateRequest {
     type Serdes = ProtobufSerdes<CalculateRequest>;
@@ -62,8 +58,6 @@ impl MessageTypeInfo for CalculateResponse {
         TypeHash::zero()
     }
 }
-
-impl WithTypeInfo for CalculateResponse {}
 
 // Explicitly implement ZMessage to use ProtobufSerdes for pure protobuf serialization
 impl ZMessage for CalculateResponse {

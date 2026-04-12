@@ -124,7 +124,7 @@ use sensor_data::SensorData;
 ### Step 4: Implement Required Traits
 
 ```rust,ignore
-use ros_z::{MessageTypeInfo, WithTypeInfo, entity::TypeHash};
+use ros_z::{MessageTypeInfo, entity::TypeHash};
 
 impl MessageTypeInfo for SensorData {
     fn type_name() -> &'static str {
@@ -135,8 +135,6 @@ impl MessageTypeInfo for SensorData {
         TypeHash::zero()  // For custom protobuf messages
     }
 }
-
-impl WithTypeInfo for SensorData {}
 ```
 
 ### Step 5: Use in ros-z
@@ -307,8 +305,6 @@ impl MessageTypeInfo for MyProtoMessage {
         TypeHash::zero()
     }
 }
-
-impl WithTypeInfo for MyProtoMessage {}
 ```
 
 ```admonish note
@@ -440,7 +436,7 @@ Custom protobuf messages need to implement required ros-z traits.
 Implement the required traits for your custom message:
 
 ```rust,ignore
-use ros_z::{MessageTypeInfo, WithTypeInfo, entity::TypeHash};
+use ros_z::{MessageTypeInfo, entity::TypeHash};
 
 impl MessageTypeInfo for MyMessage {
     fn type_name() -> &'static str {
@@ -451,8 +447,6 @@ impl MessageTypeInfo for MyMessage {
         TypeHash::zero()
     }
 }
-
-impl WithTypeInfo for MyMessage {}
 ```
 ````
 

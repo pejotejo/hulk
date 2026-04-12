@@ -3,7 +3,7 @@ use std::time::Duration;
 #[cfg(not(test))]
 use clap::Parser;
 use ros_z::{
-    Builder, MessageTypeInfo, Result, ServiceTypeInfo, context::ZContextBuilder, entity::TypeHash,
+    Builder, MessageTypeInfo, Result, ServiceTypeInfo, context::ZContextBuilder,
     msg::ZService,
 };
 use serde::{Deserialize, Serialize};

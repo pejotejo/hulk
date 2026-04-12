@@ -47,7 +47,6 @@ impl ::ros_z::MessageTypeInfo for Nested {
         )
     }
 }
-impl ::ros_z::ros_msg::WithTypeInfo for Nested {}
 impl crate::size_estimation::SizeEstimation for Nested {
     fn estimated_cdr_size(&self) -> usize {
         let mut size = 0usize;

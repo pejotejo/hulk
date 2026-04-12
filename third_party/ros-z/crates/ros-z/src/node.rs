@@ -6,11 +6,10 @@ use zenoh::{Result, Session, Wait, liveliness::LivelinessToken};
 #[cfg(feature = "ffi")]
 use crate::ffi::publisher::RawPublisher;
 use crate::{
-    Builder, ServiceTypeInfo, WithTypeInfo,
+    Builder, MessageTypeInfo, ServiceTypeInfo,
     action::{client::ZActionClientBuilder, server::ZActionServerBuilder},
     cache::ZCacheBuilder,
-    context::RuntimeConfigInputs,
-    context::{GlobalCounter, RemapRules},
+    context::{GlobalCounter, RemapRules, RuntimeConfigInputs},
     dynamic::{
         DiscoveredTopicSchema, DynPubBuilder, DynSubBuilder, DynamicMessage, DynamicSerdeCdrSerdes,
         MessageSchema, SchemaDiscovery, TypeDescriptionService, discovered_schema_type_info,
@@ -353,7 +352,7 @@ impl ZNode {
 
     /// Create a publisher for the given topic.
     ///
-    /// If `T` implements [`WithTypeInfo`], type information is automatically populated.
+    /// If `T` implements [`MessageTypeInfo`], type information is automatically populated.
     /// If this node has type description service enabled and `T` provides a runtime
     /// schema via [`crate::MessageTypeInfo::message_schema`], that schema is
     /// automatically registered for `GetTypeDescription` discovery.
@@ -364,7 +363,7 @@ impl ZNode {
     /// - Relative topics are expanded to /<namespace>/<topic>
     pub fn create_pub<T>(&self, topic: &str) -> ZPubBuilder<T, T::Serdes>
     where
-        T: ZMessage + WithTypeInfo,
+        T: ZMessage + MessageTypeInfo,
     {
         debug!("[NOD] Creating publisher: topic={}", topic);
         let mut builder = self.create_pub_impl(topic, Some(T::type_info()));
@@ -427,7 +426,7 @@ impl ZNode {
     }
 
     /// Create a subscriber for the given topic
-    /// If T implements WithTypeInfo, type information will be automatically populated
+    /// If T implements MessageTypeInfo, type information will be automatically populated
     ///
     /// The topic name will be qualified according to ROS 2 rules:
     /// - Absolute topics (starting with '/') are used as-is
@@ -435,7 +434,7 @@ impl ZNode {
     /// - Relative topics are expanded to /<namespace>/<topic>
     pub fn create_sub<T>(&self, topic: &str) -> ZSubBuilder<T, T::Serdes>
     where
-        T: ZMessage + WithTypeInfo,
+        T: ZMessage + MessageTypeInfo,
     {
         debug!("[NOD] Creating subscriber: topic={}", topic);
         self.create_sub_impl(topic, Some(T::type_info()))
@@ -500,7 +499,7 @@ impl ZNode {
     /// ```
     pub fn create_cache<T>(&self, topic: &str, capacity: usize) -> ZCacheBuilder<T, T::Serdes>
     where
-        T: ZMessage + WithTypeInfo,
+        T: ZMessage + MessageTypeInfo,
     {
         debug!(
             "[NOD] Creating cache: topic={}, capacity={}",
@@ -519,7 +518,7 @@ impl ZNode {
     }
 
     /// Create a service for the given service name
-    /// If T is a tuple (Req, Resp) where both implement WithTypeInfo, type information will be automatically populated
+    /// If T is a tuple (Req, Resp) where both implement MessageTypeInfo, type information will be automatically populated
     ///
     /// The service name will be qualified according to ROS 2 rules:
     /// - Absolute service names (starting with '/') are used as-is
@@ -559,7 +558,7 @@ impl ZNode {
     }
 
     /// Create a client for the given service name
-    /// If T is a tuple (Req, Resp) where both implement WithTypeInfo, type information will be automatically populated
+    /// If T is a tuple (Req, Resp) where both implement MessageTypeInfo, type information will be automatically populated
     ///
     /// The service name will be qualified according to ROS 2 rules:
     /// - Absolute service names (starting with '/') are used as-is

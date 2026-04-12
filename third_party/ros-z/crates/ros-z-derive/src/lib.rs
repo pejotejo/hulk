@@ -438,8 +438,6 @@ fn impl_message_type_info_for_struct(
 
             #message_schema_impl
         }
-
-        impl #impl_generics ::ros_z::WithTypeInfo for #name #ty_generics #where_clause {}
     })
 }
 
@@ -550,8 +548,6 @@ fn impl_message_type_info_for_enum(
                 ::ros_z::extended_schema::register_type::<Self>(node)
             }
         }
-
-        impl ::ros_z::WithTypeInfo for #name {}
     })
 }
 

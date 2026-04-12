@@ -247,7 +247,7 @@ impl Robot {
         history: Duration,
     ) -> BufferHandle<T>
     where
-        T: ros_z::msg::ZMessage + ros_z::WithTypeInfo + Send + Sync + 'static,
+        T: ros_z::msg::ZMessage + ros_z::MessageTypeInfo + Send + Sync + 'static,
         for<'de> T: serde::Deserialize<'de>,
         for<'a> <T as ros_z::msg::ZMessage>::Serdes:
             ros_z::msg::ZDeserializer<Output = T, Input<'a> = &'a [u8]>,
@@ -571,7 +571,7 @@ fn subscribe_typed_value_loop<T>(
     backend_rx: watch::Receiver<Option<Arc<ConnectedBackend>>>,
     callbacks: Arc<Mutex<Vec<ChangeCallback>>>,
 ) where
-    T: ros_z::msg::ZMessage + ros_z::WithTypeInfo + Send + Sync + 'static,
+    T: ros_z::msg::ZMessage + ros_z::MessageTypeInfo + Send + Sync + 'static,
     for<'de> T: serde::Deserialize<'de>,
     for<'a> <T as ros_z::msg::ZMessage>::Serdes:
         ros_z::msg::ZDeserializer<Output = T, Input<'a> = &'a [u8]>,

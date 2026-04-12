@@ -36,7 +36,7 @@ use std::{
 
 use common::*;
 use ros_z::{
-    Builder, WithTypeInfo,
+    Builder,
     msg::{ZDeserializer, ZMessage, ZSerializer},
 };
 use ros_z_msgs::{
@@ -109,7 +109,7 @@ const CASES: &[InteropCase] = &[
 /// process never receives anything and does not exit.
 fn ros_z_pub_to_ros2_sub<T>(case: &InteropCase)
 where
-    T: ZMessage + WithTypeInfo + Default + 'static,
+    T: ZMessage + MessageTypeInfo + Default + 'static,
     T::Serdes: for<'a> ZSerializer<Input<'a> = &'a T>,
 {
     if !check_ros2_available() {
@@ -191,7 +191,7 @@ where
 /// rejects the connection and nothing arrives.
 fn ros2_pub_to_ros_z_sub<T>(case: &InteropCase)
 where
-    T: ZMessage + WithTypeInfo + 'static,
+    T: ZMessage + MessageTypeInfo + 'static,
     T::Serdes: for<'a> ZDeserializer<Input<'a> = &'a [u8]>,
 {
     if !check_ros2_available() {
