@@ -3,7 +3,7 @@ use coordinate_systems::{Ground, Robot};
 use kinematics::joints::Joints;
 use linear_algebra::{Isometry2, Vector3, vector};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
-use ros_z::{ExtendedMessageTypeInfo, MessageTypeInfo};
+use ros_z::ExtendedMessageTypeInfo;
 use ros2::{geometry_msgs::transform_stamped::TransformStamped, std_msgs::header::Header};
 use serde::{Deserialize, Serialize};
 
@@ -373,7 +373,9 @@ impl MotorCommand {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/FallDownStateType")]
 pub enum FallDownStateType {
     IsReady = 0,
     IsFalling = 1,
@@ -384,12 +386,25 @@ pub enum FallDownStateType {
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyclass(frozen, get_all))]
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/FallDownState")]
 pub struct FallDownState {
     pub fall_down_state: FallDownStateType,
     /// Whether recovery (getting up) action is available
     pub is_recovery_available: bool,
+}
+
+impl ros_z::msg::ZMessage for FallDownState {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 #[cfg(feature = "pyo3")]
@@ -416,7 +431,9 @@ impl FallDownState {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/ButtonEventType")]
 pub enum ButtonEventType {
     PressDown,
     PressUp,
@@ -440,10 +457,16 @@ pub enum ButtonEventType {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/ButtonEventMsg")]
 pub struct ButtonEventMsg {
     pub button: i32,
     pub event: ButtonEventType,
+}
+
+impl ros_z::msg::ZMessage for ButtonEventMsg {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 #[cfg(feature = "pyo3")]
@@ -458,8 +481,17 @@ impl ButtonEventMsg {
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyclass(frozen, get_all))]
 #[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect,
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/RemoteControllerState")]
 pub struct RemoteControllerState {
     /** This feature can be used in user programs to implement custom gamepad/controller button functionality.
     |type | code | description|
@@ -526,6 +558,10 @@ pub struct RemoteControllerState {
     pub reserved: u8,
 }
 
+impl ros_z::msg::ZMessage for RemoteControllerState {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
+}
+
 #[repr(C)]
 #[derive(
     Clone, Debug, Default, Deserialize, Serialize, PathSerialize, PathDeserialize, PathIntrospect,
@@ -576,11 +612,17 @@ pub struct Kick {
     PathSerialize,
     PathDeserialize,
     PathIntrospect,
+    ExtendedMessageTypeInfo,
 )]
+#[ros_msg(type_name = "booster/msg/Odometer")]
 pub struct Odometer {
     pub x: f32,
     pub y: f32,
     pub theta: f32,
+}
+
+impl ros_z::msg::ZMessage for Odometer {
+    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
 }
 
 impl Odometer {

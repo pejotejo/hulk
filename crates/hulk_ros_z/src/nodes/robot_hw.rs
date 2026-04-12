@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use booster::LowState;
+use booster::{ButtonEventMsg, FallDownState, LowState, Odometer, RemoteControllerState};
 use booster_sdk::{
     client::{BoosterClient, light_control::LightControlClient},
     types::RobotMode,
@@ -26,8 +26,18 @@ use crate::{IntoEyreResultExt, x5_receiver::X5Receiver};
 
 const X5_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 127, 10)), 7654);
 const ZENOH_LOCALHOST_ENDPOINT: &str = "tcp/127.0.0.1:7447";
+
 const LOW_STATE_ZENOH_TOPIC: &str = "rt/low_state";
+const ODOMETER_STATE_ZENOH_TOPIC: &str = "rt/odometer_state";
+const FALL_DOWN_ZENOH_TOPIC: &str = "rt/fall_down";
+const BUTTON_EVENT_ZENOH_TOPIC: &str = "rt/button_event";
+const REMOTE_CONTROLLER_STATE_ZENOH_TOPIC: &str = "rt/remote_controller_state";
+
 const LOW_STATE_ROSZ_TOPIC: &str = "robot_hw/low_state";
+const ODOMETER_STATE_ROSZ_TOPIC: &str = "robot_hw/odometer_state";
+const FALL_DOWN_ROSZ_TOPIC: &str = "robot_hw/fall_down";
+const BUTTON_EVENT_ROSZ_TOPIC: &str = "robot_hw/button_event";
+const REMOTE_CONTROLLER_STATE_ROSZ_TOPIC: &str = "robot_hw/remote_controller_state";
 
 #[derive(Serialize, Deserialize, ExtendedMessageTypeInfo)]
 #[ros_msg(type_name = "hulk_ros_z/msg/LedCommand")]
@@ -89,12 +99,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             .map_err(|error| eyre!("failed to create Zenoh session: {error}"))?,
     );
 
-    tokio::spawn(zenoh_rosz_bridge::<LowState>(
-        zenoh_session,
-        node.clone(),
-        LOW_STATE_ZENOH_TOPIC,
-        LOW_STATE_ROSZ_TOPIC,
-    ));
+    spawn_zenoh_rosz_bridges(&node, zenoh_session);
 
     // TODO: get robot state service
     let led_command_sub = node
@@ -131,6 +136,40 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             }
         }
     }
+}
+
+// TODO: deduplicate with zenoh bridge, speak ROS directly
+fn spawn_zenoh_rosz_bridges(node: &Arc<ZNode>, zenoh_session: Arc<zenoh::Session>) {
+    tokio::spawn(zenoh_rosz_bridge::<LowState>(
+        zenoh_session.clone(),
+        node.clone(),
+        LOW_STATE_ZENOH_TOPIC,
+        LOW_STATE_ROSZ_TOPIC,
+    ));
+    tokio::spawn(zenoh_rosz_bridge::<Odometer>(
+        zenoh_session.clone(),
+        node.clone(),
+        ODOMETER_STATE_ZENOH_TOPIC,
+        ODOMETER_STATE_ROSZ_TOPIC,
+    ));
+    tokio::spawn(zenoh_rosz_bridge::<FallDownState>(
+        zenoh_session.clone(),
+        node.clone(),
+        FALL_DOWN_ZENOH_TOPIC,
+        FALL_DOWN_ROSZ_TOPIC,
+    ));
+    tokio::spawn(zenoh_rosz_bridge::<ButtonEventMsg>(
+        zenoh_session.clone(),
+        node.clone(),
+        BUTTON_EVENT_ZENOH_TOPIC,
+        BUTTON_EVENT_ROSZ_TOPIC,
+    ));
+    tokio::spawn(zenoh_rosz_bridge::<RemoteControllerState>(
+        zenoh_session.clone(),
+        node.clone(),
+        REMOTE_CONTROLLER_STATE_ZENOH_TOPIC,
+        REMOTE_CONTROLLER_STATE_ROSZ_TOPIC,
+    ));
 }
 
 async fn handle_led_command(
