@@ -6,7 +6,7 @@ use projection::{Projection, camera_matrix::CameraMatrix};
 use ros_z::{Builder, MessageTypeInfo, TypeHash, context::ZContext};
 use ros_z_config::prelude::*;
 use serde::{Deserialize, Serialize};
-use types::object_detection::{Detection, NaoLabelPartyObjectDetectionLabel};
+use types::object_detection::{Detections, NaoLabelPartyObjectDetectionLabel};
 
 use crate::{
     IntoEyreResultExt,
@@ -39,30 +39,6 @@ impl CameraMatrixOption {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DetectionVec {
-    detected_objects: Vec<Detection<NaoLabelPartyObjectDetectionLabel>>,
-}
-impl MessageTypeInfo for DetectionVec {
-    fn type_name() -> &'static str {
-        "ros_z_config::msg::dds_::NodeConfigEvent_"
-    }
-
-    fn type_hash() -> TypeHash {
-        TypeHash::zero()
-    }
-}
-impl ros_z::msg::ZMessage for DetectionVec {
-    type Serdes = ros_z::msg::SerdeCdrSerdes<Self>;
-}
-impl DetectionVec {
-    pub fn idle() -> Self {
-        Self {
-            detected_objects: Vec::new(),
-        }
-    }
-}
-
 pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
     let node = ctx
         .create_node("ball_filter")
@@ -75,11 +51,11 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
         .into_eyre()?;
 
     let camera_matrix_sub = node
-        .create_sub::<CameraMatrixOption>("camera_matrix")
+        .create_sub::<CameraMatrixOption>("camera_matrix/camera_matrix")
         .build()
         .into_eyre()?;
     let detected_objects_sub = node
-        .create_sub::<DetectionVec>("detected_objects")
+        .create_sub::<Detections<NaoLabelPartyObjectDetectionLabel>>("object_detections/detections")
         .build()
         .into_eyre()?;
     let ball_position_pub = node
@@ -98,7 +74,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
             }
             msg = detected_objects_sub.async_recv() => {
                 let latest_detected_objects = msg.into_eyre()?;
-                let ball_positions: Vec<ZBallPosition<Ground>> = latest_detected_objects.detected_objects
+                let ball_positions: Vec<ZBallPosition<Ground>> = latest_detected_objects.detections
                     .into_iter()
                     .filter_map(|detection| {
                         if detection.label != NaoLabelPartyObjectDetectionLabel::Ball {
@@ -109,7 +85,7 @@ pub async fn run(ctx: Arc<ZContext>) -> Result<()> {
                             .pixel_to_ground_with_z(area.center(), cfg.ball_radius)
                             .ok()?;
                         Some(ZBallPosition{
-                            position: position,
+                            position,
                             velocity: vector![0.0, 0.0],
                             last_seen: node.clock().now(),
                         })
