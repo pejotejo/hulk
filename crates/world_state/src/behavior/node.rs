@@ -18,8 +18,7 @@ use types::{
 };
 
 use crate::behavior::{
-    behavior_tree::Node, motion_assembler::assemble_motion_command,
-    tree::create_tree,
+    behavior_tree::Node, motion_assembler::assemble_motion_command, tree::create_tree,
 };
 
 fn create_tree_default() -> Node<Blackboard> {
@@ -59,17 +58,17 @@ pub struct Blackboard {
 
     pub is_alternative: bool,
     pub path_obstacles_output: Vec<PathObstacle>,
+    pub time_since_last_switch: Duration,
 
     pub ball: Option<LastBall>,
     pub last_ball: Option<LastBall>,
     pub last_close_enough_to_kick: bool,
     pub last_motion_switch_time: SystemTime,
     pub last_motion_type: Option<MotionType>,
-    pub time_since_last_switch: Duration,
 
+    pub is_injected_motion_command: bool,
     pub body_motion: Option<BodyMotion>,
     pub head_motion: Option<HeadMotion>,
-    pub is_injected_motion_command: bool,
 }
 
 #[context]

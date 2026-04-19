@@ -155,8 +155,7 @@ pub fn intercept(blackboard: &mut Blackboard) -> Status {
             return Status::Failure;
         }
 
-        let kick_direction =
-            Orientation2::from_vector(ball_in_ground - interception_point);
+        let kick_direction = Orientation2::from_vector(ball_in_ground - interception_point);
 
         if let Some(BodyMotion::VisualKick {
             ball_position: motion_ball_position,
