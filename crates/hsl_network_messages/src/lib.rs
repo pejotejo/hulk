@@ -63,6 +63,7 @@ pub struct StrikerMessage {
 pub struct StateMessage {
     pub player_number: PlayerNumber,
     pub pose: Pose2<Field>,
+    pub target_pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
 }
 

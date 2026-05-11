@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
+use ros_z::Message;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
     PathDeserialize,
     PathIntrospect,
     PartialEq,
+    Message,
 )]
 pub struct CycleTime {
     pub start_time: SystemTime,

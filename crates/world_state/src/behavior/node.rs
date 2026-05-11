@@ -10,9 +10,12 @@ use hardware::NetworkInterface;
 use hsl_network_messages::HulkMessage;
 use linear_algebra::{Point2, Pose2, Vector2};
 use serde::{Deserialize, Serialize};
+use types::players::Players;
+use types::world_state::PlayerState;
 use types::{
     behavior_tree::NodeTrace,
-    field_dimensions::{FieldDimensions, Side},
+    cycle_time::CycleTime,
+    field_dimensions::FieldDimensions,
     motion_command::{BodyMotion, HeadMotion, MotionCommand},
     motion_type::MotionType,
     parameters::{BehaviorParameters, HslNetworkParameters},
@@ -45,6 +48,7 @@ pub struct Behavior {
     #[serde(skip, default = "create_static_layout_default")]
     pub static_layout: NodeTrace,
     pub last_sent_game_controller_return_message_time: Option<SystemTime>,
+    pub last_sent_hsl_message: Option<HulkMessage>,
     pub last_sent_hsl_message_time: Option<SystemTime>,
 }
 
@@ -88,6 +92,8 @@ pub struct CreationContext {}
 #[context]
 pub struct CycleContext {
     game_controller_address: Input<Option<SocketAddr>, "game_controller_address?">,
+    cycle_time: Input<CycleTime, "cycle_time">,
+    player_states: Input<Players<Option<PlayerState>>, "world_state.player_states">,
     remaining_amount_of_messages:
         Input<Option<u16>, "game_controller_state?.hulks_team.remaining_amount_of_messages">,
     world_state: Input<WorldState, "world_state">,
@@ -99,7 +105,6 @@ pub struct CycleContext {
 
     behavior_trace: AdditionalOutput<NodeTrace, "behavior.trace">,
     behavior_tree_layout: AdditionalOutput<NodeTrace, "behavior.tree_layout">,
-    last_sent_message: AdditionalOutput<HulkMessage, "last_sent_message">,
     path_obstacles_output: AdditionalOutput<Vec<PathObstacle>, "path_obstacles">,
     time_since_last_switch: AdditionalOutput<Duration, "behavior.time_since_last_switch">,
     direction_difference: AdditionalOutput<f32, "behavior.direction_difference">,
@@ -132,6 +137,7 @@ impl Behavior {
             tree,
             static_layout,
             last_sent_game_controller_return_message_time: None,
+            last_sent_hsl_message: None,
             last_sent_hsl_message_time: None,
         })
     }
@@ -212,9 +218,11 @@ impl Behavior {
 
         self.send_state_message(
             context.world_state,
+            &motion_command,
+            &context.player_states,
+            context.cycle_time,
             context.hsl_network_parameters,
             context.remaining_amount_of_messages,
-            &mut context.last_sent_message,
             context.hardware,
         )?;
 

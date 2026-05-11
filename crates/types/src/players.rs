@@ -195,6 +195,17 @@ impl<T> Players<T> {
     pub fn iter(&self) -> PlayersIterator<'_, T> {
         PlayersIterator::new(self)
     }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (PlayerNumber, &mut T)> {
+        [
+            (PlayerNumber::One, &mut self.one),
+            (PlayerNumber::Two, &mut self.two),
+            (PlayerNumber::Three, &mut self.three),
+            (PlayerNumber::Four, &mut self.four),
+            (PlayerNumber::Five, &mut self.five),
+        ]
+        .into_iter()
+    }
 }
 
 #[cfg(test)]
