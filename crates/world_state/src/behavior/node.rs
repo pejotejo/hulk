@@ -94,8 +94,6 @@ pub struct CycleContext {
     game_controller_address: Input<Option<SocketAddr>, "game_controller_address?">,
     cycle_time: Input<CycleTime, "cycle_time">,
     player_states: Input<Players<Option<PlayerState>>, "world_state.player_states">,
-    remaining_amount_of_messages:
-        Input<Option<u16>, "game_controller_state?.hulks_team.remaining_amount_of_messages">,
     world_state: Input<WorldState, "world_state">,
 
     field_dimensions: Parameter<FieldDimensions, "field_dimensions">,
@@ -219,11 +217,11 @@ impl Behavior {
         self.send_state_message(
             context.world_state,
             &motion_command,
-            &context.player_states,
             context.cycle_time,
             context.hsl_network_parameters,
-            context.remaining_amount_of_messages,
+            context.field_dimensions,
             context.hardware,
+            &context.parameters.send_message
         )?;
 
         if motion_type != self.last_motion_type {

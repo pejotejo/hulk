@@ -1,24 +1,24 @@
 use color_eyre::{Result, eyre::Context};
 use coordinate_systems::Field;
 use linear_algebra::{Orientation2, Pose2, point};
+use types::parameters::SendMessageParameters;
+use types::primary_state::PrimaryState;
 use std::f32::consts::PI;
 use std::{
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
+use types::field_dimensions::FieldDimensions;
 
 use booster::FallDownStateType;
 use hardware::NetworkInterface;
-use hsl_network_messages::{GameControllerReturnMessage, HulkMessage, StateMessage};
+use hsl_network_messages::{
+    GameControllerReturnMessage, Half, HulkMessage, StateMessage,
+};
 use types::{
-    cycle_time::CycleTime,
-    messages::OutgoingMessage,
-    motion_command::MotionCommand,
-    parameters::HslNetworkParameters,
-    path::PathSegment,
-    players::Players,
-    world_state::{PlayerState, WorldState},
+    cycle_time::CycleTime, messages::OutgoingMessage, motion_command::MotionCommand,
+    parameters::HslNetworkParameters, path::PathSegment, world_state::WorldState,
 };
 
 use crate::{behavior::node::Behavior, player_states_receiver::predict_current_pose};
@@ -45,7 +45,7 @@ impl Behavior {
         let ball_position = world_state
             .ball
             .map(|ball| hsl_network_messages::BallPosition {
-                age: now.duration_since(ball.last_seen_ball).unwrap(),
+                age: now.duration_since(ball.last_seen_ball).unwrap_or(Duration::ZERO),
                 position: ball.ball_in_ground,
             });
 
@@ -82,57 +82,103 @@ impl Behavior {
         &mut self,
         world_state: &WorldState,
         motion_command: &MotionCommand,
-        _player_states: &Players<Option<PlayerState>>,
         cycle_time: &CycleTime,
         hsl_network_parameters: &HslNetworkParameters,
-        remaining_amount_of_messages: Option<&u16>,
+        field_dimensions: &FieldDimensions,
         hardware: &Arc<impl NetworkInterface>,
+        parameters: &SendMessageParameters,
     ) -> Result<()> {
         let now = world_state.now;
 
         if !self.is_state_message_cooldown_elapsed(now, hsl_network_parameters) {
             return Ok(());
         }
-        if remaining_amount_of_messages.is_none_or(|remaining_amount_of_messages| {
-            *remaining_amount_of_messages
-                < hsl_network_parameters.remaining_amount_of_messages_to_stop_sending
-        }) {
-            return Ok(());
-        }
 
-        let ground_to_field = world_state.robot.ground_to_field.unwrap_or_default();
-
-        let pose = ground_to_field.as_pose();
-        let target_pose = get_target_pose(motion_command, world_state);
-
-        let ball_position = world_state
-            .ball
-            .map(|ball| hsl_network_messages::BallPosition {
-                age: now.duration_since(ball.last_seen_ball).unwrap(),
-                position: ball.ball_in_field,
-            });
-
-        let message = HulkMessage::State(StateMessage {
-            player_number: world_state.robot.player_number,
-            pose,
-            target_pose,
-            ball_position,
-        });
-
-        if !is_message_different(
-            &message,
-            self.last_sent_hsl_message.as_ref(),
-            cycle_time,
-            self.last_sent_hsl_message_time,
+        if let (Some(filtered_game_controller_state), Some(ground_to_field)) = (
+            &world_state.filtered_game_controller_state,
+            &world_state.robot.ground_to_field,
         ) {
-            return Ok(());
-        }
+            let pose = ground_to_field.as_pose();
+            let target_pose = get_target_pose(motion_command, world_state);
+            let ball_position = world_state
+                .ball
+                .map(|ball| hsl_network_messages::BallPosition {
+                    age: now.duration_since(ball.last_seen_ball).unwrap_or(Duration::ZERO),
+                    position: ball.ball_in_field,
+                });
+            let message = HulkMessage::State(StateMessage {
+                player_number: world_state.robot.player_number,
+                pose,
+                target_pose,
+                ball_position,
+            });
+            // TODO
 
-        self.last_sent_hsl_message = Some(message);
-        self.last_sent_hsl_message_time = Some(now);
-        hardware
-            .write_to_network(OutgoingMessage::Hsl(message))
-            .wrap_err("failed to write StateMessage to hardware")
+            let mut remaining_time = filtered_game_controller_state.remaining_time_in_half;
+            if filtered_game_controller_state.half == Half::First {
+                remaining_time += parameters.half_duration;
+            }
+
+            let mut remaining_messages = filtered_game_controller_state.remaining_number_of_messages
+                as isize
+                - hsl_network_parameters.remaining_amount_of_messages_to_stop_sending as isize;
+
+            if remaining_time < parameters.half_duration.mul_f32(2.0 * parameters.reserve_release) {
+                remaining_messages -= parameters.reserve_messages as isize;
+            }
+
+            if remaining_messages <= 0 {
+                return Ok(());
+            }
+
+            let remaining_message_ratio = parameters.message_bugdget_per_minute as f32
+                * remaining_time.as_secs_f32()
+                / remaining_messages as f32;
+
+            let distance_to_ball = if let Some(ball) = world_state.ball {
+                ball.ball_in_ground.coords().norm()
+            } else {
+                f32::INFINITY
+            };
+            let field_diagonal = (field_dimensions.length.powi(2) + field_dimensions.width.powi(2)).sqrt();
+            let reference_diagonal = (9.0_f32.powi(2) + 6.0_f32.powi(2)).sqrt();
+            let field_factor = field_diagonal / reference_diagonal; // clampen?
+            let maximum_ball_distance_for_message_difference_change = field_factor * parameters.maximum_ball_distance_for_message_difference_change_scale;
+            let distance_to_ball_scale_ratio = ((distance_to_ball
+                - parameters.minimum_ball_distance_for_message_difference_change)
+                / (maximum_ball_distance_for_message_difference_change
+                    - parameters.minimum_ball_distance_for_message_difference_change))
+                .clamp(0.0, 1.0);
+            let max_difference_scale = parameters.max_message_difference_scale
+                * remaining_message_ratio
+                * (1.0 + distance_to_ball_scale_ratio * parameters.ball_distance_message_change_scale);
+
+
+            if !is_message_different(
+                &message,
+                self.last_sent_hsl_message.as_ref(),
+                cycle_time,
+                self.last_sent_hsl_message_time,
+                max_difference_scale,
+            ) && self
+                .last_sent_hsl_message_time
+                .is_some_and(|last_sent_hsl_message_time| {
+                    now.duration_since(last_sent_hsl_message_time)
+                        .unwrap_or(Duration::ZERO)
+                        < parameters.max_time_since_last_message
+                } && world_state.robot.primary_state != PrimaryState::Playing)
+            {
+                return Ok(());
+            }
+
+            self.last_sent_hsl_message = Some(message);
+            self.last_sent_hsl_message_time = Some(now);
+            hardware
+                .write_to_network(OutgoingMessage::Hsl(message))
+                .wrap_err("failed to write StateMessage to hardware")
+        } else {
+            Ok(())
+        }
     }
 
     fn is_state_message_cooldown_elapsed(
@@ -200,10 +246,11 @@ fn is_message_different(
     last_sent_message: Option<&HulkMessage>,
     cycle_time: &CycleTime,
     last_sent_message_time: Option<SystemTime>,
+    max_diffrence_scale: f32,
 ) -> bool {
-    const MAX_POSE_DIFFERENCE: f32 = 0.1;
-
-    let (Some(last_sent_message), Some(last_sent_message_time)) = (last_sent_message, last_sent_message_time) else {
+    let (Some(last_sent_message), Some(last_sent_message_time)) =
+        (last_sent_message, last_sent_message_time)
+    else {
         return true;
     };
 
@@ -216,21 +263,21 @@ fn is_message_different(
         last_sent_message_time,
         cycle_time,
     );
-
     let pose_position_difference = (message.pose.position() - predicted_pose.position()).norm();
     let pose_angle_difference = angular_difference(
         message.pose.orientation().angle(),
         predicted_pose.orientation().angle(),
     );
+
     let ball_position_difference = match (message.ball_position, last_message.ball_position) {
         (None, None) => 0.0,
         (Some(left), Some(right)) => (left.position - right.position).norm(),
         _ => f32::INFINITY,
     };
 
-    pose_position_difference > MAX_POSE_DIFFERENCE
-        || pose_angle_difference > MAX_POSE_DIFFERENCE
-        || ball_position_difference > MAX_POSE_DIFFERENCE
+    pose_position_difference > max_diffrence_scale
+        || pose_angle_difference > max_diffrence_scale
+        || ball_position_difference > max_diffrence_scale
 }
 
 fn angular_difference(from: f32, to: f32) -> f32 {

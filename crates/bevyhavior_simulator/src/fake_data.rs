@@ -92,7 +92,7 @@ impl FakeData {
             buttons: last_database.buttons.into(),
             cycle_time: last_database.cycle_time.into(),
             fall_state: last_database.fall_state.into(),
-            filtered_whistle: last_database.filtered_whistle.clone().into(),
+            filtered_whistle: last_database.filtered_whistle.clone  ().into(),
             game_controller_state: last_database.game_controller_state.clone().into(),
             game_controller_address: last_database.game_controller_address.into(),
             has_ground_contact: last_database.has_ground_contact.into(),

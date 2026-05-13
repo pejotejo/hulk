@@ -515,6 +515,23 @@
       "orientation_bias": 0.5,
       "grid_resolution": 0.2,
       "padding": 0.5
+    },
+    "send_message": {
+      "reserve_messages": 1500,
+      "reserve_release": 0.25,
+      "message_bugdget_per_minute": 12000,
+      "half_duration": {
+        "nanos": 0,
+        "secs": 600
+      },
+      "max_time_since_last_message": {
+        "nanos": 0,
+        "secs": 5
+      },
+      "max_message_difference_scale": 0.3,
+      "minimum_ball_distance_for_message_difference_change": 2.5,
+      "maximum_ball_distance_for_message_difference_change_scale": 5.0,
+      "ball_distance_message_change_scale": 0.8
     }
   },
   "hsl_network": {

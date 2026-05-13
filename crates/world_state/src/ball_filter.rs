@@ -37,7 +37,7 @@ pub struct CreationContext {}
 
 #[context]
 pub struct CycleContext {
-    filter_state: AdditionalOutput<BallFiltering, "ball_filter_state">,
+filter_state: AdditionalOutput<BallFiltering, "ball_filter_state">,
     best_ball_hypothesis: AdditionalOutput<Option<BallHypothesis>, "best_ball_hypothesis">,
     filtered_balls_in_image: AdditionalOutput<Vec<Circle<Pixel>>, "filtered_balls_in_image">,
     ball_percepts: AdditionalOutput<Vec<BallPercept>, "ball_percepts">,

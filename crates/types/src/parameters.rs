@@ -90,6 +90,7 @@ pub struct BehaviorParameters {
     pub kicking: KickingParameters,
     pub walk_speed: WalkSpeedParameters,
     pub intercept_ball: InterceptBallParameters,
+    pub send_message: SendMessageParameters,
     pub substates: SubstatesParameters,
     pub voronoi: VoronoiParameters,
 }
@@ -787,4 +788,26 @@ pub struct SubstatesParameters {
     pub alignment_angle_threshold: f32,
     pub blocking_distance_offset: f32,
     pub corner_kick_blocking_angle: f32,
+}
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Deserialize,
+    Serialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    Message,
+)]
+pub struct SendMessageParameters {
+    pub reserve_messages: u8,
+    pub reserve_release: f32,
+    pub message_bugdget_per_minute: u32,
+    pub half_duration: Duration,
+    pub max_time_since_last_message: Duration,
+    pub max_message_difference_scale: f32,
+    pub minimum_ball_distance_for_message_difference_change: f32,
+    pub maximum_ball_distance_for_message_difference_change_scale: f32,
+    pub ball_distance_message_change_scale: f32,
 }

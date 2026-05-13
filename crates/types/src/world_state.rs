@@ -142,7 +142,7 @@ pub struct RobotState {
 pub struct PlayerState {
     pub ball_position: Option<BallPosition<Field>>,
     pub pose: Pose2<Field>,
-    
+
     pub last_received_pose: Pose2<Field>,
     pub last_updated: CycleTime,
     pub target_pose: Pose2<Field>,

@@ -379,6 +379,7 @@ impl SubState {
 }
 
 #[derive(
+    Default,
     Clone,
     Copy,
     Debug,
@@ -392,6 +393,7 @@ impl SubState {
     Message,
 )]
 pub enum Half {
+    #[default]
     First,
     Second,
 }

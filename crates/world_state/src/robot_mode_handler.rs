@@ -39,7 +39,7 @@ pub struct CycleContext {
 #[context]
 #[derive(Default)]
 pub struct MainOutputs {
-    pub robot_mode: MainOutput<Option<RobotMode>>,
+pub robot_mode: MainOutput<Option<RobotMode>>,
 }
 
 impl BoosterModeHandler {
