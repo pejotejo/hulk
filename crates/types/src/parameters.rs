@@ -810,4 +810,5 @@ pub struct SendMessageParameters {
     pub minimum_ball_distance_for_message_difference_change: f32,
     pub maximum_ball_distance_for_message_difference_change_scale: f32,
     pub ball_distance_message_change_scale: f32,
+    pub walk_with_velocity_prediction_duration: Duration,
 }

@@ -1,8 +1,6 @@
 use color_eyre::{Result, eyre::Context};
 use coordinate_systems::Field;
 use linear_algebra::{Orientation2, Pose2, point};
-use types::parameters::SendMessageParameters;
-use types::primary_state::PrimaryState;
 use std::f32::consts::PI;
 use std::{
     net::SocketAddr,
@@ -10,12 +8,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 use types::field_dimensions::FieldDimensions;
+use types::parameters::{self, SendMessageParameters};
+use types::primary_state::PrimaryState;
 
 use booster::FallDownStateType;
 use hardware::NetworkInterface;
-use hsl_network_messages::{
-    GameControllerReturnMessage, Half, HulkMessage, StateMessage,
-};
+use hsl_network_messages::{GameControllerReturnMessage, Half, HulkMessage, StateMessage};
 use types::{
     cycle_time::CycleTime, messages::OutgoingMessage, motion_command::MotionCommand,
     parameters::HslNetworkParameters, path::PathSegment, world_state::WorldState,
@@ -45,7 +43,9 @@ impl Behavior {
         let ball_position = world_state
             .ball
             .map(|ball| hsl_network_messages::BallPosition {
-                age: now.duration_since(ball.last_seen_ball).unwrap_or(Duration::ZERO),
+                age: now
+                    .duration_since(ball.last_seen_ball)
+                    .unwrap_or(Duration::ZERO),
                 position: ball.ball_in_ground,
             });
 
@@ -103,7 +103,9 @@ impl Behavior {
             let ball_position = world_state
                 .ball
                 .map(|ball| hsl_network_messages::BallPosition {
-                    age: now.duration_since(ball.last_seen_ball).unwrap_or(Duration::ZERO),
+                    age: now
+                        .duration_since(ball.last_seen_ball)
+                        .unwrap_or(Duration::ZERO),
                     position: ball.ball_in_field,
                 });
             let message = HulkMessage::State(StateMessage {
@@ -123,7 +125,11 @@ impl Behavior {
                 as isize
                 - hsl_network_parameters.remaining_amount_of_messages_to_stop_sending as isize;
 
-            if remaining_time < parameters.half_duration.mul_f32(2.0 * parameters.reserve_release) {
+            if remaining_time
+                < parameters
+                    .half_duration
+                    .mul_f32(2.0 * parameters.reserve_release)
+            {
                 remaining_messages -= parameters.reserve_messages as isize;
             }
 
@@ -140,10 +146,12 @@ impl Behavior {
             } else {
                 f32::INFINITY
             };
-            let field_diagonal = (field_dimensions.length.powi(2) + field_dimensions.width.powi(2)).sqrt();
+            let field_diagonal =
+                (field_dimensions.length.powi(2) + field_dimensions.width.powi(2)).sqrt();
             let reference_diagonal = (9.0_f32.powi(2) + 6.0_f32.powi(2)).sqrt();
             let field_factor = field_diagonal / reference_diagonal; // clampen?
-            let maximum_ball_distance_for_message_difference_change = field_factor * parameters.maximum_ball_distance_for_message_difference_change_scale;
+            let maximum_ball_distance_for_message_difference_change =
+                field_factor * parameters.maximum_ball_distance_for_message_difference_change_scale;
             let distance_to_ball_scale_ratio = ((distance_to_ball
                 - parameters.minimum_ball_distance_for_message_difference_change)
                 / (maximum_ball_distance_for_message_difference_change
@@ -151,8 +159,8 @@ impl Behavior {
                 .clamp(0.0, 1.0);
             let max_difference_scale = parameters.max_message_difference_scale
                 * remaining_message_ratio
-                * (1.0 + distance_to_ball_scale_ratio * parameters.ball_distance_message_change_scale);
-
+                * (1.0
+                    + distance_to_ball_scale_ratio * parameters.ball_distance_message_change_scale);
 
             if !is_message_different(
                 &message,
@@ -201,7 +209,11 @@ fn is_cooldown_elapsed(now: SystemTime, last: Option<SystemTime>, cooldown: Dura
     }
 }
 
-fn get_target_pose(motion_command: &MotionCommand, world_state: &WorldState) -> Pose2<Field> {
+fn get_target_pose(
+    motion_command: &MotionCommand,
+    world_state: &WorldState,
+    parameters: &SendMessageParameters,
+) -> Pose2<Field> {
     if let Some(ground_to_field) = &world_state.robot.ground_to_field {
         match motion_command {
             MotionCommand::Prepare | MotionCommand::Stand { .. } | MotionCommand::StandUp => {
@@ -223,11 +235,11 @@ fn get_target_pose(motion_command: &MotionCommand, world_state: &WorldState) -> 
                 angular_velocity,
                 ..
             } => {
-                const TIMESCALE: f32 = 3.0; //TODO
+                let scale = parameters.walk_with_velocity_prediction_duration;
                 ground_to_field
                     * Pose2::from_parts(
-                        point![velocity.x() * TIMESCALE, velocity.y() * TIMESCALE],
-                        Orientation2::new(angular_velocity * TIMESCALE),
+                        point![velocity.x() * scale.as_secs_f32(), velocity.y() * scale.as_secs_f32()],
+                        Orientation2::new(angular_velocity * scale.as_secs_f32()),
                     )
             }
             MotionCommand::VisualKick {
