@@ -27,8 +27,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -44,7 +42,7 @@ fn update(
 ) {
     if time.ticks() == 5000 {
         game_controller_commands.write(GameControllerCommand::SetSubState(
-            Some(SubState::KickIn),
+            Some(SubState::ThrowIn),
             Team::Hulks,
             None,
         ));
@@ -69,7 +67,7 @@ fn update(
 
     if time.ticks() == 12000 {
         game_controller_commands.write(GameControllerCommand::SetSubState(
-            Some(SubState::KickIn),
+            Some(SubState::ThrowIn),
             Team::Opponent,
             None,
         ));

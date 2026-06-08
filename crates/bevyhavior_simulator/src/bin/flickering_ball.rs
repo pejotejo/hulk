@@ -1,9 +1,12 @@
 use bevy::prelude::*;
 
 use hsl_network_messages::{GameState, PlayerNumber};
+use linear_algebra::{point, vector};
 use scenario::scenario;
+use types::ball_position::SimulatorBallState;
 
 use bevyhavior_simulator::{
+    ball::BallResource,
     game_controller::{GameController, GameControllerCommand},
     robot::Robot,
     time::{Ticks, TicksTime},
@@ -18,6 +21,7 @@ fn flickering_ball(app: &mut App) {
 fn startup(
     mut commands: Commands,
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
+    mut ball: ResMut<BallResource>,
 ) {
     for number in [
         PlayerNumber::One,
@@ -25,13 +29,15 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         let mut robot = Robot::new(number);
         robot.simulator_parameters.ball_timeout_factor = 0.001;
         commands.spawn(robot);
     }
+    ball.state = Some(SimulatorBallState {
+        position: point![0.6, 0.0],
+        velocity: vector![0.0, 0.0],
+    });
     game_controller_commands.write(GameControllerCommand::SetGameState(GameState::Ready));
 }
 

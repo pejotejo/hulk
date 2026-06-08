@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use color_eyre::{eyre::Context, Result};
+use color_eyre::{Result, eyre::Context};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, select, sync::mpsc::UnboundedReceiver};
@@ -11,7 +11,7 @@ use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 use types::{ball_position::SimulatorBallState, players::Players};
 
 use crate::{
-    cyclers::control::Database, recorder::Frame, robot::to_player_number, structs::Parameters,
+    cyclers::world_state::Database, recorder::Frame, robot::to_player_number, structs::Parameters,
 };
 
 #[derive(Clone, Serialize, Deserialize, PathSerialize, PathDeserialize, PathIntrospect)]
@@ -114,11 +114,10 @@ pub async fn run(
     keep_running: CancellationToken,
 ) -> Result<()> {
     let ids = Ids {
-        body_id: "behavior_simulator".to_string(),
-        head_id: "behavior_simulator".to_string(),
+        robot_id: "behavior_simulator".to_string(),
     };
     let initial_simulator_state: SimulatorState =
-        parameters::directory::deserialize("crates/bevyhavior_simulator", &ids, true)
+        parameters::directory::deserialize(env!("CARGO_MANIFEST_DIR"), &ids, true)
             .wrap_err("failed to parse initial parameters")?;
 
     let (simulator_state_sender, simulator_state_receiver) =
@@ -147,7 +146,7 @@ pub async fn run(
         outputs_receiver,
         subscribed_outputs_sender,
     )?;
-    communication_server.expose_source("Control", control_reader, control_subscriptions)?;
+    communication_server.expose_source("WorldState", control_reader, control_subscriptions)?;
     communication_server.expose_source("parameters", parameter_reader, parameters_subscriptions)?;
     communication_server.expose_source(
         "simulator",
@@ -175,4 +174,21 @@ pub async fn run(
         .serve(addresses, keep_running)
         .await
         .context("failed to serve")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_simulator_state_selects_existing_player() {
+        let ids = Ids {
+            robot_id: "behavior_simulator".to_string(),
+        };
+        let state: SimulatorState =
+            parameters::directory::deserialize(env!("CARGO_MANIFEST_DIR"), &ids, true)
+                .expect("failed to parse default simulator state");
+
+        assert!((1..=5).contains(&state.selected_robot));
+    }
 }

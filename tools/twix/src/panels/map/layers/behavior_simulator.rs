@@ -87,10 +87,11 @@ impl Layer<Field> for BehaviorSimulator {
                 ground_painter.path(path, TRANSPARENT_BLUE, TRANSPARENT_LIGHT_BLUE, 0.025);
             }
 
-            if let Some(head_yaw) = self.head_yaw.0[player_number]
-                .get_last_value()
-                .wrap_err("head_yaw")?
-            {
+            if let Some(head_yaw) = optional_head_yaw(
+                self.head_yaw.0[player_number]
+                    .get_last_value()
+                    .wrap_err("head_yaw"),
+            ) {
                 let fov_stroke = Stroke {
                     width: 0.002,
                     color: Color32::YELLOW,
@@ -136,5 +137,26 @@ impl Layer<Field> for BehaviorSimulator {
         }
 
         Ok(())
+    }
+}
+
+fn optional_head_yaw(head_yaw: Result<Option<f32>>) -> Option<f32> {
+    head_yaw.ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use color_eyre::eyre::eyre;
+
+    use super::*;
+
+    #[test]
+    fn missing_head_yaw_is_not_a_paint_error() {
+        assert_eq!(optional_head_yaw(Err(eyre!("missing path"))), None);
+    }
+
+    #[test]
+    fn present_head_yaw_is_used() {
+        assert_eq!(optional_head_yaw(Ok(Some(1.25))), Some(1.25));
     }
 }

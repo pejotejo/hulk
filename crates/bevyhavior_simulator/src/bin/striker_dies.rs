@@ -8,7 +8,6 @@ use bevyhavior_simulator::{
     robot::Robot,
     time::{Ticks, TicksTime},
 };
-use types::roles::Role;
 
 #[scenario]
 fn striker_dies(app: &mut App) {
@@ -26,8 +25,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -40,14 +37,16 @@ fn update(
     time: Res<Time<Ticks>>,
     mut exit: MessageWriter<AppExit>,
     robots: Query<(Entity, &Robot)>,
+    mut striker_was_despawned: Local<bool>,
 ) {
-    if time.ticks() == 5000 {
+    if time.ticks() == 100 {
         robots
             .iter()
-            .filter(|(_, robot)| robot.database.main_outputs.role == Role::Striker)
+            .filter(|(_, robot)| robot.parameters.player_number == PlayerNumber::Three)
             .for_each(|(entity, _)| commands.entity(entity).despawn());
+        *striker_was_despawned = true;
     }
-    if game_controller.state.hulks_team.score > 0 {
+    if *striker_was_despawned && game_controller.state.hulks_team.score > 0 {
         println!("Done");
         exit.write(AppExit::Success);
     }

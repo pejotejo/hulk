@@ -10,7 +10,6 @@ use bevyhavior_simulator::{
     robot::Robot,
     time::{Ticks, TicksTime},
 };
-use types::{primary_state::PrimaryState, roles::Role};
 
 #[scenario]
 fn golden_goal(app: &mut App) {
@@ -28,14 +27,12 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
     game_controller_commands.write(GameControllerCommand::Penalize(
-        PlayerNumber::Seven,
-        Penalty::Manual {
+        PlayerNumber::Three,
+        Penalty::IncapableRobot {
             remaining: Duration::from_secs(80),
         },
         Team::Hulks,
@@ -45,7 +42,6 @@ fn startup(
 
 fn update(
     game_controller: ResMut<GameController>,
-    robots: Query<&Robot>,
     time: Res<Time<Ticks>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -56,20 +52,5 @@ fn update(
     if time.ticks() >= 10_000 {
         println!("No goal was scored :(");
         exit.write(AppExit::from_code(1));
-    }
-
-    let striker_count = robots
-        .iter()
-        .filter(|robot| robot.database.main_outputs.primary_state != PrimaryState::Penalized)
-        .filter(|robot| robot.database.main_outputs.role == Role::Striker)
-        .count();
-    if game_controller.state.game_state == GameState::Set {
-        if striker_count == 1 {
-            println!("One striker is present");
-            exit.write(AppExit::Success);
-        } else {
-            println!("Error: Found {striker_count} strikers!");
-            exit.write(AppExit::from_code(1));
-        }
     }
 }

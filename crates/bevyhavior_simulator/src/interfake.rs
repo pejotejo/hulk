@@ -8,17 +8,10 @@ use parking_lot::Mutex;
 
 use buffered_watch::{Receiver, Sender};
 use color_eyre::Result;
-use hardware::{
-    CameraInterface, NetworkInterface, PathsInterface, RecordingInterface, SpeakerInterface,
-    TimeInterface,
-};
-use ros2::sensor_msgs::{camera_info::CameraInfo, image::Image};
-use types::{
-    audio::SpeakerRequest,
-    messages::{IncomingMessage, OutgoingMessage},
-};
+use hardware::{NetworkInterface, RecordingInterface, TimeInterface};
+use types::messages::{IncomingMessage, OutgoingMessage};
 
-use crate::{cyclers::control::Database, HardwareInterface};
+use crate::{HardwareInterface, cyclers::world_state::Database};
 
 pub struct Interfake {
     time: Mutex<SystemTime>,
@@ -62,50 +55,6 @@ impl RecordingInterface for Interfake {
 impl TimeInterface for Interfake {
     fn get_now(&self) -> SystemTime {
         *self.time.lock()
-    }
-}
-
-impl SpeakerInterface for Interfake {
-    fn write_to_speakers(&self, _request: SpeakerRequest) {}
-}
-
-impl PathsInterface for Interfake {
-    fn get_paths(&self) -> hula_types::hardware::Paths {
-        unimplemented!()
-    }
-}
-
-impl CameraInterface for Interfake {
-    fn read_rectified_image(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_rectified_right_image(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_stereonet_depth_image(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_stereonet_visual_image(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_image_left_raw(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_image_left_raw_camera_info(&self) -> Result<CameraInfo> {
-        unimplemented!()
-    }
-
-    fn read_image_right_raw(&self) -> Result<Image> {
-        unimplemented!()
-    }
-
-    fn read_image_right_raw_camera_info(&self) -> Result<CameraInfo> {
-        unimplemented!()
     }
 }
 

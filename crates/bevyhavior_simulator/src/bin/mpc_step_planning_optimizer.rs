@@ -9,11 +9,11 @@ use bevyhavior_simulator::{
 };
 use geometry::{arc::Arc, circle::Circle, direction::Direction, line_segment::LineSegment};
 use hsl_network_messages::{GameState, PlayerNumber};
-use linear_algebra::{point, vector, Isometry2, Orientation2, Point2};
+use linear_algebra::{Isometry2, Orientation2, Point2, point, vector};
 use scenario::scenario;
 use types::{
-    motion_command::{ArmMotion, HeadMotion, MotionCommand, OrientationMode, WalkSpeed},
-    planned_path::{Path, PathSegment},
+    motion_command::{HeadMotion, MotionCommand, OrientationMode},
+    path::{Path, PathSegment},
 };
 
 #[scenario]
@@ -26,7 +26,7 @@ fn startup(
     mut commands: Commands,
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
 ) {
-    commands.spawn(Robot::new(PlayerNumber::Seven));
+    commands.spawn(Robot::new(PlayerNumber::Three));
 
     game_controller_commands.write(GameControllerCommand::SetGameState(GameState::Playing));
 }
@@ -43,9 +43,6 @@ fn update(
         Some(Isometry2::from_parts(vector![-1.0, -1.0], FRAC_PI_2));
     robot.parameters.behavior.injected_motion_command = Some(MotionCommand::Walk {
         head: HeadMotion::ZeroAngles,
-        left_arm: ArmMotion::Swing,
-        right_arm: ArmMotion::Swing,
-        speed: WalkSpeed::Normal,
         path: Path {
             segments: vec![
                 PathSegment::LineSegment(LineSegment(Point2::origin(), point![0.3, 0.0])),
@@ -64,11 +61,8 @@ fn update(
         orientation_mode: OrientationMode::Unspecified,
         target_orientation: Orientation2::identity(),
         distance_to_be_aligned: 0.1,
+        speed: 1.0,
     });
-
-    let optimizer_steps = time.ticks() as usize;
-
-    println!("tick {}: {optimizer_steps} steps", time.ticks());
 
     if time.ticks() >= 500 {
         exit.write(AppExit::Success);

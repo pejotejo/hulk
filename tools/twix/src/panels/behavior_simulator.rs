@@ -41,7 +41,8 @@ impl<'a> Panel<'a> for BehaviorSimulatorPanel {
             .value
             .and_then(|value| value.get("selected_robot"))
             .and_then(|value| value.as_u64())
-            .unwrap_or_default() as usize;
+            .map(|selected_robot| clamp_simulator_robot_index(selected_robot as usize))
+            .unwrap_or_default();
         let playing = context
             .value
             .and_then(|value| value.get("playing"))
@@ -116,7 +117,7 @@ impl Widget for &mut BehaviorSimulatorPanel {
 
                         ui.add_space(50.0);
 
-                        let robots = (1..=7).collect::<Vec<_>>();
+                        let robots = simulator_robot_numbers();
                         let response = SegmentedControl::new(
                             "robot-selector",
                             &mut self.selected_robot,
@@ -151,5 +152,28 @@ impl Widget for &mut BehaviorSimulatorPanel {
             );
         }
         response
+    }
+}
+
+fn simulator_robot_numbers() -> Vec<usize> {
+    (1..=5).collect()
+}
+
+fn clamp_simulator_robot_index(index: usize) -> usize {
+    index.min(simulator_robot_numbers().len() - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn robot_selector_matches_simulator_player_schema() {
+        assert_eq!(simulator_robot_numbers(), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn clamps_saved_robot_index_to_current_schema() {
+        assert_eq!(clamp_simulator_robot_index(6), 4);
     }
 }

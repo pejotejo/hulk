@@ -1951,6 +1951,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevyhavior_simulator"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bincode",
+ "booster",
+ "buffered_watch",
+ "clap",
+ "code_generation",
+ "color-eyre",
+ "communication",
+ "context_attribute",
+ "coordinate_systems",
+ "framework",
+ "geometry",
+ "hardware",
+ "hsl_network_messages",
+ "hula_types",
+ "indicatif",
+ "ittapi",
+ "linear_algebra",
+ "nalgebra",
+ "parameters",
+ "parking_lot",
+ "path_serde",
+ "proc-macro2",
+ "projection",
+ "quote",
+ "repository",
+ "scenario",
+ "serde",
+ "serde_json",
+ "source_analyzer",
+ "tokio",
+ "tokio-util",
+ "types",
+ "voronoi",
+ "world_state",
+]
+
+[[package]]
 name = "bimap"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9802,6 +9843,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
 dependencies = [
  "sdd",
+]
+
+[[package]]
+name = "scenario"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

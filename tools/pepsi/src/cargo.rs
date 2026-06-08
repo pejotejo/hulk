@@ -42,6 +42,7 @@ lazy_static! {
             ("replayer", "crates/hulk_replayer"),
             ("mujoco", "crates/hulk_mujoco"),
             ("booster", "crates/hulk_booster"),
+            ("bevyhavior_simulator", "crates/bevyhavior_simulator"),
             ("aliveness", "services/aliveness"),
             ("power-panic", "services/power-panic"),
             ("annotato", "tools/annotato"),
@@ -72,6 +73,9 @@ pub trait CargoCommand {
     const SUB_COMMAND: &'static str;
 
     fn apply(&self, cmd: &mut Cargo);
+    fn apply_for_manifest(&self, cmd: &mut Cargo, _manifest: Option<&OsStr>) {
+        self.apply(cmd);
+    }
     fn profile(&self) -> &str;
 }
 
@@ -101,6 +105,7 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
     repository: &Repository,
     compiler_artifacts: &[impl AsRef<Path>],
 ) -> Result<tokio::process::Command, color_eyre::eyre::Error> {
+    let manifest_argument = arguments.manifest.clone();
     let manifest_path = match arguments.manifest {
         Some(manifest) => {
             let absolute_manifest = resolve_manifest_path(&manifest, repository)
@@ -148,7 +153,9 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
             cargo.arg(manifest_path);
         }
     }
-    arguments.cargo.apply(&mut cargo);
+    arguments
+        .cargo
+        .apply_for_manifest(&mut cargo, manifest_argument.as_deref());
     let cargo_command = cargo
         .command(repository, compiler_artifacts)
         .wrap_err("failed to create cargo command")?;
@@ -224,4 +231,17 @@ fn package_metadata(table: &Table) -> Option<&Table> {
         .get("metadata")?
         .get("pepsi")?
         .as_table()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_bevyhavior_simulator_manifest_alias() {
+        assert_eq!(
+            MANIFEST_PATHS.get("bevyhavior_simulator"),
+            Some(&"crates/bevyhavior_simulator"),
+        );
+    }
 }

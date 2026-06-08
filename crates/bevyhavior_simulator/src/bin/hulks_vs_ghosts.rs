@@ -26,8 +26,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }

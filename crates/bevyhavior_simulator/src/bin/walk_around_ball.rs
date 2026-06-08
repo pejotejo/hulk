@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use bevy::prelude::*;
 
 use hsl_network_messages::{GameState, PlayerNumber};
-use linear_algebra::{point, Vector2};
+use linear_algebra::{Vector2, point};
 use scenario::scenario;
 
 use bevyhavior_simulator::{
@@ -24,7 +24,7 @@ fn startup(
     mut commands: Commands,
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
 ) {
-    commands.spawn(Robot::new(PlayerNumber::Seven));
+    commands.spawn(Robot::new(PlayerNumber::Three));
     game_controller_commands.write(GameControllerCommand::SetGameState(GameState::Ready));
 }
 

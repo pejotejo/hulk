@@ -8,11 +8,13 @@ use scenario::scenario;
 
 use bevyhavior_simulator::{
     ball::BallResource,
-    game_controller::GameControllerCommand,
+    game_controller::{GameController, GameControllerCommand},
     robot::Robot,
     time::{Ticks, TicksTime},
 };
-use types::{ball_position::SimulatorBallState, motion_command::MotionCommand};
+use types::{
+    ball_position::SimulatorBallState, motion_command::MotionCommand, path::traits::Length,
+};
 
 #[scenario]
 fn standing_searcher(app: &mut App) {
@@ -30,7 +32,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -42,12 +43,13 @@ fn update(
     mut ball: ResMut<BallResource>,
     mut exit: MessageWriter<AppExit>,
     mut robots: Query<&mut Robot>,
+    game_controller: Res<GameController>,
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
 ) {
     if time.ticks() == 4150 {
         game_controller_commands.write(GameControllerCommand::Penalize(
             PlayerNumber::Two,
-            Penalty::Manual {
+            Penalty::IncapableRobot {
                 remaining: Duration::from_secs(1),
             },
             Team::Hulks,
@@ -77,13 +79,15 @@ fn update(
             println!("Standing searcher at penalty walk-in");
             exit.write(AppExit::from_code(1));
         }
-        if let MotionCommand::Walk { .. } = robots
-            .iter_mut()
-            .find(|robot| robot.parameters.player_number == PlayerNumber::Three)
-            .unwrap()
-            .database
-            .main_outputs
-            .motion_command
+        if game_controller.state.game_state == GameState::Playing
+            && let MotionCommand::Walk { path, .. } = &robots
+                .iter_mut()
+                .find(|robot| robot.parameters.player_number == PlayerNumber::Three)
+                .unwrap()
+                .database
+                .main_outputs
+                .motion_command
+            && path.length() > 0.01
         {
             println!("Moving searcher after ball loss");
             exit.write(AppExit::from_code(1));

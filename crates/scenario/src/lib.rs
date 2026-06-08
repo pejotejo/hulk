@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn scenario(_attribute: TokenStream, item: TokenStream) -> TokenStream {
@@ -17,7 +17,7 @@ pub fn scenario(_attribute: TokenStream, item: TokenStream) -> TokenStream {
             let args = bevyhavior_simulator::scenario::Arguments::parse();
 
             App::new()
-                .add_plugins(SimulatorPlugin::default().with_recording(!args.run))
+                .add_plugins(SimulatorPlugin::new(args.mode()))
                 .add_plugins(#function_name)
                 .run_to_completion()
         }
@@ -29,7 +29,7 @@ pub fn scenario(_attribute: TokenStream, item: TokenStream) -> TokenStream {
                 use bevyhavior_simulator::simulator::{AppExt, SimulatorPlugin};
 
                 bevy::app::App::new()
-                    .add_plugins(SimulatorPlugin::default())
+                    .add_plugins(SimulatorPlugin::run())
                     .add_plugins(super::#function_name)
                     .run_to_completion()
             }

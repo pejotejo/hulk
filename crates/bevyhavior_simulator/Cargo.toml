@@ -4,49 +4,140 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 homepage.workspace = true
+autobins = false
+
+[[bin]]
+name = "vanishing_ball"
+path = "src/bin/vanishing_ball.rs"
+
+[[bin]]
+name = "golden_goal"
+path = "src/bin/golden_goal.rs"
+
+[[bin]]
+name = "golden_goal_opponent_kickoff"
+path = "src/bin/golden_goal_opponent_kickoff.rs"
+
+[[bin]]
+name = "step_planning_test"
+path = "src/bin/step_planning_test.rs"
+
+[[bin]]
+name = "penalty_shootout_attacking"
+path = "src/bin/penalty_shootout_attacking.rs"
+
+[[bin]]
+name = "flickering_ball"
+path = "src/bin/flickering_ball.rs"
+
+[[bin]]
+name = "goal_kicks"
+path = "src/bin/goal_kicks.rs"
+
+[[bin]]
+name = "ingame_penalty_kick_opponent"
+path = "src/bin/ingame_penalty_kick_opponent.rs"
+
+[[bin]]
+name = "ingame_penalty_kick_opponent_with_kick"
+path = "src/bin/ingame_penalty_kick_opponent_with_kick.rs"
+
+[[bin]]
+name = "ingame_penalty_kick"
+path = "src/bin/ingame_penalty_kick.rs"
+
+[[bin]]
+name = "ball_search"
+path = "src/bin/ball_search.rs"
+
+[[bin]]
+name = "defender_positioning"
+path = "src/bin/defender_positioning.rs"
+
+[[bin]]
+name = "standing_searcher"
+path = "src/bin/standing_searcher.rs"
+
+[[bin]]
+name = "quantum_ball"
+path = "src/bin/quantum_ball.rs"
+
+[[bin]]
+name = "hulks_vs_ghosts"
+path = "src/bin/hulks_vs_ghosts.rs"
+
+[[bin]]
+name = "walk_around_ball"
+path = "src/bin/walk_around_ball.rs"
+
+[[bin]]
+name = "oscillating_obstacle"
+path = "src/bin/oscillating_obstacle.rs"
+
+[[bin]]
+name = "mpc_step_planning_optimizer"
+path = "src/bin/mpc_step_planning_optimizer.rs"
+
+[[bin]]
+name = "kicking_team_filtering"
+path = "src/bin/kicking_team_filtering.rs"
+
+[[bin]]
+name = "kick_in"
+path = "src/bin/kick_in.rs"
+
+[[bin]]
+name = "ingame_penalty_kick_striker_penalized"
+path = "src/bin/ingame_penalty_kick_striker_penalized.rs"
+
+[[bin]]
+name = "demonstration"
+path = "src/bin/demonstration.rs"
+
+[[bin]]
+name = "intercept_ball"
+path = "src/bin/intercept_ball.rs"
+
+[[bin]]
+name = "striker_dies"
+path = "src/bin/striker_dies.rs"
+
+[[bin]]
+name = "golden_goal_striker_penalized"
+path = "src/bin/golden_goal_striker_penalized.rs"
 
 [dependencies]
-approx = { workspace = true }
-ball_filter = { workspace = true }
 bevy = { workspace = true }
 bincode = { workspace = true }
 booster = { workspace = true }
 buffered_watch = { workspace = true }
-chrono = { workspace = true }
 clap = { workspace = true }
 color-eyre = { workspace = true }
 communication = { workspace = true }
 context_attribute = { workspace = true }
 coordinate_systems = { workspace = true }
-ctrlc = { workspace = true }
-fern = { workspace = true }
 framework = { workspace = true }
 geometry = { workspace = true }
 hardware = { workspace = true }
-hsl_network = { workspace = true }
 hsl_network_messages = { workspace = true }
 hula_types = { workspace = true }
-hydra = { workspace = true }
 indicatif = { workspace = true }
 ittapi = { workspace = true }
-kinematics = { workspace = true }
 linear_algebra = { workspace = true }
-log = { workspace = true }
-motion = { workspace = true }
 nalgebra = { workspace = true }
-ndarray = { workspace = true }
 parameters = { workspace = true }
 parking_lot = { workspace = true }
 path_serde = { workspace = true }
 projection = { workspace = true }
 repository = { workspace = true }
-ros2 = { workspace = true }
 scenario = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 types = { workspace = true }
+voronoi = { workspace = true }
+world_state = { workspace = true }
 
 [build-dependencies]
 code_generation = { workspace = true }

@@ -8,11 +8,11 @@ use bevyhavior_simulator::{
     time::{Ticks, TicksTime},
 };
 use hsl_network_messages::{GameState, PlayerNumber};
-use linear_algebra::{point, Isometry2, Orientation2, Point2};
+use linear_algebra::{Isometry2, Orientation2, Point2, point};
 use scenario::scenario;
 use types::{
-    motion_command::{ArmMotion, HeadMotion, MotionCommand, OrientationMode, WalkSpeed},
-    planned_path::{Path, PathSegment},
+    motion_command::{HeadMotion, MotionCommand, OrientationMode},
+    path::{Path, PathSegment},
 };
 
 #[scenario]
@@ -25,7 +25,7 @@ fn startup(
     mut commands: Commands,
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
 ) {
-    commands.spawn(Robot::new(PlayerNumber::Seven));
+    commands.spawn(Robot::new(PlayerNumber::One));
     game_controller_commands.write(GameControllerCommand::SetGameState(GameState::Playing));
 }
 
@@ -84,8 +84,6 @@ fn update(time: Res<Time<Ticks>>, mut exit: MessageWriter<AppExit>, mut robots: 
         target_orientation,
         distance_to_be_aligned: 0.1,
         head: HeadMotion::ZeroAngles,
-        left_arm: ArmMotion::Swing,
-        right_arm: ArmMotion::Swing,
-        speed: WalkSpeed::Normal,
+        speed: 1.0,
     });
 }

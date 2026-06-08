@@ -13,7 +13,7 @@ use bevy::{
 };
 use coordinate_systems::{Field, Ground};
 use hsl_network_messages::{GameState, Penalty, SubState, Team};
-use linear_algebra::{point, vector, Isometry2};
+use linear_algebra::{Isometry2, point, vector};
 use types::{
     ball_position::SimulatorBallState,
     field_dimensions::{FieldDimensions, Half, Side},
@@ -26,7 +26,6 @@ use crate::{
     field_dimensions::SimulatorFieldDimensions,
     game_controller::{GameController, GameControllerCommand},
     robot::Robot,
-    visual_referee::VisualRefereeResource,
     whistle::WhistleResource,
 };
 
@@ -63,15 +62,14 @@ pub fn autoref(
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
     robots: Query<&Robot>,
     time: ResMut<Time>,
-    mut visual_referee: ResMut<VisualRefereeResource>,
 ) {
     match game_controller.state.game_state {
         GameState::Ready => {
             let robots_moved_this_cycle = robots.iter().any(|robot| -> bool {
                 match &robot.database.main_outputs.motion_command {
-                    MotionCommand::Unstiff
-                    | MotionCommand::Penalized
-                    | MotionCommand::Stand { .. } => false,
+                    MotionCommand::Prepare
+                    | MotionCommand::Stand { .. }
+                    | MotionCommand::StandUp => false,
                     MotionCommand::Walk { path, .. } if path.length() < 0.01 => false,
                     _ => true,
                 }
@@ -113,12 +111,6 @@ pub fn autoref(
                     GoalMode::Ignore => {}
                 }
             }
-
-            if game_controller.state.sub_state.is_some() {
-                visual_referee.update_visual_referee(*time);
-            } else {
-                visual_referee.reset();
-            }
         }
         _ => {}
     }
@@ -140,9 +132,7 @@ pub fn auto_assistant_referee(
     field_dimensions: Res<SimulatorFieldDimensions>,
     mut robots: Query<&mut Robot>,
     mut ball: ResMut<BallResource>,
-    game_controller: ResMut<GameController>,
-    time: Res<Time>,
-    mut visual_referee: ResMut<VisualRefereeResource>,
+    _game_controller: ResMut<GameController>,
 ) {
     let penalized_walk_in_position: Isometry2<Ground, Field> =
         Isometry2::from_parts(vector![-3.2, -3.3], FRAC_PI_2);
@@ -151,102 +141,91 @@ pub fn auto_assistant_referee(
         match *command {
             GameControllerCommand::SetGameState(_) => {}
             GameControllerCommand::SetGamePhase(_) => {}
-            GameControllerCommand::SetSubState(sub_state, kicking_team, _) => {
-                if sub_state.is_some() {
-                    visual_referee.start_free_kick_pose(
-                        *time,
-                        kicking_team,
-                        game_controller.state.global_field_side,
-                    )
-                };
-
-                match sub_state {
-                    Some(SubState::CornerKick) => {
-                        let side = if let Some(ball) = ball.state {
-                            if ball.position.y() >= 0.0 {
-                                Side::Left
-                            } else {
-                                Side::Right
-                            }
+            GameControllerCommand::SetSubState(sub_state, kicking_team, _) => match sub_state {
+                Some(SubState::CornerKick) => {
+                    let side = if let Some(ball) = ball.state {
+                        if ball.position.y() >= 0.0 {
+                            Side::Left
                         } else {
                             Side::Right
-                        };
-                        let half = match kicking_team {
-                            Team::Hulks => Half::Opponent,
-                            Team::Opponent => Half::Own,
-                        };
-                        ball.state = Some(SimulatorBallState {
-                            position: field_dimensions.corner(half, side),
-                            velocity: vector![0.0, 0.0],
-                        });
-                    }
-                    Some(SubState::PenaltyKick) => {
-                        let half = match kicking_team {
-                            Team::Hulks => Half::Opponent,
-                            Team::Opponent => Half::Own,
-                        };
-                        ball.state = Some(SimulatorBallState {
-                            position: field_dimensions.penalty_spot(half),
-                            velocity: vector![0.0, 0.0],
-                        });
-                    }
-                    Some(SubState::GoalKick) => {
-                        let side = if let Some(ball) = ball.state {
-                            if ball.position.y() >= 0.0 {
-                                Side::Left
-                            } else {
-                                Side::Right
-                            }
-                        } else {
-                            Side::Left
-                        };
-                        let half = match kicking_team {
-                            Team::Hulks => Half::Own,
-                            Team::Opponent => Half::Opponent,
-                        };
-                        ball.state = Some(SimulatorBallState {
-                            position: field_dimensions.goal_box_corner(half, side),
-                            velocity: vector![0.0, 0.0],
-                        });
-                    }
-                    Some(SubState::KickIn) => {
-                        let position = if let Some(ball) = ball.state {
-                            let x = ball.position.x();
-                            let y = if ball.position.y() >= 0.0 {
-                                field_dimensions.width / 2.0
-                            } else {
-                                -field_dimensions.width / 2.0
-                            };
-                            point![x, y]
-                        } else {
-                            point![0.0, field_dimensions.width / 2.0]
-                        };
-                        ball.state = Some(SimulatorBallState {
-                            position,
-                            velocity: vector![0.0, 0.0],
-                        });
-                    }
-                    Some(SubState::PushingFreeKick) | None => {}
+                        }
+                    } else {
+                        Side::Right
+                    };
+                    let half = match kicking_team {
+                        Team::Hulks => Half::Opponent,
+                        Team::Opponent => Half::Own,
+                    };
+                    ball.state = Some(SimulatorBallState {
+                        position: field_dimensions.corner(half, side),
+                        velocity: vector![0.0, 0.0],
+                    });
                 }
-            }
+                Some(SubState::PenaltyKick) => {
+                    let half = match kicking_team {
+                        Team::Hulks => Half::Opponent,
+                        Team::Opponent => Half::Own,
+                    };
+                    ball.state = Some(SimulatorBallState {
+                        position: field_dimensions.penalty_spot(half),
+                        velocity: vector![0.0, 0.0],
+                    });
+                }
+                Some(SubState::GoalKick) => {
+                    let side = if let Some(ball) = ball.state {
+                        if ball.position.y() >= 0.0 {
+                            Side::Left
+                        } else {
+                            Side::Right
+                        }
+                    } else {
+                        Side::Left
+                    };
+                    let half = match kicking_team {
+                        Team::Hulks => Half::Own,
+                        Team::Opponent => Half::Opponent,
+                    };
+                    ball.state = Some(SimulatorBallState {
+                        position: field_dimensions.goal_box_corner(half, side),
+                        velocity: vector![0.0, 0.0],
+                    });
+                }
+                Some(SubState::ThrowIn) => {
+                    let position = if let Some(ball) = ball.state {
+                        let x = ball.position.x();
+                        let y = if ball.position.y() >= 0.0 {
+                            field_dimensions.width / 2.0
+                        } else {
+                            -field_dimensions.width / 2.0
+                        };
+                        point![x, y]
+                    } else {
+                        point![0.0, field_dimensions.width / 2.0]
+                    };
+                    ball.state = Some(SimulatorBallState {
+                        position,
+                        velocity: vector![0.0, 0.0],
+                    });
+                }
+                Some(SubState::DirectFreeKick) | Some(SubState::IndirectFreeKick) | None => {}
+            },
             GameControllerCommand::BallIsFree => {}
             GameControllerCommand::SetKickingTeam(_) => {}
             GameControllerCommand::Goal(_) => {}
             GameControllerCommand::Penalize(player_number, penalty, team) => match penalty {
-                Penalty::IllegalMotionInStandby { .. } | Penalty::IllegalMotionInSet { .. } => {
+                Penalty::MotionInSet { .. } => {
                     // Robots are penalized in place
                 }
-                Penalty::IllegalBallContact { .. }
-                | Penalty::PlayerPushing { .. }
-                | Penalty::InactivePlayer { .. }
-                | Penalty::IllegalPosition { .. }
-                | Penalty::LeavingTheField { .. }
-                | Penalty::RequestForPickup { .. }
+                Penalty::IllegalPosition { .. }
                 | Penalty::LocalGameStuck { .. }
-                | Penalty::IllegalPositionInSet { .. }
-                | Penalty::PlayerStance { .. }
-                | Penalty::Substitute { .. }
-                | Penalty::Manual { .. } => {
+                | Penalty::IncapableRobot { .. }
+                | Penalty::PickUp { .. }
+                | Penalty::BallHolding { .. }
+                | Penalty::LeavingTheField { .. }
+                | Penalty::PlayingWithArmsHands { .. }
+                | Penalty::Pushing { .. }
+                | Penalty::SentOff { .. }
+                | Penalty::Substitute { .. } => {
                     if team == Team::Hulks {
                         if let Some(mut robot) = robots
                             .iter_mut()

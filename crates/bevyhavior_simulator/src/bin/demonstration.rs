@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use hsl_network_messages::{GameState, PlayerNumber, SubState, Team};
-use linear_algebra::{vector, Isometry2};
+use linear_algebra::{Isometry2, vector};
 use scenario::scenario;
 
 use bevyhavior_simulator::{
@@ -28,8 +28,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -67,14 +65,14 @@ fn update(
     if time.ticks() == 6000 {
         // Set substate
         game_controller_commands.write(GameControllerCommand::SetSubState(
-            Some(SubState::PushingFreeKick),
+            Some(SubState::DirectFreeKick),
             Team::Opponent,
             Some(PlayerNumber::Four),
         ));
         // Manually move robot to some location on field
         robots
             .iter_mut()
-            .find(|robot| robot.parameters.player_number == PlayerNumber::Seven)
+            .find(|robot| robot.parameters.player_number == PlayerNumber::Three)
             .unwrap()
             .database
             .main_outputs

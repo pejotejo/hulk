@@ -39,8 +39,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -70,8 +68,8 @@ fn update(
         (30_000, SubState::GoalKick, Team::Hulks),
         (36_000, SubState::CornerKick, Team::Opponent),
         (42_000, SubState::PenaltyKick, Team::Opponent),
-        (52_000, SubState::PushingFreeKick, Team::Opponent),
-        (60_000, SubState::PushingFreeKick, Team::Hulks),
+        (52_000, SubState::DirectFreeKick, Team::Opponent),
+        (60_000, SubState::DirectFreeKick, Team::Hulks),
     ] {
         set_substate_at_tick_start(
             &time,
@@ -104,34 +102,36 @@ fn update(
 
     if time.ticks() == 18_000 + PENALTY_DURATION_IN_TICKS {
         game_controller_commands.write(GameControllerCommand::Unpenalize(
-            PlayerNumber::Six,
+            PlayerNumber::Five,
             Team::Opponent,
         ));
     }
 
     if time.ticks() == 42_000 + PENALTY_DURATION_IN_TICKS {
         game_controller_commands.write(GameControllerCommand::Unpenalize(
-            PlayerNumber::Six,
+            PlayerNumber::Five,
             Team::Hulks,
         ));
     }
 
     if time.ticks() == 52_000 + PENALTY_DURATION_IN_TICKS {
         game_controller_commands.write(GameControllerCommand::Unpenalize(
-            PlayerNumber::Six,
+            PlayerNumber::Five,
             Team::Hulks,
         ));
     }
 
     if time.ticks() == 60_000 + PENALTY_DURATION_IN_TICKS {
         game_controller_commands.write(GameControllerCommand::Unpenalize(
-            PlayerNumber::Six,
+            PlayerNumber::Five,
             Team::Opponent,
         ));
     }
 
     if time.ticks() >= 66_000 {
-        println!("Done! Successfully and correctly inferred kicking team in all passively inferrable sub states.");
+        println!(
+            "Done! Successfully and correctly inferred kicking team in all passively inferrable sub states."
+        );
         exit.write(AppExit::Success);
     }
 }
@@ -159,7 +159,13 @@ fn check_kicking_team_inference(
                 dbg!(sub_state);
                 dbg!(ball_is_free);
                 dbg!(kicking_team);
-                println!("{} Scenario failed. kicking_team and/or ball_is_free was not correctly inferred during {:?} with kicking team {:?}. {}", time.ticks(), sub_state.unwrap(), correct_kicking_team, robot.parameters.player_number);
+                println!(
+                    "{} Scenario failed. kicking_team and/or ball_is_free was not correctly inferred during {:?} with kicking team {:?}. {}",
+                    time.ticks(),
+                    sub_state.unwrap(),
+                    correct_kicking_team,
+                    robot.parameters.player_number
+                );
                 exit.write(AppExit::from_code(1));
                 return;
             }
@@ -188,8 +194,8 @@ fn set_substate_at_tick_start(
     }
     if time.ticks() == tick_start {
         let penalized_player_number =
-            if [SubState::PenaltyKick, SubState::PushingFreeKick].contains(&checked_sub_state) {
-                Some(PlayerNumber::Six)
+            if [SubState::PenaltyKick, SubState::DirectFreeKick].contains(&checked_sub_state) {
+                Some(PlayerNumber::Five)
             } else {
                 None
             };

@@ -1,7 +1,7 @@
 use bevy::{ecs::system::SystemParam, prelude::*};
 
 use hsl_network_messages::{GameState, PlayerNumber};
-use linear_algebra::{point, vector, Isometry2, Point2, Vector};
+use linear_algebra::{Isometry2, Point2, Vector, point, vector};
 use scenario::scenario;
 use types::ball_position::SimulatorBallState;
 
@@ -31,8 +31,9 @@ fn startup(
     mut game_controller_commands: MessageWriter<GameControllerCommand>,
     mut ball: ResMut<BallResource>,
 ) {
-    let mut robot = Robot::new(PlayerNumber::One);
+    let mut robot = Robot::new(PlayerNumber::Three);
     *robot.ground_to_field_mut() = Isometry2::from_parts(vector![-2.0, 0.0], 0.0);
+    robot.simulator_parameters.ball_view_range = 7.0;
     commands.spawn(robot);
     game_controller.state.game_state = GameState::Playing;
     game_controller_commands.write(GameControllerCommand::SetGameState(GameState::Playing));

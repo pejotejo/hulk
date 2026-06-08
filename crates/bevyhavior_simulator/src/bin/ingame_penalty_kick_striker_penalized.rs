@@ -27,8 +27,6 @@ fn startup(
         PlayerNumber::Three,
         PlayerNumber::Four,
         PlayerNumber::Five,
-        PlayerNumber::Six,
-        PlayerNumber::Seven,
     ] {
         commands.spawn(Robot::new(number));
     }
@@ -50,8 +48,8 @@ fn update(
     }
     if time.ticks() == 3050 {
         game_controller_commands.write(GameControllerCommand::Penalize(
-            PlayerNumber::Seven,
-            Penalty::Manual {
+            PlayerNumber::Three,
+            Penalty::IncapableRobot {
                 remaining: Duration::from_secs(10),
             },
             Team::Hulks,
@@ -59,8 +57,8 @@ fn update(
     }
     if time.ticks() == 3100 {
         game_controller_commands.write(GameControllerCommand::Penalize(
-            PlayerNumber::Six,
-            Penalty::Manual {
+            PlayerNumber::Four,
+            Penalty::IncapableRobot {
                 remaining: Duration::from_secs(10),
             },
             Team::Hulks,
@@ -69,7 +67,7 @@ fn update(
     if time.ticks() == 3150 {
         game_controller_commands.write(GameControllerCommand::Penalize(
             PlayerNumber::Five,
-            Penalty::Manual {
+            Penalty::IncapableRobot {
                 remaining: Duration::from_secs(10),
             },
             Team::Hulks,

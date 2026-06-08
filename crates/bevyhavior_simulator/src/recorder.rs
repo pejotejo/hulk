@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use types::{ball_position::SimulatorBallState, players::Players};
 
 use crate::{
-    ball::BallResource, cyclers::control::Database, robot::Robot, server, structs::Parameters,
+    ball::BallResource, cyclers::world_state::Database, robot::Robot, server, structs::Parameters,
 };
 
 pub struct Frame {

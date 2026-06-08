@@ -5,7 +5,7 @@ members = [
   "crates/argument_parsers",
   "crates/audio",
   "crates/bevy_mujoco",
-  # "crates/bevyhavior_simulator",
+  "crates/bevyhavior_simulator",
   "crates/booster",
   "crates/buffered_watch",
   "crates/calibration",
@@ -324,6 +324,7 @@ rule_obstacle_composer = { path = "crates/nodes/rule_obstacle_composer" }
 rustfft = "6.2.0"
 safe_pose_checker = { path = "crates/nodes/safe_pose_checker" }
 search_suggestor = { path = "crates/nodes/search_suggestor" }
+scenario = { path = "crates/scenario" }
 segment_filter = { path = "crates/nodes/segment_filter" }
 semver = "1.0.25"
 sensor_receiver = { path = "crates/sensor_receiver" }
