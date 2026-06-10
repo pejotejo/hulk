@@ -642,6 +642,7 @@ fn calculate_goal_post_positions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
     use types::obstacles::ObstacleKind;
 
     #[test]
@@ -680,6 +681,8 @@ mod tests {
         let player_state = PlayerState {
             pose: linear_algebra::point![3.0, 5.0].into(),
             ball_position: None,
+            coordination: None,
+            last_seen: SystemTime::UNIX_EPOCH,
         };
 
         let position = measured_player_position(&player_state, &ground_to_field);
@@ -694,10 +697,14 @@ mod tests {
         let own_player_state = PlayerState {
             pose: linear_algebra::point![1.0, 2.0].into(),
             ball_position: None,
+            coordination: None,
+            last_seen: SystemTime::UNIX_EPOCH,
         };
         let teammate_state = PlayerState {
             pose: linear_algebra::point![3.0, 4.0].into(),
             ball_position: None,
+            coordination: None,
+            last_seen: SystemTime::UNIX_EPOCH,
         };
         let players = Players {
             two: Some(TimeWrapper {
@@ -740,6 +747,8 @@ mod tests {
         let newer_teammate_state = PlayerState {
             pose: linear_algebra::point![5.0, 6.0].into(),
             ball_position: None,
+            coordination: None,
+            last_seen: SystemTime::UNIX_EPOCH,
         };
         let updated_players = Players {
             four: Some(TimeWrapper {

@@ -7,12 +7,13 @@ use crate::{
         behavior_tree::Node,
         condition::{
             has_ball_position, is_ball_interception_candidate, is_close_to_ball,
-            is_closest_to_ball, is_fallen, is_goalkeeper, is_primary_state, is_remote_controlled,
-            is_remote_kick_mode,
+            is_closest_to_ball, is_fallen, is_goalkeeper, is_pass_receiver, is_primary_state,
+            is_remote_controlled, is_remote_kick_mode,
         },
         head::{look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
         kick::{intercept, kick, kick_power_subtree, kick_subtree, set_kick_target_in_front},
         node::Blackboard,
+        pass::walk_to_pass_receive_position,
         search::{has_suggested_search_position, leuchtturm, walk_to_search_position},
         substates::{is_in_sub_state, sub_state_subtree},
         switch_motion_type::switch_motion_type,
@@ -72,6 +73,10 @@ fn playing_subtree() -> Node<Blackboard> {
     selection!(
         sequence!(condition!(is_goalkeeper), subtree!(goalkeeper_subtree)),
         sequence!(
+            condition!(is_pass_receiver),
+            subtree!(pass_receiver_subtree)
+        ),
+        sequence!(
             negation!(condition!(has_ball_position)),
             subtree!(search_subtree)
         ),
@@ -82,6 +87,17 @@ fn playing_subtree() -> Node<Blackboard> {
 
 fn goalkeeper_subtree() -> Node<Blackboard> {
     sequence!(subtree!(look_at_ball_subtree), action!(stand))
+}
+
+fn pass_receiver_subtree() -> Node<Blackboard> {
+    sequence!(
+        subtree!(look_at_ball_subtree),
+        switch_motion_type(
+            MotionType::Walk,
+            action!(walk_to_pass_receive_position),
+            action!(stand),
+        )
+    )
 }
 
 pub fn search_subtree() -> Node<Blackboard> {

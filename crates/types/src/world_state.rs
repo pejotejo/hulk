@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use booster::FallDownState;
-use hsl_network_messages::PlayerNumber;
+use hsl_network_messages::{CoordinationIntent, PlayerNumber};
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
 
@@ -137,7 +137,22 @@ pub struct RobotState {
     Copy,
     Clone,
     Debug,
-    Default,
+    Serialize,
+    Deserialize,
+    PathSerialize,
+    PathDeserialize,
+    PathIntrospect,
+    Message,
+)]
+pub struct PlayerCoordinationState {
+    pub intent: CoordinationIntent,
+    pub received_at: SystemTime,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
     Serialize,
     Deserialize,
     PathSerialize,
@@ -148,4 +163,17 @@ pub struct RobotState {
 pub struct PlayerState {
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
+    pub coordination: Option<PlayerCoordinationState>,
+    pub last_seen: SystemTime,
+}
+
+impl Default for PlayerState {
+    fn default() -> Self {
+        Self {
+            pose: Default::default(),
+            ball_position: Default::default(),
+            coordination: Default::default(),
+            last_seen: UNIX_EPOCH,
+        }
+    }
 }

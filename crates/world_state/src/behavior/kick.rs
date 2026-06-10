@@ -1,6 +1,6 @@
 use coordinate_systems::Field;
 use geometry::line::Line;
-use linear_algebra::{Orientation2, Point, Point2, Rotation2, point};
+use linear_algebra::{Orientation2, Point, Rotation2, point};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, KickPower, MotionCommand},
@@ -42,11 +42,17 @@ pub fn kick_alternatives_subtree() -> Node<Blackboard> {
 }
 
 pub fn kick(blackboard: &mut Blackboard) -> Status {
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.ball,
-        &blackboard.world_state.robot.ground_to_field,
-    ) {
-        let ball_in_ground = ground_to_field.inverse() * ball.position;
+    if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field {
+        let ball_position = if is_remote_kick_mode_enabled(blackboard) {
+            blackboard.ball.as_ref().map(|ball| ball.position)
+        } else {
+            blackboard.cycle_intent.kick.map(|kick| kick.ball_position)
+        };
+        let Some(ball_position) = ball_position else {
+            return Status::Failure;
+        };
+
+        let ball_in_ground = ground_to_field.inverse() * ball_position;
         let robot_theta_to_field: Orientation2<Field> = ground_to_field.orientation();
 
         blackboard.body_motion = Some(BodyMotion::VisualKick {
@@ -64,17 +70,19 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
 }
 
 pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
-    if let (Some(ground_to_field), Some(ball)) = (
+    if let (Some(ground_to_field), Some(kick_intent)) = (
         blackboard.world_state.robot.ground_to_field,
-        &blackboard.ball,
+        blackboard.cycle_intent.kick,
     ) {
-        let goal_position: Point2<Field> = point!(blackboard.field_dimensions.length / 2.0, 0.0);
         let field_to_ground = ground_to_field.inverse();
 
-        let target_position = field_to_ground * goal_position;
-
-        let ball_in_ground = field_to_ground * ball.position;
-        let kick_direction = Orientation2::from_vector(target_position - ball_in_ground);
+        let target_position = field_to_ground * kick_intent.target;
+        let ball_in_ground = field_to_ground * kick_intent.ball_position;
+        let kick_vector = target_position - ball_in_ground;
+        if kick_vector.try_normalize(f32::EPSILON).is_none() {
+            return Status::Failure;
+        }
+        let kick_direction = Orientation2::from_vector(kick_vector);
 
         if let Some(BodyMotion::VisualKick {
             target_position: motion_target_position,
@@ -99,6 +107,7 @@ pub fn kick_power_subtree() -> Node<Blackboard> {
             condition!(is_last_motion_type, MotionType::Kick),
             action!(use_last_kick_power)
         ),
+        action!(use_selected_kick_power),
         sequence!(
             negation!(condition!(is_close_to_target)),
             condition!(allow_schlong),
@@ -142,6 +151,27 @@ pub fn use_last_kick_power(blackboard: &mut Blackboard) -> Status {
         return Status::Success;
     }
     Status::Failure
+}
+
+pub fn use_selected_kick_power(blackboard: &mut Blackboard) -> Status {
+    if is_remote_kick_mode_enabled(blackboard) {
+        return Status::Failure;
+    }
+
+    if let (Some(kick_intent), Some(BodyMotion::VisualKick { kick_power, .. })) = (
+        blackboard.cycle_intent.kick,
+        blackboard.body_motion.as_mut(),
+    ) {
+        *kick_power = kick_intent.power;
+
+        return Status::Success;
+    }
+    Status::Failure
+}
+
+fn is_remote_kick_mode_enabled(blackboard: &Blackboard) -> bool {
+    blackboard.parameters.remote_control.enable
+        && blackboard.parameters.remote_control.kick_mode_toggle
 }
 
 pub fn use_kick_power(blackboard: &mut Blackboard, kick_power: KickPower) -> Status {

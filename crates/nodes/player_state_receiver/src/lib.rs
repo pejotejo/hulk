@@ -4,9 +4,12 @@ use color_eyre::Result;
 use hsl_network_messages::HulkMessage;
 use ros_z::{prelude::*, qos::QosDurability};
 use types::{
-    ball_position::BallPosition, filtered_game_controller_state::FilteredGameControllerState,
-    messages::IncomingMessage, players::Players, time_wrapper::TimeWrapper,
-    world_state::PlayerState,
+    ball_position::BallPosition,
+    filtered_game_controller_state::FilteredGameControllerState,
+    messages::IncomingMessage,
+    players::Players,
+    time_wrapper::TimeWrapper,
+    world_state::{PlayerCoordinationState, PlayerState},
 };
 
 pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
@@ -60,13 +63,21 @@ fn apply_message(
         return;
     };
 
+    let wallclock = time.to_wallclock();
     player_states[state_message.player_number] = Some(TimeWrapper {
         time,
         inner: PlayerState {
             pose: state_message.pose,
             ball_position: state_message
                 .ball_position
-                .map(|ball| BallPosition::from_network_ball(ball, time.to_wallclock())),
+                .map(|ball| BallPosition::from_network_ball(ball, wallclock)),
+            coordination: state_message
+                .coordination
+                .map(|intent| PlayerCoordinationState {
+                    intent,
+                    received_at: wallclock,
+                }),
+            last_seen: wallclock,
         },
     });
 }
@@ -85,7 +96,7 @@ fn clear_penalized_players(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use hsl_network_messages::{Penalty, PlayerNumber, StateMessage};
     use linear_algebra::Pose2;
@@ -106,6 +117,7 @@ mod tests {
                     player_number: PlayerNumber::Two,
                     pose,
                     ball_position: None,
+                    coordination: None,
                 })),
             },
         );
@@ -113,6 +125,7 @@ mod tests {
         let player = states[PlayerNumber::Two].as_ref().unwrap();
         assert_eq!(player.time, time);
         assert_eq!(player.inner.pose, pose);
+        assert_eq!(player.inner.last_seen, time.to_wallclock());
     }
 
     #[test]
@@ -120,11 +133,17 @@ mod tests {
         let mut states = Players::new(None);
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(10),
-            inner: PlayerState::default(),
+            inner: PlayerState {
+                last_seen: SystemTime::UNIX_EPOCH,
+                ..Default::default()
+            },
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
             time: Time::from_nanos(20),
-            inner: PlayerState::default(),
+            inner: PlayerState {
+                last_seen: SystemTime::UNIX_EPOCH,
+                ..Default::default()
+            },
         });
 
         let game_controller_state = FilteredGameControllerState {

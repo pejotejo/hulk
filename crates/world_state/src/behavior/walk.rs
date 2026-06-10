@@ -127,18 +127,21 @@ pub fn walk_to(
 }
 
 pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.last_ball,
-        &blackboard.world_state.robot.ground_to_field,
+    if let (Some(kick_intent), Some(ground_to_field)) = (
+        blackboard.cycle_intent.kick,
+        blackboard.world_state.robot.ground_to_field,
     ) {
         let field_to_ground = ground_to_field.inverse();
-        let ball_in_ground = field_to_ground * ball.position;
-        let goal_position = field_to_ground * point!(blackboard.field_dimensions.length / 2.0, 0.0);
-        let orientation = Orientation2::from_vector(goal_position - ball_in_ground);
+        let ball_in_ground = field_to_ground * kick_intent.ball_position;
+        let target_in_ground = field_to_ground * kick_intent.target;
+        let ball_to_target = target_in_ground - ball_in_ground;
+        let Some(ball_to_target_direction) = ball_to_target.try_normalize(f32::EPSILON) else {
+            return Status::Failure;
+        };
+        let orientation = Orientation2::from_vector(ball_to_target_direction);
 
         let target_position = ball_in_ground
-            - (goal_position - ball_in_ground).normalize()
-                * blackboard.parameters.kicking.kick_position_ball_distance;
+            - ball_to_target_direction * blackboard.parameters.kicking.kick_position_ball_distance;
         walk_to(
             blackboard,
             Pose2::from_parts(target_position, orientation),

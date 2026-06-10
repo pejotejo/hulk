@@ -12,8 +12,12 @@ use linear_algebra::Vector2;
 use serde::{Deserialize, Serialize};
 use types::filtered_game_controller_state::FilteredGameControllerState;
 use types::{
-    ball_position::BallPosition, cycle_time::CycleTime, messages::IncomingMessage,
-    parameters::HslNetworkParameters, players::Players, world_state::PlayerState,
+    ball_position::BallPosition,
+    cycle_time::CycleTime,
+    messages::IncomingMessage,
+    parameters::HslNetworkParameters,
+    players::Players,
+    world_state::{PlayerCoordinationState, PlayerState},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -93,6 +97,13 @@ impl PlayerStatesReceiver {
                             velocity: Vector2::zeros(),
                             last_seen: context.cycle_time.start_time - ball.age,
                         }),
+                        coordination: state_message.coordination.map(|intent| {
+                            PlayerCoordinationState {
+                                intent,
+                                received_at: context.cycle_time.start_time,
+                            }
+                        }),
+                        last_seen: context.cycle_time.start_time,
                     });
                 }
             }

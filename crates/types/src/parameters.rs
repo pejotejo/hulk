@@ -707,6 +707,7 @@ pub struct WalkSpeedParameters {
     pub kicking: f32,
     pub search: f32,
     pub blocking: f32,
+    pub support: f32,
 }
 
 impl Default for WalkSpeedParameters {
@@ -715,6 +716,7 @@ impl Default for WalkSpeedParameters {
             kicking: 1.0,
             search: 1.0,
             blocking: 1.0,
+            support: 1.0,
         }
     }
 }
@@ -738,6 +740,12 @@ pub struct KickingParameters {
     pub kick_target_offset_angle: f32,
     pub target_distance_kick_power_threshold: f32,
     pub kick_position_ball_distance: f32,
+    pub rumpelstilzchen_min_distance: f32,
+    pub rumpelstilzchen_max_distance: f32,
+    pub schlong_min_distance: f32,
+    pub schlong_max_distance: f32,
+    pub kick_corridor_radius: f32,
+    pub target_switch_score_margin: f32,
 }
 
 #[derive(

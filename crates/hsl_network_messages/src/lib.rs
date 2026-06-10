@@ -52,6 +52,39 @@ pub struct StrikerMessage {
     Clone,
     Copy,
     Debug,
+    Deserialize,
+    Serialize,
+    PathDeserialize,
+    PathIntrospect,
+    PathSerialize,
+    Message,
+)]
+pub enum CoordinationIntent {
+    Pass(PassIntent),
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Serialize,
+    PathDeserialize,
+    PathIntrospect,
+    PathSerialize,
+    Message,
+)]
+pub struct PassIntent {
+    pub sequence: u8,
+    pub receiver: PlayerNumber,
+    pub receive_point: Point2<Field>,
+    pub age: Duration,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
     Default,
     Deserialize,
     Serialize,
@@ -64,6 +97,7 @@ pub struct StateMessage {
     pub player_number: PlayerNumber,
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
+    pub coordination: Option<CoordinationIntent>,
 }
 
 #[derive(
@@ -138,6 +172,12 @@ mod tests {
                 position: Point2::origin(),
                 age: Duration::MAX,
             }),
+            coordination: Some(CoordinationIntent::Pass(PassIntent {
+                sequence: u8::MAX,
+                receiver: PlayerNumber::Two,
+                receive_point: Point2::origin(),
+                age: Duration::MAX,
+            })),
         });
         assert!(bincode::serialize(&test_message).unwrap().len() <= 128)
     }

@@ -111,6 +111,12 @@
     kick_target_offset_angle: 0.1,
     target_distance_kick_power_threshold: 4.0,
     kick_position_ball_distance: 0.3,
+    rumpelstilzchen_min_distance: 0.2,
+    rumpelstilzchen_max_distance: 2.5,
+    schlong_min_distance: 2.0,
+    schlong_max_distance: 6.0,
+    kick_corridor_radius: 0.35,
+    target_switch_score_margin: 0.25,
   },
   substates: {
     distance_for_kick: 0.4,

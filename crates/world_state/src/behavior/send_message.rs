@@ -8,7 +8,9 @@ use std::{
 
 use booster::FallDownStateType;
 use hardware::NetworkInterface;
-use hsl_network_messages::{GameControllerReturnMessage, HulkMessage, StateMessage};
+use hsl_network_messages::{
+    CoordinationIntent, GameControllerReturnMessage, HulkMessage, StateMessage,
+};
 use types::{messages::OutgoingMessage, parameters::HslNetworkParameters, world_state::WorldState};
 
 use crate::behavior::node::Behavior;
@@ -73,6 +75,7 @@ impl Behavior {
         world_state: &WorldState,
         hsl_network_parameters: &HslNetworkParameters,
         remaining_amount_of_messages: Option<&u16>,
+        coordination: Option<CoordinationIntent>,
         last_sent_message: &mut AdditionalOutput<HulkMessage>,
         hardware: &Arc<impl NetworkInterface>,
     ) -> Result<()> {
@@ -103,6 +106,7 @@ impl Behavior {
             player_number: world_state.robot.player_number,
             pose,
             ball_position,
+            coordination,
         });
 
         self.last_sent_hsl_message_time = Some(now);

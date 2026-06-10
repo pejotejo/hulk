@@ -1,11 +1,11 @@
 use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
-use linear_algebra::{point, vector};
+use linear_algebra::vector;
 use types::{
     filtered_game_controller_state::FilteredGameControllerState, primary_state::PrimaryState,
 };
 
-use crate::behavior::node::Blackboard;
+use crate::behavior::{kick_selector::TacticalRole, node::Blackboard, pass};
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
     if let (Some(ball), Some(ground_to_field)) = (
@@ -57,16 +57,20 @@ pub fn is_close_to_ball(blackboard: &mut Blackboard) -> bool {
 
 pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
     let mut is_close_and_aligned = false;
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.ball,
-        &blackboard.world_state.robot.ground_to_field,
+    if let (Some(kick_intent), Some(ground_to_field)) = (
+        blackboard.cycle_intent.kick,
+        blackboard.world_state.robot.ground_to_field,
     ) {
-        let ball_in_ground = ground_to_field.inverse() * ball.position;
-        let goal_position =
-            ground_to_field.inverse() * point!(blackboard.field_dimensions.length / 2.0, 0.0);
+        let field_to_ground = ground_to_field.inverse();
+        let ball_in_ground = field_to_ground * kick_intent.ball_position;
+        let target_in_ground = field_to_ground * kick_intent.target;
+        let Some(ball_to_target_direction) =
+            (target_in_ground - ball_in_ground).try_normalize(f32::EPSILON)
+        else {
+            return false;
+        };
         let target_kick_position = ball_in_ground
-            - (goal_position - ball_in_ground).normalize()
-                * blackboard.parameters.kicking.kick_position_ball_distance;
+            - ball_to_target_direction * blackboard.parameters.kicking.kick_position_ball_distance;
 
         let parameters = &blackboard.parameters.substates;
         let distance_to_ball = target_kick_position.coords().norm();
@@ -77,7 +81,7 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
             parameters.distance_for_kick_hysteresis,
         );
 
-        let direction = (goal_position - target_kick_position).normalize();
+        let direction = ball_to_target_direction;
         let robot_facing_direction = vector!(1.0, 0.0);
         let is_aligned =
             direction.angle(&robot_facing_direction) < parameters.alignment_angle_threshold;
@@ -91,9 +95,12 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
     is_close_and_aligned
 }
 
-pub fn is_closest_to_ball(_blackboard: &mut Blackboard) -> bool {
-    // TODO
-    true
+pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
+    matches!(blackboard.cycle_intent.role, TacticalRole::Striker)
+}
+
+pub fn is_pass_receiver(blackboard: &mut Blackboard) -> bool {
+    pass::active_pass_to_me(blackboard).is_some()
 }
 
 pub fn is_fallen(blackboard: &mut Blackboard) -> bool {
