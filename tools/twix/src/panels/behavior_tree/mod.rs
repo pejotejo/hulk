@@ -8,10 +8,7 @@ use std::{
     time::Duration,
 };
 
-use color_eyre::{
-    Result,
-    eyre::{Context as _, eyre},
-};
+use color_eyre::{Result, eyre::Context as _};
 use coordinate_systems::World;
 use eframe::egui::{Color32, ComboBox, Response, Stroke, Ui, Widget, pos2};
 use linear_algebra::{Point2, point, vector};
@@ -47,7 +44,6 @@ pub struct BehaviorTreePanel {
     tree_layout_buffer: BufferHandle<Value>,
     trace_buffer: BufferHandle<Value>,
     tree_layout: Option<NodeTrace>,
-    error: Option<String>,
     collapsed_subtrees: HashSet<String>,
     initial_collapse_applied: bool,
     invert_tree_vertical: bool,
@@ -68,40 +64,29 @@ struct RosZNodeTrace {
 
 #[derive(Deserialize)]
 struct RosZStatus {
-    variant_name: String,
+    variant_name: Status,
 }
 
-impl RosZNodeTrace {
-    fn into_node_trace(self) -> Result<NodeTrace> {
-        let children = self
+impl From<RosZNodeTrace> for NodeTrace {
+    fn from(value: RosZNodeTrace) -> Self {
+        let children = value
             .children
             .into_iter()
-            .map(RosZNodeTrace::into_node_trace)
-            .collect::<Result<Vec<_>>>()?;
+            .map(NodeTrace::from)
+            .collect::<Vec<_>>();
 
-        Ok(NodeTrace {
-            name: self.name,
-            status: self.status.into_status()?,
+        NodeTrace {
+            name: value.name,
+            status: value.status.variant_name,
             children,
-        })
-    }
-}
-
-impl RosZStatus {
-    fn into_status(self) -> Result<Status> {
-        match self.variant_name.as_str() {
-            "Success" => Ok(Status::Success),
-            "Failure" => Ok(Status::Failure),
-            "Idle" => Ok(Status::Idle),
-            variant_name => Err(eyre!("unknown behavior status variant '{variant_name}'")),
         }
     }
 }
 
 fn node_trace_from_json(value: Value) -> Result<NodeTrace> {
-    serde_json::from_value::<RosZNodeTrace>(value)
-        .wrap_err("expected ROS-Z dynamic NodeTrace JSON")?
-        .into_node_trace()
+    let trace = serde_json::from_value::<RosZNodeTrace>(value)
+        .wrap_err("expected ROS-Z dynamic NodeTrace JSON")?;
+    Ok(trace.into())
 }
 
 fn latest_node_trace(buffer: &BufferHandle<Value>) -> Result<Option<NodeTrace>> {
@@ -254,15 +239,9 @@ impl BehaviorTreePanel {
     }
 
     fn update_layout_if_needed(&mut self) -> bool {
-        let tree_layout = match latest_node_trace(&self.tree_layout_buffer) {
-            Ok(Some(tree_layout)) => tree_layout,
-            Ok(None) => return false,
-            Err(error) => {
-                self.error = Some(format!("failed to decode behavior tree layout: {error:#}"));
-                return false;
-            }
+        let Some(tree_layout) = latest_node_trace(&self.tree_layout_buffer).ok().flatten() else {
+            return false;
         };
-        self.error = None;
 
         let first_layout_load = self.tree_layout.is_none();
 
@@ -287,13 +266,8 @@ impl BehaviorTreePanel {
     }
 
     fn update_trace_strokes(&mut self) {
-        let trace = match latest_node_trace(&self.trace_buffer) {
-            Ok(Some(trace)) => trace,
-            Ok(None) => return,
-            Err(error) => {
-                self.error = Some(format!("failed to decode behavior tree trace: {error:#}"));
-                return;
-            }
+        let Some(trace) = latest_node_trace(&self.trace_buffer).ok().flatten() else {
+            return;
         };
 
         for node in &mut self.circle_nodes {
@@ -324,7 +298,6 @@ impl<'a> Panel<'a> for BehaviorTreePanel {
                 .backend
                 .subscribe_json("behavior/trace", Duration::ZERO),
             tree_layout: None,
-            error: None,
             collapsed_subtrees: HashSet::new(),
             initial_collapse_applied: false,
             invert_tree_vertical: false,
@@ -385,10 +358,6 @@ impl Widget for &mut BehaviorTreePanel {
         });
 
         self.update_trace_strokes();
-
-        if let Some(error) = &self.error {
-            ui.colored_label(Color32::RED, error);
-        }
 
         let (response, mut painter) = TwixPainter::<World>::allocate(
             ui,
