@@ -1,12 +1,18 @@
-use std::{env::temp_dir, fs::create_dir_all, path::PathBuf, sync::Arc};
+use std::{
+    env::temp_dir,
+    fs::create_dir_all,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use chrono::{DateTime, Utc};
 use color_eyre::{
     Result,
-    eyre::{Context as _, bail, eyre},
+    eyre::{bail, eyre},
 };
 use eframe::egui::{
-    ColorImage, ComboBox, Context, Response, SizeHint, TextureId, TextureOptions, Ui, Widget,
+    ColorImage, ComboBox, Context, Response, TextureHandle, TextureId, TextureOptions, Ui, Widget,
 };
 use geometry::rectangle::Rectangle;
 use image::{EncodableLayout, RgbImage};
@@ -15,11 +21,11 @@ use log::{info, warn};
 use ros2::sensor_msgs::image::Image;
 use serde_json::{Value, json};
 
-use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
+use types::{time_wrapper::TimeWrapper, ycbcr422_image::YCbCr422Image};
 
 use crate::{
+    backend::TwixBackend,
     panel::{Panel, PanelCreationContext},
-    robot::Robot,
     twix_painter::{Orientation, TwixPainter},
     value_buffer::BufferHandle,
     zoom_and_pan::ZoomAndPanTransform,
@@ -31,29 +37,32 @@ pub mod overlay;
 mod overlays;
 
 enum ImageBuffer {
-    Raw(BufferHandle<Image>),
-    YCbCr(BufferHandle<YCbCr422Image>),
-    Jpeg(BufferHandle<JpegImage>),
+    Raw(BufferHandle<TimeWrapper<Image>>),
+    YCbCr(BufferHandle<TimeWrapper<YCbCr422Image>>),
+}
+
+struct LoadedTexture {
+    timestamp: SystemTime,
+    dimensions: (u32, u32),
+    handle: TextureHandle,
 }
 
 pub struct ImagePanel {
-    robot: Arc<Robot>,
+    backend: Arc<TwixBackend>,
     image_buffer: ImageBuffer,
     overlays: Overlays,
     zoom_and_pan: ZoomAndPanTransform,
     last_image_path: String,
     current_image_path: String,
     current_image_label: String,
+    texture: Option<LoadedTexture>,
 }
 
-fn subscribe_image(robot: &Arc<Robot>, is_jpeg: bool, image_path: &str) -> ImageBuffer {
-    if is_jpeg {
-        let path = format!("{image_path}.jpeg");
-        ImageBuffer::Jpeg(robot.subscribe_value(path))
-    } else if image_path.ends_with("ycbcr422_image") {
-        ImageBuffer::YCbCr(robot.subscribe_value(image_path.to_string()))
+fn subscribe_image(backend: &Arc<TwixBackend>, image_path: &str) -> ImageBuffer {
+    if image_path.ends_with("ycbcr422_image") {
+        ImageBuffer::YCbCr(backend.subscribe_value(image_path.to_string(), Duration::ZERO))
     } else {
-        ImageBuffer::Raw(robot.subscribe_value(image_path.to_string()))
+        ImageBuffer::Raw(backend.subscribe_value(image_path.to_string(), Duration::ZERO))
     }
 }
 
@@ -61,29 +70,29 @@ impl<'a> Panel<'a> for ImagePanel {
     const NAME: &'static str = "Image";
 
     fn new(context: PanelCreationContext) -> Self {
-        let is_jpeg = context
+        let default_image_path = context
             .value
-            .and_then(|value| value.get("is_jpeg"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+            .and_then(|value| value.get("topic").or_else(|| value.get("path")))
+            .and_then(Value::as_str)
+            .unwrap_or("inputs/left_image")
+            .to_string();
+        let default_image_label = image_label(&default_image_path).to_string();
 
-        let default_image_path = "Vision.main_outputs.image".to_string();
-        let default_image_label = "Image Left Raw".to_string();
-
-        let image_buffer = subscribe_image(&context.robot, is_jpeg, &default_image_path);
+        let image_buffer = subscribe_image(&context.backend, &default_image_path);
 
         let overlays = Overlays::new(
-            context.robot.clone(),
+            context.backend.clone(),
             context.value.and_then(|value| value.get("overlays")),
         );
         Self {
-            robot: context.robot,
+            backend: context.backend,
             image_buffer,
             overlays,
             zoom_and_pan: ZoomAndPanTransform::default(),
             current_image_path: default_image_path.clone(),
             last_image_path: default_image_path,
             current_image_label: default_image_label,
+            texture: None,
         }
     }
 
@@ -91,36 +100,38 @@ impl<'a> Panel<'a> for ImagePanel {
         let overlays = self.overlays.save();
 
         json!({
-            "is_jpeg": matches!(self.image_buffer, ImageBuffer::Jpeg(_)),
-            "cycler": "Vision",
+            "topic": self.current_image_path.clone(),
             "overlays": overlays,
         })
     }
 }
 
-fn save_jpeg_image(buffer: &BufferHandle<JpegImage>, path: PathBuf) -> Result<()> {
+fn image_label(topic: &str) -> &'static str {
+    match topic {
+        "inputs/left_image" => "Left Image",
+        "inputs/right_image" => "Right Image",
+        "inputs/ycbcr422_image" => "YCbCr422 Image",
+        _ => "Image",
+    }
+}
+
+fn save_raw_image(buffer: &BufferHandle<TimeWrapper<Image>>, path: PathBuf) -> Result<()> {
     let buffer = buffer
         .get_last_value()?
         .ok_or_else(|| eyre!("no image available"))?;
-    buffer.save_to_jpeg_file(&path)?;
+    buffer.inner.save_to_file(&path)?;
     info!("image saved to '{}'", path.display());
     Ok(())
 }
 
-fn save_raw_image(buffer: &BufferHandle<Image>, path: PathBuf) -> Result<()> {
+fn save_ycbcr422_image(
+    buffer: &BufferHandle<TimeWrapper<YCbCr422Image>>,
+    path: PathBuf,
+) -> Result<()> {
     let buffer = buffer
         .get_last_value()?
         .ok_or_else(|| eyre!("no image available"))?;
-    buffer.save_to_file(&path)?;
-    info!("image saved to '{}'", path.display());
-    Ok(())
-}
-
-fn save_ycbcr422_image(buffer: &BufferHandle<YCbCr422Image>, path: PathBuf) -> Result<()> {
-    let buffer = buffer
-        .get_last_value()?
-        .ok_or_else(|| eyre!("no image available"))?;
-    buffer.save_to_ycbcr_444_file(&path)?;
+    buffer.inner.save_to_ycbcr_444_file(&path)?;
     info!("image saved to '{}'", path.display());
     Ok(())
 }
@@ -128,10 +139,10 @@ fn save_ycbcr422_image(buffer: &BufferHandle<YCbCr422Image>, path: PathBuf) -> R
 impl Widget for &mut ImagePanel {
     fn ui(self, ui: &mut Ui) -> Response {
         ui.horizontal(|ui| {
-            let mut jpeg = matches!(self.image_buffer, ImageBuffer::Jpeg(_));
-            self.overlays.combo_box(ui);
-            if ui.checkbox(&mut jpeg, "JPEG").changed() {
-                self.resubscribe(jpeg);
+            if self.current_image_path == "inputs/right_image" {
+                ui.label("Overlays unavailable for right image");
+            } else {
+                self.overlays.combo_box(ui);
             }
 
             ComboBox::from_label("Image Topic")
@@ -146,20 +157,16 @@ impl Widget for &mut ImagePanel {
                         }
                     };
 
-                    selectable_item("Vision.main_outputs.image", "Image Left Raw");
-                    selectable_item("Vision.main_outputs.ycbcr422_image", "ycbcr422_image");
+                    selectable_item("inputs/left_image", "Left Image");
+                    selectable_item("inputs/right_image", "Right Image");
+                    selectable_item("inputs/ycbcr422_image", "YCbCr422 Image");
                 });
             if self.last_image_path != self.current_image_path {
-                self.resubscribe(jpeg);
+                self.resubscribe();
                 self.last_image_path = self.current_image_path.clone();
             }
 
-            let maybe_timestamp = match &self.image_buffer {
-                ImageBuffer::Raw(buffer) => buffer.get_last_timestamp(),
-                ImageBuffer::Jpeg(buffer) => buffer.get_last_timestamp(),
-                ImageBuffer::YCbCr(buffer) => buffer.get_last_timestamp(),
-            };
-            if let Ok(Some(timestamp)) = maybe_timestamp {
+            if let Some(timestamp) = self.current_image_timestamp() {
                 let date: DateTime<Utc> = timestamp.into();
                 ui.label(date.format("%T%.3f").to_string());
             }
@@ -172,9 +179,6 @@ impl Widget for &mut ImagePanel {
                     let path = directory.join(format!("image_vision_{time_stamp}.png"));
                     let result = match &self.image_buffer {
                         ImageBuffer::Raw(buffer) => save_raw_image(buffer, path),
-                        ImageBuffer::Jpeg(buffer) => {
-                            save_jpeg_image(buffer, path.with_extension("jpeg"))
-                        }
                         ImageBuffer::YCbCr(buffer) => save_ycbcr422_image(buffer, path),
                     };
                     if let Err(error) = result {
@@ -206,7 +210,9 @@ impl Widget for &mut ImagePanel {
             },
         );
 
-        self.overlays.paint(&painter);
+        if self.current_image_path != "inputs/right_image" {
+            self.overlays.paint(&painter);
+        }
 
         match response.hover_pos() {
             Some(position) => {
@@ -223,17 +229,41 @@ impl Widget for &mut ImagePanel {
 }
 
 impl ImagePanel {
-    fn resubscribe(&mut self, jpeg: bool) {
-        self.image_buffer = subscribe_image(&self.robot, jpeg, &self.current_image_path);
+    fn resubscribe(&mut self) {
+        self.image_buffer = subscribe_image(&self.backend, &self.current_image_path);
+        self.texture = None;
     }
 
-    fn load_latest_texture(&self, context: &Context) -> Result<(TextureId, (u32, u32))> {
-        let image_identifier = "bytes://image-vision".to_string();
+    fn current_image_timestamp(&self) -> Option<std::time::SystemTime> {
         match &self.image_buffer {
+            ImageBuffer::Raw(buffer) => buffer.get_last_timestamp(),
+            ImageBuffer::YCbCr(buffer) => buffer.get_last_timestamp(),
+        }
+        .ok()
+        .flatten()
+    }
+
+    fn load_latest_texture(&mut self, context: &Context) -> Result<(TextureId, (u32, u32))> {
+        let latest_timestamp = match &self.image_buffer {
+            ImageBuffer::Raw(buffer) => buffer.get_last_timestamp()?,
+            ImageBuffer::YCbCr(buffer) => buffer.get_last_timestamp()?,
+        }
+        .ok_or_else(|| eyre!("no image available"))?;
+
+        if let Some(texture) = &self.texture
+            && texture.timestamp == latest_timestamp
+        {
+            return Ok((texture.handle.id(), texture.dimensions));
+        }
+
+        let (image, timestamp, dimensions) = match &self.image_buffer {
             ImageBuffer::Raw(buffer) => {
                 let ros_image = buffer
-                    .get_last_value()?
+                    .get_last()?
                     .ok_or_else(|| eyre!("no image available"))?;
+                let timestamp = ros_image.timestamp;
+                let ros_image = ros_image.value;
+                let ros_image = ros_image.inner;
                 if ros_image.height == 0 || ros_image.width == 0 {
                     bail!(
                         "Image has no pixels. Dimensions: {}x{}",
@@ -250,39 +280,15 @@ impl ImagePanel {
                     [rgb_image.width() as usize, rgb_image.height() as usize],
                     rgb_image.as_bytes(),
                 );
-                let id = context
-                    .load_texture(&image_identifier, image, TextureOptions::NEAREST)
-                    .id();
 
-                Ok((id, (rgb_image.width(), rgb_image.height())))
-            }
-            ImageBuffer::Jpeg(buffer) => {
-                let jpeg = buffer
-                    .get_last_value()?
-                    .ok_or_else(|| eyre!("no image available"))?;
-                let (width, height) = jpeg
-                    .dimensions()
-                    .wrap_err("failed to read image dimensions")?;
-                context.forget_image(&image_identifier);
-                context.include_bytes(image_identifier.clone(), jpeg.data);
-                let id = context
-                    .try_load_texture(
-                        &image_identifier,
-                        TextureOptions::NEAREST,
-                        SizeHint::Size {
-                            width,
-                            height,
-                            maintain_aspect_ratio: true,
-                        },
-                    )?
-                    .texture_id()
-                    .unwrap();
-                Ok((id, (width, height)))
+                (image, timestamp, (rgb_image.width(), rgb_image.height()))
             }
             ImageBuffer::YCbCr(buffer) => {
                 let image = buffer
-                    .get_last_value()?
+                    .get_last()?
                     .ok_or_else(|| eyre!("no image available"))?;
+                let timestamp = image.timestamp;
+                let image = image.value.inner;
                 if image.height() == 0 || image.width() == 0 {
                     bail!(
                         "Image has no pixels. Dimensions: {}x{}",
@@ -297,12 +303,45 @@ impl ImagePanel {
                     [rgb_image.width() as usize, rgb_image.height() as usize],
                     rgb_image.as_bytes(),
                 );
-                let id = context
-                    .load_texture(&image_identifier, image, TextureOptions::NEAREST)
-                    .id();
 
-                Ok((id, (rgb_image.width(), rgb_image.height())))
+                (image, timestamp, (rgb_image.width(), rgb_image.height()))
             }
-        }
+        };
+
+        Ok((
+            self.update_texture(context, image, timestamp, dimensions),
+            dimensions,
+        ))
+    }
+
+    fn update_texture(
+        &mut self,
+        context: &Context,
+        image: ColorImage,
+        timestamp: SystemTime,
+        dimensions: (u32, u32),
+    ) -> TextureId {
+        let texture = match self.texture.as_mut() {
+            Some(texture) => {
+                texture.handle.set(image, TextureOptions::NEAREST);
+                texture.timestamp = timestamp;
+                texture.dimensions = dimensions;
+                texture
+            }
+            None => {
+                self.texture = Some(LoadedTexture {
+                    timestamp,
+                    dimensions,
+                    handle: context.load_texture(
+                        "bytes://image-vision",
+                        image,
+                        TextureOptions::NEAREST,
+                    ),
+                });
+                self.texture.as_mut().expect("texture was just created")
+            }
+        };
+
+        texture.handle.id()
     }
 }

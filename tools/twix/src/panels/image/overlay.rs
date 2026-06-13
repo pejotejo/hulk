@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use coordinate_systems::Pixel;
 
 use crate::{
+    backend::TwixBackend,
     panels::image::overlays::{BallDetection, ObjectDetection, PoseDetection},
-    robot::Robot,
     twix_painter::TwixPainter,
 };
 
@@ -18,7 +18,7 @@ use super::overlays::{FieldBorder, Horizon, LineDetection};
 
 pub trait Overlay {
     const NAME: &'static str;
-    fn new(robot: Arc<Robot>) -> Self;
+    fn new(backend: Arc<TwixBackend>) -> Self;
     fn paint(&self, painter: &TwixPainter<Pixel>) -> Result<()>;
     fn config_ui(&mut self, _ui: &mut Ui) {}
 }
@@ -27,7 +27,7 @@ pub struct EnabledOverlay<T>
 where
     T: Overlay,
 {
-    robot: Arc<Robot>,
+    backend: Arc<TwixBackend>,
     overlay: Option<T>,
 }
 
@@ -35,21 +35,21 @@ impl<T> EnabledOverlay<T>
 where
     T: Overlay,
 {
-    pub fn new(robot: Arc<Robot>, value: Option<&Value>, active: bool) -> Self {
+    pub fn new(backend: Arc<TwixBackend>, value: Option<&Value>, active: bool) -> Self {
         let active = value
             .and_then(|value| value.get(T::NAME.to_case(convert_case::Case::Snake)))
             .and_then(|value| value.get("active"))
             .and_then(|value| value.as_bool())
             .unwrap_or(active);
-        let overlay = active.then(|| T::new(robot.clone()));
-        Self { robot, overlay }
+        let overlay = active.then(|| T::new(backend.clone()));
+        Self { backend, overlay }
     }
 
     pub fn checkbox(&mut self, ui: &mut Ui) {
         let mut active = self.overlay.is_some();
         if ui.checkbox(&mut active, T::NAME).changed() {
             match self.overlay.is_some() {
-                false => self.overlay = Some(T::new(self.robot.clone())),
+                false => self.overlay = Some(T::new(self.backend.clone())),
                 true => self.overlay = None,
             }
         }
@@ -82,13 +82,13 @@ pub struct Overlays {
 }
 
 impl Overlays {
-    pub fn new(robot: Arc<Robot>, storage: Option<&Value>) -> Self {
-        let line_detection = EnabledOverlay::new(robot.clone(), storage, false);
-        let ball_detection = EnabledOverlay::new(robot.clone(), storage, false);
-        let horizon = EnabledOverlay::new(robot.clone(), storage, false);
-        let field_border = EnabledOverlay::new(robot.clone(), storage, false);
-        let object_detection = EnabledOverlay::new(robot.clone(), storage, false);
-        let pose_detection = EnabledOverlay::new(robot.clone(), storage, false);
+    pub fn new(backend: Arc<TwixBackend>, storage: Option<&Value>) -> Self {
+        let line_detection = EnabledOverlay::new(backend.clone(), storage, false);
+        let ball_detection = EnabledOverlay::new(backend.clone(), storage, false);
+        let horizon = EnabledOverlay::new(backend.clone(), storage, false);
+        let field_border = EnabledOverlay::new(backend.clone(), storage, false);
+        let object_detection = EnabledOverlay::new(backend.clone(), storage, false);
+        let pose_detection = EnabledOverlay::new(backend.clone(), storage, false);
 
         Self {
             line_detection,

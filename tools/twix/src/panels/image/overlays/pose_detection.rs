@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
 use coordinate_systems::Pixel;
@@ -9,7 +9,7 @@ use types::{
     pose_detection::{Keypoint, Pose},
 };
 
-use crate::{panels::image::overlay::Overlay, robot::Robot, value_buffer::BufferHandle};
+use crate::{backend::TwixBackend, panels::image::overlay::Overlay, value_buffer::BufferHandle};
 
 const POSE_SKELETON_KEYPOINT_LINE_MAPPING: [(usize, usize); 16] = [
     (0, 1),
@@ -38,8 +38,8 @@ pub struct PoseDetection {
 impl Overlay for PoseDetection {
     const NAME: &'static str = "Pose Detection";
 
-    fn new(nao: Arc<Robot>) -> Self {
-        let poses = nao.subscribe_value("Hydra.main_outputs.detected_poses".to_string());
+    fn new(backend: Arc<TwixBackend>) -> Self {
+        let poses = backend.subscribe_value("detected_poses", Duration::ZERO);
         Self { poses }
     }
 

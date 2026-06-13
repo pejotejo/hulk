@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod json_buffer;
 pub mod topic;
+pub mod typed_buffer;
 
 use std::{sync::Arc, time::Duration};
 
@@ -8,7 +9,7 @@ use color_eyre::{Result, eyre::eyre};
 use eframe::egui::Context as EguiContext;
 use log::error;
 use parking_lot::Mutex;
-use ros_z::{context::ContextBuilder, node::Node};
+use ros_z::{Message, context::ContextBuilder, node::Node};
 use serde_json::Value;
 use tokio::{
     runtime::{Builder, Runtime},
@@ -96,6 +97,25 @@ impl TwixBackend {
         history: Duration,
     ) -> BufferHandle<Value> {
         json_buffer::subscribe_json(
+            &self.runtime,
+            self.node.clone(),
+            self.target_namespace_sender.subscribe(),
+            self.egui_context.clone(),
+            selector,
+            history,
+        )
+    }
+
+    pub fn subscribe_value<T>(
+        &self,
+        selector: impl Into<String>,
+        history: Duration,
+    ) -> BufferHandle<T>
+    where
+        T: Message + Clone + Send + Sync + 'static,
+        T::Codec: Send + Sync,
+    {
+        typed_buffer::subscribe_value(
             &self.runtime,
             self.node.clone(),
             self.target_namespace_sender.subscribe(),

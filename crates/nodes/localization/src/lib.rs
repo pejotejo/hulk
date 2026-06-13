@@ -19,6 +19,7 @@ use types::{
     localization::{ScoredPose, Update},
     players::Players,
     primary_state::PrimaryState,
+    time_wrapper::TimeWrapper,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
@@ -81,7 +82,10 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .subscriber::<ImuState>("inputs/imu_state")?
         .build()
         .await?;
-    let _line_data_sub = node.subscriber::<LineData>("line_data")?.build().await?;
+    let _line_data_sub = node
+        .subscriber::<TimeWrapper<Option<LineData>>>("line_data")?
+        .build()
+        .await?;
     let _field_dimensions_sub = node
         .subscriber::<FieldDimensions>("field_dimensions")?
         .qos(QosProfile {

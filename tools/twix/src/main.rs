@@ -33,7 +33,9 @@ use configuration::{
 use hulk_widgets::CompletionEdit;
 use log::{error, warn};
 use panel::{Panel, PanelCreationContext};
-use panels::{BehaviorTreePanel, EnumPlotPanel, PlotPanel, TextPanel, UnsupportedPanel};
+use panels::{
+    BehaviorTreePanel, EnumPlotPanel, ImagePanel, PlotPanel, TextPanel, UnsupportedPanel,
+};
 use repository::{Repository, inspect_version::check_for_update};
 use visuals::Visuals;
 
@@ -273,6 +275,7 @@ fn create_backend_or_default(
 
 enum SelectablePanel {
     BehaviorTree(BehaviorTreePanel),
+    Image(ImagePanel),
     Text(TextPanel),
     Plot(PlotPanel),
     EnumPlot(EnumPlotPanel),
@@ -300,6 +303,7 @@ impl SelectablePanel {
             BehaviorTreePanel::NAME => Ok(SelectablePanel::BehaviorTree(BehaviorTreePanel::new(
                 context(),
             ))),
+            ImagePanel::NAME => Ok(SelectablePanel::Image(ImagePanel::new(context()))),
             TextPanel::NAME => Ok(SelectablePanel::Text(TextPanel::new(context()))),
             PlotPanel::NAME => Ok(SelectablePanel::Plot(PlotPanel::new(context()))),
             EnumPlotPanel::NAME => Ok(SelectablePanel::EnumPlot(EnumPlotPanel::new(context()))),
@@ -312,6 +316,7 @@ impl SelectablePanel {
             BehaviorTreePanel::NAME => Ok(SelectablePanel::BehaviorTree(BehaviorTreePanel::new(
                 context,
             ))),
+            ImagePanel::NAME => Ok(SelectablePanel::Image(ImagePanel::new(context))),
             TextPanel::NAME => Ok(SelectablePanel::Text(TextPanel::new(context))),
             PlotPanel::NAME => Ok(SelectablePanel::Plot(PlotPanel::new(context))),
             EnumPlotPanel::NAME => Ok(SelectablePanel::EnumPlot(EnumPlotPanel::new(context))),
@@ -325,6 +330,7 @@ impl SelectablePanel {
     pub fn registered() -> Vec<String> {
         vec![
             BehaviorTreePanel::NAME.to_owned(),
+            ImagePanel::NAME.to_owned(),
             TextPanel::NAME.to_owned(),
             PlotPanel::NAME.to_owned(),
             EnumPlotPanel::NAME.to_owned(),
@@ -334,6 +340,7 @@ impl SelectablePanel {
     pub fn save(&self) -> Value {
         let mut value = match self {
             SelectablePanel::BehaviorTree(panel) => panel.save(),
+            SelectablePanel::Image(panel) => panel.save(),
             SelectablePanel::Text(panel) => panel.save(),
             SelectablePanel::Plot(panel) => panel.save(),
             SelectablePanel::EnumPlot(panel) => panel.save(),
@@ -348,6 +355,7 @@ impl Widget for &mut SelectablePanel {
     fn ui(self, ui: &mut Ui) -> eframe::egui::Response {
         match self {
             SelectablePanel::BehaviorTree(panel) => panel.ui(ui),
+            SelectablePanel::Image(panel) => panel.ui(ui),
             SelectablePanel::Text(panel) => panel.ui(ui),
             SelectablePanel::Plot(panel) => panel.ui(ui),
             SelectablePanel::EnumPlot(panel) => panel.ui(ui),
@@ -360,6 +368,7 @@ impl std::fmt::Display for SelectablePanel {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let panel_name = match self {
             SelectablePanel::BehaviorTree(_) => BehaviorTreePanel::NAME,
+            SelectablePanel::Image(_) => ImagePanel::NAME,
             SelectablePanel::Text(_) => TextPanel::NAME,
             SelectablePanel::Plot(_) => PlotPanel::NAME,
             SelectablePanel::EnumPlot(_) => EnumPlotPanel::NAME,

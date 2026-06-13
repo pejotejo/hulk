@@ -1,27 +1,36 @@
+use std::{sync::Arc, time::Duration};
+
 use color_eyre::Result;
 use coordinate_systems::Pixel;
 use eframe::epaint::{Color32, Stroke};
 use linear_algebra::point;
+use projection::camera_matrix::CameraMatrix;
+use types::time_wrapper::TimeWrapper;
 
 use crate::{
-    panels::image::overlay::Overlay, twix_painter::TwixPainter, value_buffer::BufferHandle,
+    backend::TwixBackend, panels::image::overlay::Overlay, twix_painter::TwixPainter,
+    value_buffer::BufferHandle,
 };
 
 pub struct Horizon {
-    horizon: BufferHandle<Option<projection::horizon::Horizon>>,
+    camera_matrix: BufferHandle<TimeWrapper<CameraMatrix>>,
 }
 
 impl Overlay for Horizon {
     const NAME: &'static str = "Horizon";
 
-    fn new(robot: std::sync::Arc<crate::robot::Robot>) -> Self {
+    fn new(backend: Arc<TwixBackend>) -> Self {
         Self {
-            horizon: robot.subscribe_value("WorldState.main_outputs.camera_matrix.horizon"),
+            camera_matrix: backend.subscribe_value("camera_matrix", Duration::ZERO),
         }
     }
 
     fn paint(&self, painter: &TwixPainter<Pixel>) -> Result<()> {
-        let Some(horizon) = self.horizon.get_last_value()?.flatten() else {
+        let Some(horizon) = self
+            .camera_matrix
+            .get_last_value()?
+            .and_then(|wrapper| wrapper.inner.horizon)
+        else {
             return Ok(());
         };
 

@@ -1,42 +1,44 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
 use coordinate_systems::Pixel;
 use eframe::epaint::{Color32, Stroke};
-use geometry::line_segment::LineSegment;
 use linear_algebra::Point2;
+use types::{field_border::FieldBorder as DetectedFieldBorder, time_wrapper::TimeWrapper};
 
 use crate::{
-    panels::image::overlay::Overlay, twix_painter::TwixPainter, value_buffer::BufferHandle,
+    backend::TwixBackend, panels::image::overlay::Overlay, twix_painter::TwixPainter,
+    value_buffer::BufferHandle,
 };
 
 pub struct FieldBorder {
-    border_lines: BufferHandle<Option<Vec<LineSegment<Pixel>>>>,
-    candidates: BufferHandle<Option<Vec<Point2<Pixel>>>>,
+    border: BufferHandle<TimeWrapper<Option<DetectedFieldBorder>>>,
+    candidates: BufferHandle<Vec<Point2<Pixel>>>,
 }
 
 impl Overlay for FieldBorder {
     const NAME: &'static str = "Field Border";
 
-    fn new(robot: Arc<crate::robot::Robot>) -> Self {
+    fn new(backend: Arc<TwixBackend>) -> Self {
         Self {
-            border_lines: robot.subscribe_value("Vision.main_outputs.field_border"),
-            candidates: robot.subscribe_value("Vision.additional_outputs.field_border_points"),
+            border: backend.subscribe_value("field_border", Duration::ZERO),
+            candidates: backend.subscribe_value("field_border_points", Duration::ZERO),
         }
     }
 
     fn paint(&self, painter: &TwixPainter<Pixel>) -> Result<()> {
-        let Some(candidates) = self.candidates.get_last_value()?.flatten() else {
-            return Ok(());
-        };
-        for point in candidates {
+        for point in self.candidates.get_last_value()?.unwrap_or_default() {
             painter.circle_filled(point, 2.0, Color32::BLUE);
         }
 
-        let Some(border_lines_in_image) = self.border_lines.get_last_value()?.flatten() else {
+        let Some(border) = self
+            .border
+            .get_last_value()?
+            .and_then(|wrapper| wrapper.inner)
+        else {
             return Ok(());
         };
-        for line in border_lines_in_image {
+        for line in border.border_lines {
             painter.line_segment(
                 line.0,
                 line.1,
