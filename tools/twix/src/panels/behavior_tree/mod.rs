@@ -3,12 +3,21 @@ mod graph;
 mod model;
 mod tree_layout;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
+use color_eyre::{
+    Result,
+    eyre::{Context as _, eyre},
+};
 use coordinate_systems::World;
 use eframe::egui::{Color32, ComboBox, Response, Stroke, Ui, Widget, pos2};
 use linear_algebra::{Point2, point, vector};
-use types::behavior_tree::NodeTrace;
+use serde::Deserialize;
+use serde_json::Value;
+use types::behavior_tree::{NodeTrace, Status};
 
 use crate::{
     panel::{Panel, PanelCreationContext},
@@ -35,9 +44,10 @@ const VIEW_SWITCH_FOCUS_SCALE: f32 = 0.42;
 const VIEW_SWITCH_ROOT_Y_OFFSET: f32 = 0.1;
 
 pub struct BehaviorTreePanel {
-    tree_layout_buffer: BufferHandle<Option<NodeTrace>>,
-    trace_buffer: BufferHandle<Option<NodeTrace>>,
+    tree_layout_buffer: BufferHandle<Value>,
+    trace_buffer: BufferHandle<Value>,
     tree_layout: Option<NodeTrace>,
+    error: Option<String>,
     collapsed_subtrees: HashSet<String>,
     initial_collapse_applied: bool,
     invert_tree_vertical: bool,
@@ -47,6 +57,58 @@ pub struct BehaviorTreePanel {
     exiting_nodes: Vec<CircleNode>,
     connections: Vec<Connection>,
     zoom_and_pan: ZoomAndPanTransform,
+}
+
+#[derive(Deserialize)]
+struct RosZNodeTrace {
+    name: String,
+    status: RosZStatus,
+    children: Vec<RosZNodeTrace>,
+}
+
+#[derive(Deserialize)]
+struct RosZStatus {
+    variant_name: String,
+}
+
+impl RosZNodeTrace {
+    fn into_node_trace(self) -> Result<NodeTrace> {
+        let children = self
+            .children
+            .into_iter()
+            .map(RosZNodeTrace::into_node_trace)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(NodeTrace {
+            name: self.name,
+            status: self.status.into_status()?,
+            children,
+        })
+    }
+}
+
+impl RosZStatus {
+    fn into_status(self) -> Result<Status> {
+        match self.variant_name.as_str() {
+            "Success" => Ok(Status::Success),
+            "Failure" => Ok(Status::Failure),
+            "Idle" => Ok(Status::Idle),
+            variant_name => Err(eyre!("unknown behavior status variant '{variant_name}'")),
+        }
+    }
+}
+
+fn node_trace_from_json(value: Value) -> Result<NodeTrace> {
+    serde_json::from_value::<RosZNodeTrace>(value)
+        .wrap_err("expected ROS-Z dynamic NodeTrace JSON")?
+        .into_node_trace()
+}
+
+fn latest_node_trace(buffer: &BufferHandle<Value>) -> Result<Option<NodeTrace>> {
+    buffer
+        .get_last_value()?
+        .map(node_trace_from_json)
+        .transpose()
 }
 
 impl BehaviorTreePanel {
@@ -192,16 +254,15 @@ impl BehaviorTreePanel {
     }
 
     fn update_layout_if_needed(&mut self) -> bool {
-        let tree_layout = self
-            .tree_layout_buffer
-            .get_last_value()
-            .ok()
-            .flatten()
-            .flatten();
-
-        let Some(tree_layout) = tree_layout else {
-            return false;
+        let tree_layout = match latest_node_trace(&self.tree_layout_buffer) {
+            Ok(Some(tree_layout)) => tree_layout,
+            Ok(None) => return false,
+            Err(error) => {
+                self.error = Some(format!("failed to decode behavior tree layout: {error:#}"));
+                return false;
+            }
         };
+        self.error = None;
 
         let first_layout_load = self.tree_layout.is_none();
 
@@ -226,14 +287,13 @@ impl BehaviorTreePanel {
     }
 
     fn update_trace_strokes(&mut self) {
-        if !self.trace_buffer.has_changed() {
-            return;
-        }
-        self.trace_buffer.mark_as_seen();
-
-        let trace = match self.trace_buffer.get_last_value().ok().flatten().flatten() {
-            Some(trace) => trace,
-            None => return,
+        let trace = match latest_node_trace(&self.trace_buffer) {
+            Ok(Some(trace)) => trace,
+            Ok(None) => return,
+            Err(error) => {
+                self.error = Some(format!("failed to decode behavior tree trace: {error:#}"));
+                return;
+            }
         };
 
         for node in &mut self.circle_nodes {
@@ -258,12 +318,13 @@ impl<'a> Panel<'a> for BehaviorTreePanel {
     fn new(context: PanelCreationContext) -> Self {
         Self {
             tree_layout_buffer: context
-                .robot
-                .subscribe_value("WorldState.additional_outputs.behavior.tree_layout"),
+                .backend
+                .subscribe_json("behavior/tree_layout", Duration::ZERO),
             trace_buffer: context
-                .robot
-                .subscribe_value("WorldState.additional_outputs.behavior.trace"),
+                .backend
+                .subscribe_json("behavior/trace", Duration::ZERO),
             tree_layout: None,
+            error: None,
             collapsed_subtrees: HashSet::new(),
             initial_collapse_applied: false,
             invert_tree_vertical: false,
@@ -324,6 +385,10 @@ impl Widget for &mut BehaviorTreePanel {
         });
 
         self.update_trace_strokes();
+
+        if let Some(error) = &self.error {
+            ui.colored_label(Color32::RED, error);
+        }
 
         let (response, mut painter) = TwixPainter::<World>::allocate(
             ui,
@@ -426,5 +491,39 @@ impl Widget for &mut BehaviorTreePanel {
         }
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn parses_ros_z_dynamic_node_trace_json() {
+        let trace = node_trace_from_json(json!({
+            "name": "Sequence",
+            "status": {
+                "variant_index": 0,
+                "variant_name": "Success",
+                "payload": null
+            },
+            "children": [{
+                "name": "look_at_ball",
+                "status": {
+                    "variant_index": 2,
+                    "variant_name": "Idle",
+                    "payload": null
+                },
+                "children": []
+            }]
+        }))
+        .expect("ROS-Z dynamic NodeTrace JSON should decode");
+
+        assert_eq!(trace.name, "Sequence");
+        assert_eq!(trace.status, Status::Success);
+        assert_eq!(trace.children[0].name, "look_at_ball");
+        assert_eq!(trace.children[0].status, Status::Idle);
     }
 }

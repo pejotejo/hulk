@@ -33,7 +33,7 @@ use configuration::{
 use hulk_widgets::CompletionEdit;
 use log::{error, warn};
 use panel::{Panel, PanelCreationContext};
-use panels::{EnumPlotPanel, PlotPanel, TextPanel, UnsupportedPanel};
+use panels::{BehaviorTreePanel, EnumPlotPanel, PlotPanel, TextPanel, UnsupportedPanel};
 use repository::{Repository, inspect_version::check_for_update};
 use visuals::Visuals;
 
@@ -45,8 +45,12 @@ mod configuration;
 mod panel;
 mod panels;
 mod topic_completion_edit;
+#[allow(dead_code)]
+mod twix_painter;
 mod value_buffer;
 mod visuals;
+#[allow(dead_code)]
+mod zoom_and_pan;
 
 const DEFAULT_ROUTER_ENDPOINT: &str = "tcp/127.0.0.1:7447";
 const DEFAULT_TARGET_NAMESPACE: &str = "/42";
@@ -268,6 +272,7 @@ fn create_backend_or_default(
 }
 
 enum SelectablePanel {
+    BehaviorTree(BehaviorTreePanel),
     Text(TextPanel),
     Plot(PlotPanel),
     EnumPlot(EnumPlotPanel),
@@ -292,6 +297,9 @@ impl SelectablePanel {
         context: impl FnOnce() -> PanelCreationContext<'a>,
     ) -> Result<SelectablePanel> {
         match panel_name {
+            BehaviorTreePanel::NAME => Ok(SelectablePanel::BehaviorTree(BehaviorTreePanel::new(
+                context(),
+            ))),
             TextPanel::NAME => Ok(SelectablePanel::Text(TextPanel::new(context()))),
             PlotPanel::NAME => Ok(SelectablePanel::Plot(PlotPanel::new(context()))),
             EnumPlotPanel::NAME => Ok(SelectablePanel::EnumPlot(EnumPlotPanel::new(context()))),
@@ -301,6 +309,9 @@ impl SelectablePanel {
 
     fn from_saved_name(panel_name: &str, context: PanelCreationContext) -> Result<SelectablePanel> {
         match panel_name {
+            BehaviorTreePanel::NAME => Ok(SelectablePanel::BehaviorTree(BehaviorTreePanel::new(
+                context,
+            ))),
             TextPanel::NAME => Ok(SelectablePanel::Text(TextPanel::new(context))),
             PlotPanel::NAME => Ok(SelectablePanel::Plot(PlotPanel::new(context))),
             EnumPlotPanel::NAME => Ok(SelectablePanel::EnumPlot(EnumPlotPanel::new(context))),
@@ -313,6 +324,7 @@ impl SelectablePanel {
 
     pub fn registered() -> Vec<String> {
         vec![
+            BehaviorTreePanel::NAME.to_owned(),
             TextPanel::NAME.to_owned(),
             PlotPanel::NAME.to_owned(),
             EnumPlotPanel::NAME.to_owned(),
@@ -321,6 +333,7 @@ impl SelectablePanel {
 
     pub fn save(&self) -> Value {
         let mut value = match self {
+            SelectablePanel::BehaviorTree(panel) => panel.save(),
             SelectablePanel::Text(panel) => panel.save(),
             SelectablePanel::Plot(panel) => panel.save(),
             SelectablePanel::EnumPlot(panel) => panel.save(),
@@ -334,6 +347,7 @@ impl SelectablePanel {
 impl Widget for &mut SelectablePanel {
     fn ui(self, ui: &mut Ui) -> eframe::egui::Response {
         match self {
+            SelectablePanel::BehaviorTree(panel) => panel.ui(ui),
             SelectablePanel::Text(panel) => panel.ui(ui),
             SelectablePanel::Plot(panel) => panel.ui(ui),
             SelectablePanel::EnumPlot(panel) => panel.ui(ui),
@@ -345,6 +359,7 @@ impl Widget for &mut SelectablePanel {
 impl std::fmt::Display for SelectablePanel {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let panel_name = match self {
+            SelectablePanel::BehaviorTree(_) => BehaviorTreePanel::NAME,
             SelectablePanel::Text(_) => TextPanel::NAME,
             SelectablePanel::Plot(_) => PlotPanel::NAME,
             SelectablePanel::EnumPlot(_) => EnumPlotPanel::NAME,

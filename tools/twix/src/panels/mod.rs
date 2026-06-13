@@ -1,8 +1,10 @@
+mod behavior_tree;
 mod enum_plot;
 mod plot;
 mod text;
 mod unsupported;
 
+pub use behavior_tree::BehaviorTreePanel;
 pub use enum_plot::EnumPlotPanel;
 pub use plot::PlotPanel;
 pub use text::TextPanel;
