@@ -1,10 +1,11 @@
-use std::sync::Arc;
 use std::{boxed::Box, future::Future, pin::Pin};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use color_eyre::Result;
 
 use linear_algebra::point;
 use ros_z::prelude::*;
+use ros_z::qos::{QosHistory, QosReliability};
 use types::{
     color::Intensity,
     field_border::FieldBorder,
@@ -17,19 +18,30 @@ pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> +
     Box::pin(run(ctx))
 }
 
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
+}
+
 async fn run(ctx: Arc<Context>) -> Result<()> {
     let node = ctx.create_node("segment_filter").build().await?;
     let field_border_sub = node
         .subscriber::<TimeWrapper<Option<FieldBorder>>>("field_border")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let image_segments_cache = node
         .create_cache::<TimeWrapper<ImageSegments>>("image_segments", 10)?
         .with_stamp(|w: &TimeWrapper<ImageSegments>| w.time)
+        .with_qos(sensor_data_qos())
         .build()
         .await?;
     let filtered_segments_pub = node
         .publisher::<TimeWrapper<FilteredSegments>>("filtered_segments")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
 

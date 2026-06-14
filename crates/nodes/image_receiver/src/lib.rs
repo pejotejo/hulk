@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{boxed::Box, future::Future, pin::Pin};
@@ -8,7 +9,7 @@ use color_eyre::Result;
 use image::RgbImage;
 
 use ros_z::prelude::*;
-use ros_z::qos::QosDurability;
+use ros_z::qos::{QosDurability, QosHistory, QosReliability};
 use ros_z::time::Time;
 use ros2::sensor_msgs::{camera_info::CameraInfo, image::Image};
 use types::ycbcr422_image::YCbCr422Image;
@@ -17,6 +18,14 @@ use x5_receiver::receiver::{Side, X5Receiver};
 use x5_receiver::types::X5CameraFrame;
 
 const X5_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 127, 10)), 7654);
+
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
+}
 
 pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
     Box::pin(run(ctx))
@@ -27,10 +36,12 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
 
     let left_image_pub = node
         .publisher::<TimeWrapper<Image>>("inputs/left_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let right_image_pub = node
         .publisher::<TimeWrapper<Image>>("inputs/right_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let camera_info_pub = node
@@ -43,10 +54,12 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let ycbcr422_image_pub = node
         .publisher::<TimeWrapper<YCbCr422Image>>("inputs/ycbcr422_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let stereo_image_pair_pub = node
         .publisher::<TimeWrapper<StereoImagePair>>("inputs/stereo_image_pair")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
 

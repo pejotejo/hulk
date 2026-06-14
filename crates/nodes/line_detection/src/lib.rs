@@ -3,7 +3,9 @@ mod iter_if;
 mod map_segments;
 mod segment_merger;
 
-use std::{boxed::Box, collections::HashSet, future::Future, pin::Pin, sync::Arc};
+use std::{
+    boxed::Box, collections::HashSet, future::Future, num::NonZeroUsize, pin::Pin, sync::Arc,
+};
 
 use color_eyre::Result;
 
@@ -21,6 +23,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
 use ransac::{Ransac, RansacResult};
 use ros_z::prelude::*;
+use ros_z::qos::{QosHistory, QosReliability};
 use types::{
     filtered_segments::FilteredSegments,
     image_segments::GenericSegment,
@@ -34,6 +37,14 @@ pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> +
     Box::pin(run(ctx))
 }
 
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
+}
+
 async fn run(ctx: Arc<Context>) -> Result<()> {
     let node = ctx.create_node("line_detection").build().await?;
 
@@ -45,23 +56,28 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let filtered_segments_sub = node
         .subscriber::<TimeWrapper<FilteredSegments>>("filtered_segments")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let image_cache = node
         .create_cache::<TimeWrapper<YCbCr422Image>>("inputs/ycbcr422_image", 10)?
         .with_stamp(|w: &TimeWrapper<YCbCr422Image>| w.time)
+        .with_qos(sensor_data_qos())
         .build()
         .await?;
     let lines_in_image_pub = node
         .publisher::<Vec<LineSegment<Pixel>>>("line_detection/lines_in_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let discarded_lines_pub = node
         .publisher::<Vec<DiscardedLine>>("line_detection/discarded_lines")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let filtered_segments_output_pub = node
         .publisher::<Vec<GenericSegment>>("line_detection/filtered_segments")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let line_data_pub = node

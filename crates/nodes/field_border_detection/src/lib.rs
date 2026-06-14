@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::{boxed::Box, future::Future, pin::Pin};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use color_eyre::Result;
 use geometry::line_segment::LineSegment;
@@ -11,6 +11,7 @@ use coordinate_systems::Pixel;
 use linear_algebra::{Point2, Vector2, point};
 use projection::{Projection, camera_matrix::CameraMatrix};
 use ros_z::prelude::*;
+use ros_z::qos::{QosHistory, QosReliability};
 use types::{
     color::Intensity,
     field_border::FieldBorder,
@@ -21,6 +22,14 @@ use types::{
 
 pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
     Box::pin(run(ctx))
+}
+
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
 }
 
 async fn run(ctx: Arc<Context>) -> Result<()> {
@@ -35,14 +44,17 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let image_segments_sub = node
         .subscriber::<TimeWrapper<ImageSegments>>("image_segments")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let field_border_points_pub = node
         .publisher::<Vec<Point2<Pixel>>>("field_border_points")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let field_border_pub = node
         .publisher::<TimeWrapper<Option<FieldBorder>>>("field_border")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
 

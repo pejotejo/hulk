@@ -1,4 +1,4 @@
-use std::{boxed::Box, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{boxed::Box, future::Future, num::NonZeroUsize, pin::Pin, sync::Arc, time::Duration};
 
 use color_eyre::{Result, eyre::bail};
 use ndarray::{ArrayView2, ArrayView3, Axis};
@@ -12,6 +12,7 @@ use ros_z_streams::CreateAnnouncingPublisher;
 use ros2::sensor_msgs::image::Image;
 
 use ros_z::prelude::*;
+use ros_z::qos::{QosHistory, QosReliability};
 use tokio::time::Instant;
 use types::{
     bounding_box::BoundingBox,
@@ -22,6 +23,14 @@ use types::{
 };
 
 pub const NUMBER_OF_DETECTIONS: usize = 300;
+
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum TaskHead {
@@ -62,6 +71,7 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
 
     let image_sub = node
         .subscriber::<TimeWrapper<Image>>("inputs/left_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let inference_duration_pub = node

@@ -1,7 +1,15 @@
-use std::{error::Error as _, fmt::Write as _, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    error::Error as _, fmt::Write as _, marker::PhantomData, num::NonZeroUsize, sync::Arc,
+    time::Duration,
+};
 
 use parking_lot::Mutex;
-use ros_z::{Message, dynamic::DynamicPayload, node::Node};
+use ros_z::{
+    Message,
+    dynamic::DynamicPayload,
+    node::Node,
+    qos::{QosHistory, QosProfile, QosReliability},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -204,12 +212,11 @@ impl<T> TypedSubscriptionBuilder<'_, T> {
         let retention = self.retention;
         let requested_topic = TopicSelector::new(self.topic)?;
         let resolved_topic = requested_topic.resolve(self.manager.target_namespace())?;
-        let subscriber = self
-            .manager
-            .node()
-            .subscriber::<T>(&resolved_topic)?
-            .build()
-            .await?;
+        let mut subscriber = self.manager.node().subscriber::<T>(&resolved_topic)?;
+        if matches!(retention, RetentionPolicy::LatestOnly) {
+            subscriber = subscriber.qos(latest_only_qos());
+        }
+        let subscriber = subscriber.build().await?;
         let type_info = subscriber.entity().type_info.clone();
         let metadata = Arc::new(SampleMetadata {
             requested_topic,
@@ -293,16 +300,18 @@ impl DynamicSubscriptionBuilder<'_> {
         let retention = self.retention;
         let requested_topic = TopicSelector::new(self.topic)?;
         let resolved_topic = requested_topic.resolve(self.manager.target_namespace())?;
-        let subscriber = self
+        let mut subscriber = self
             .manager
             .node()
             .dynamic_subscriber_auto(
                 &resolved_topic,
                 self.manager.options.schema_discovery_timeout(),
             )
-            .await?
-            .build()
             .await?;
+        if matches!(retention, RetentionPolicy::LatestOnly) {
+            subscriber = subscriber.qos(latest_only_qos());
+        }
+        let subscriber = subscriber.build().await?;
         let type_info = subscriber.entity().type_info.clone();
         let metadata = Arc::new(SampleMetadata {
             requested_topic,
@@ -329,6 +338,14 @@ impl DynamicSubscriptionBuilder<'_> {
         state.set_receive_task(receive_task.abort_handle());
 
         Ok(handle)
+    }
+}
+
+fn latest_only_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
     }
 }
 
@@ -442,12 +459,14 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        ManagerOptions, SubscriptionRegistry, classify_receive_error, receive_error_diagnostic,
+        ManagerOptions, SubscriptionRegistry, classify_receive_error, latest_only_qos,
+        receive_error_diagnostic,
     };
     use crate::{
         Error, RetentionPolicy, SampleMetadata, SubscriptionStatus, SubscriptionStatusSnapshot,
         TopicSelector, subscription::SubscriptionState,
     };
+    use ros_z::qos::{QosHistory, QosReliability};
 
     struct TestPayload;
 
@@ -512,6 +531,17 @@ mod tests {
         assert!(message.contains("/debug"));
         assert!(message.contains("test_msgs::DebugValue"));
         assert!(message.contains("failed to deserialize cdr payload"));
+    }
+
+    #[test]
+    fn latest_only_qos_prefers_fresh_samples_over_reliable_delivery() {
+        let qos = latest_only_qos();
+
+        assert_eq!(qos.reliability, QosReliability::BestEffort);
+        assert_eq!(
+            qos.history,
+            QosHistory::KeepLast(std::num::NonZeroUsize::new(1).unwrap())
+        );
     }
 
     #[test]

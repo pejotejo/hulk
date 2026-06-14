@@ -1,6 +1,7 @@
 use std::{
     boxed::Box,
     future::Future,
+    num::NonZeroUsize,
     ops::{Add, Range},
     pin::Pin,
     sync::Arc,
@@ -13,6 +14,7 @@ use coordinate_systems::{Ground, Pixel};
 use linear_algebra::{Framed, Point2, Vector2, point, vector};
 use projection::{Projection, camera_matrix::CameraMatrix, horizon::Horizon};
 use ros_z::prelude::*;
+use ros_z::qos::{QosHistory, QosReliability};
 use types::{
     color::{Hsv, Intensity, RgChromaticity, Rgb, YCbCr444},
     field_color::FieldColorParameters,
@@ -26,12 +28,21 @@ pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> +
     Box::pin(run(ctx))
 }
 
+fn sensor_data_qos() -> QosProfile {
+    QosProfile {
+        reliability: QosReliability::BestEffort,
+        history: QosHistory::KeepLast(NonZeroUsize::new(1).expect("1 is non-zero")),
+        ..Default::default()
+    }
+}
+
 async fn run(ctx: Arc<Context>) -> Result<()> {
     let node = ctx.create_node("image_segmenter").build().await?;
 
     let parameters = node.bind_parameter_as::<ImageSegmenterParameters>("image_segmenter")?;
     let image_sub = node
         .subscriber::<TimeWrapper<YCbCr422Image>>("inputs/ycbcr422_image")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
     let camera_matrix_cache = node
@@ -41,6 +52,7 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let image_segments_pub = node
         .publisher::<TimeWrapper<ImageSegments>>("image_segments")?
+        .qos(sensor_data_qos())
         .build()
         .await?;
 
