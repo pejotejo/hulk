@@ -67,7 +67,7 @@ pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
         blackboard.world_state.robot.ground_to_field,
         &blackboard.ball,
     ) {
-        let goal_position: Point2<Field> = point!(blackboard.field_dimensions.length / 2.0, 0.0);
+        let goal_position: Point2<Field> = point!((blackboard.field_dimensions.length / 2.0) + blackboard.parameters.kicking.goal_target_offset, 0.0);
         let field_to_ground = ground_to_field.inverse();
 
         let target_position = field_to_ground * goal_position;

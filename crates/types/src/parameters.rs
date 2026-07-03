@@ -754,6 +754,7 @@ pub struct KickingParameters {
     pub kick_target_offset_angle: f32,
     pub target_distance_kick_power_threshold: f32,
     pub kick_position_ball_distance: f32,
+    pub goal_target_offset: f32,
 }
 
 #[derive(

@@ -114,6 +114,7 @@
     kick_target_offset_angle: 0.1,
     target_distance_kick_power_threshold: 6.0,
     kick_position_ball_distance: 0.3,
+    goal_target_offset: 0.2,
   },
   substates: {
     distance_for_kick: 0.4,
