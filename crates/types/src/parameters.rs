@@ -746,6 +746,10 @@ pub struct KickingParameters {
     pub distance_for_kick_hysteresis: f32,
     pub distance_to_look_directly_at_the_ball: f32,
     pub kick_target_offset_angle: f32,
+    pub kick_target_goal_post_margin: f32,
+    pub kick_target_maximum_distance: f32,
+    pub kick_target_minimum_distance: f32,
+    pub kick_target_obstacle_clearance: f32,
     pub target_distance_kick_power_threshold: f32,
     pub kick_position_ball_distance: f32,
 }

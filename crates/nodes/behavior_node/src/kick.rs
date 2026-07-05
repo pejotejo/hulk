@@ -1,7 +1,8 @@
-use coordinate_systems::Field;
-use linear_algebra::{Orientation2, Point2, Rotation2, point};
+use coordinate_systems::{Field, Ground};
+use linear_algebra::{Isometry2, Orientation2, Point2, Rotation2, point};
 use types::{
     behavior_tree::Status,
+    field_dimensions::{Half, Side},
     motion_command::{BodyMotion, KickPower, MotionCommand},
     motion_type::MotionType,
 };
@@ -62,10 +63,114 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
 }
 
 pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
-    let goal_position: Point2<Field> = point!(blackboard.field_dimensions.length / 2.0, 0.0);
+    let (Some(ground_to_field), Some(ball)) = (
+        blackboard.world_state.robot.ground_to_field,
+        &blackboard.ball,
+    ) else {
+        return Status::Failure;
+    };
+
+    let goal_position = select_kick_target_in_field(blackboard, ground_to_field, ball.position);
     let target_offset_angle = blackboard.parameters.kicking.kick_target_offset_angle;
 
     apply_visual_kick_target(blackboard, goal_position, target_offset_angle)
+}
+
+fn select_kick_target_in_field(
+    blackboard: &Blackboard,
+    ground_to_field: Isometry2<Ground, Field>,
+    ball: Point2<Field>,
+) -> Point2<Field> {
+    let field_dimensions = blackboard.field_dimensions;
+    let kicking = &blackboard.parameters.kicking;
+
+    let goal_x = field_dimensions.length / 2.0;
+    let left_post = field_dimensions.goal_post(Half::Opponent, Side::Left);
+    let usable_goal_y = (left_post.y().abs()
+        - field_dimensions.goal_post_diameter / 2.0
+        - kicking.kick_target_goal_post_margin)
+        .max(0.0);
+
+    let max_x = field_dimensions.length / 2.0;
+    let max_y = field_dimensions.width / 2.0;
+    let maximum_distance = kicking
+        .kick_target_maximum_distance
+        .max(kicking.kick_target_minimum_distance);
+    let minimum_distance = kicking.kick_target_minimum_distance.min(maximum_distance);
+
+    let mut candidates = Vec::new();
+    for index in 0..10 {
+        let y = -usable_goal_y + 2.0 * usable_goal_y * index as f32 / 9.0;
+        candidates.push((point![goal_x, y], true));
+    }
+
+    for index in 0..20 {
+        let side = if index % 2 == 0 { -1.0 } else { 1.0 };
+        let distance =
+            minimum_distance + (maximum_distance - minimum_distance) * (index / 2) as f32 / 9.0;
+
+        candidates.push((
+            point![
+                (ball.x() + distance).clamp(-max_x, max_x),
+                (ball.y() + side * distance * 0.5).clamp(-max_y, max_y)
+            ],
+            false,
+        ));
+    }
+
+    candidates
+        .into_iter()
+        .max_by(|(left, left_is_goal), (right, right_is_goal)| {
+            kick_target_score(blackboard, ground_to_field, ball, *left, *left_is_goal).total_cmp(
+                &kick_target_score(blackboard, ground_to_field, ball, *right, *right_is_goal),
+            )
+        })
+        .map(|(target, _)| target)
+        .unwrap_or(point![goal_x, 0.0])
+}
+
+fn kick_target_score(
+    blackboard: &Blackboard,
+    ground_to_field: Isometry2<Ground, Field>,
+    ball: Point2<Field>,
+    target: Point2<Field>,
+    is_goal_target: bool,
+) -> f32 {
+    let mut score = if is_goal_target { 10.0 } else { 0.0 };
+    let field_dimensions = blackboard.field_dimensions;
+
+    for obstacle in &blackboard.world_state.obstacles {
+        let obstacle_position = ground_to_field * obstacle.position;
+        if obstacle_position.x() > field_dimensions.length / 2.0
+            && obstacle_position.y().abs() < field_dimensions.goal_inner_width / 2.0
+        {
+            continue;
+        }
+
+        let radius = obstacle.radius_at_foot_height
+            + blackboard.parameters.kicking.kick_target_obstacle_clearance;
+        let clearance = distance_to_segment(obstacle_position, ball, target) - radius;
+
+        if clearance < 0.0 {
+            score -= 1000.0 - clearance * 1000.0;
+        } else {
+            score += clearance.min(1.0);
+        }
+    }
+
+    score - (target - ball).norm() * 0.01
+}
+
+fn distance_to_segment(point: Point2<Field>, start: Point2<Field>, end: Point2<Field>) -> f32 {
+    let segment = end - start;
+    let length_squared = segment.norm_squared();
+    if length_squared <= f32::EPSILON {
+        return (point - start).norm();
+    }
+
+    let t = ((point - start).dot(&segment) / length_squared).clamp(0.0, 1.0);
+    let closest = start + segment * t;
+    (point - closest).norm()
 }
 
 pub(super) fn apply_visual_kick_target(
