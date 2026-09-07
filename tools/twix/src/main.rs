@@ -38,7 +38,13 @@ mod twix_painter;
 mod visuals;
 mod zoom_and_pan;
 
-impl_selectable_panel!(TextPanel, ImagePanel, MapPanel, ParameterPanel, BehaviorTreePanel);
+impl_selectable_panel!(
+    TextPanel,
+    ImagePanel,
+    MapPanel,
+    ParameterPanel,
+    BehaviorTreePanel
+);
 
 #[derive(Debug, Clone, clap::Parser)]
 struct Arguments {
