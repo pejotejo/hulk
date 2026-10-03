@@ -42,7 +42,7 @@ use types::{
 };
 use voronoi::VoronoiGrid;
 
-use crate::{motion_assembler::assemble_motion_command, tree::create_tree};
+use crate::{kick::strategy::BallAction, motion_assembler::assemble_motion_command, tree::create_tree};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct LastBall {
@@ -53,7 +53,7 @@ pub struct LastBall {
     pub source: BallSource,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Message)]
 pub struct Blackboard {
     pub field_dimensions: FieldDimensions,
     pub player_number: PlayerNumber,
@@ -75,6 +75,7 @@ pub struct Blackboard {
     pub last_close_enough_to_kick: bool,
     /// Target selected for this tick, used to choose kick strength.
     pub kick_target: Option<Point2<Ground>>,
+    pub ball_action: Option<BallAction>,
     pub last_kick_target: Option<Point2<Field>>,
     pub last_motion_command: Option<MotionCommand>,
     pub last_motion_switch_time: Time,
@@ -347,6 +348,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_ball: None,
         last_close_enough_to_kick: false,
         kick_target: None,
+        ball_action: None,
         last_kick_target: None,
         last_motion_command: None,
         last_motion_switch_time: Time::zero(),
