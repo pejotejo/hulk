@@ -468,6 +468,8 @@ impl Default for WalkSpeedParameters {
 
 #[derive(Clone, Debug, Deserialize, Serialize, ros_z::Message)]
 pub struct KickingParameters {
+    #[serde(default)]
+    pub strategy: KickStrategyParameters,
     pub soft: bool,
     pub quick: bool,
     /// Desired outgoing ball speed in m/s.
@@ -488,6 +490,7 @@ pub struct KickingParameters {
 impl Default for KickingParameters {
     fn default() -> Self {
         Self {
+            strategy: KickStrategyParameters::default(),
             soft: false,
             quick: false,
             target_speed: 3.4,
@@ -499,6 +502,19 @@ impl Default for KickingParameters {
             minimum_interception_forward_distance: 0.0,
         }
     }
+}
+
+/// Distances are meters, angles radians. Values must be finite and nonnegative.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
+pub struct KickStrategyParameters {
+    /// Conservative reach of supported kicks; zero disables shooting.
+    pub maximum_shot_distance: f32,
+    pub obstacle_clearance: f32,
+    pub minimum_shot_angle: f32,
+    pub shot_angle_hysteresis: f32,
+    pub pressure_distance: f32,
+    pub clear_goal_distance: f32,
+    pub clear_distance_hysteresis: f32,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
