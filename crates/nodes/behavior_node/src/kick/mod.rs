@@ -1,3 +1,5 @@
+pub mod geometry;
+
 use coordinate_systems::{Field, Ground};
 use linear_algebra::{Isometry2, Orientation2, Point2, Rotation2, point};
 use types::{
