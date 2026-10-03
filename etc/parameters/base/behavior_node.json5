@@ -60,6 +60,16 @@
     },
   },
   kicking: {
+    strategy: {
+      // Initial tuning; verify maximum range on the robot before execution integration.
+      maximum_shot_distance: 3.0,
+      obstacle_clearance: 0.05,
+      minimum_shot_angle: 0.02,
+      shot_angle_hysteresis: 0.05,
+      pressure_distance: 0.8,
+      clear_goal_distance: 1.5,
+      clear_distance_hysteresis: 0.2,
+    },
     soft: false,
     quick: false,
     target_speed: 3.4, // Desired outgoing ball speed in m/s.

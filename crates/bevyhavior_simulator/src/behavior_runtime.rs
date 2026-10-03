@@ -199,6 +199,7 @@ fn create_behavior_blackboard(
         visual_kick_ball_position: None,
         last_ball: None,
         last_close_enough_to_kick: false,
+        ball_action: None,
         kick_target: None,
         last_kick_target: None,
         last_motion_command: None,

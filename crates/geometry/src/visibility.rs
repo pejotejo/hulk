@@ -1,6 +1,6 @@
 use linear_algebra::Point2;
 
-use crate::{circle::Circle, line::Line2, line_segment::LineSegment};
+use crate::{Distance, circle::Circle, line::Line2, line_segment::LineSegment};
 
 /// Returns visible portions of `target`, ordered from its first endpoint to its second.
 /// Paths end at the target: obstacles beyond it only block where they overlap a path.
@@ -13,8 +13,7 @@ pub fn visible_segments<Frame: Copy>(
     obstacles: &[Circle<Frame>],
 ) -> Vec<LineSegment<Frame>> {
     let line = Line2::from(target);
-    if target.length_squared() == 0.0 || line.signed_distance_to_point(origin).abs() <= f32::EPSILON
-    {
+    if target.length_squared() == 0.0 || line.distance_to(origin) <= f32::EPSILON {
         return Vec::new();
     }
 

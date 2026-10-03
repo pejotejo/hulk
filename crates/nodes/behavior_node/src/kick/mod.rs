@@ -1,4 +1,5 @@
 pub mod geometry;
+pub mod strategy;
 
 use coordinate_systems::{Field, Ground};
 use linear_algebra::{Isometry2, Orientation2, Point2, Vector2, point, vector};
