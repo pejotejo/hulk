@@ -1,6 +1,19 @@
 # Kick Target Selector Implementation Plan
 
-Status: geometry helpers implemented; strategy and execution integration remain planned.
+Status: geometry helpers and Blackboard-based shoot/dribble/clear strategy implemented;
+execution and behavior-tree integration remain planned. Passing remains deferred.
+
+The strategy in `crates/nodes/behavior_node/src/kick/strategy.rs` chooses emergency
+clearance under pressure near the own goal, otherwise a reachable goal opening,
+otherwise dribbling. It reads the remembered ball, world state, field dimensions,
+and `parameters.kicking.strategy` from `Blackboard`, and updates `ball_action`,
+using the previous value for hysteresis. Clear that intent when leaving ordinary
+striker play. No action is issued to the robot yet; tree wiring and execution-time
+capability checks remain pending. Shot output
+is a region, not an exact target; clear/dribble corridor refinement remains execution
+work. Future passing can add a receiver/reception-region action without changing
+the shot representation. Unknown robot affiliation is treated conservatively when
+estimating pressure; semantic opponent/teammate scoring remains deferred.
 
 ## Objective
 

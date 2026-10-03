@@ -185,6 +185,8 @@ fn create_behavior_blackboard(
         visual_kick_ball_position: None,
         last_ball: None,
         last_close_enough_to_kick: false,
+        kick_target: None,
+        ball_action: None,
         last_kick_target: None,
         last_motion_command: None,
         last_motion_switch_time: ros_z::time::Time::zero(),

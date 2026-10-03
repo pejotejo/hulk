@@ -59,12 +59,25 @@
     },
   },
   kicking: {
-    allow_schlong: false,
-    distance_for_kick: 2.0,
-    distance_for_kick_hysteresis: 0.5,
-    kick_target_offset_angle: 0.1,
-    target_distance_kick_power_threshold: 6.0,
-    kick_position_ball_distance: 0.3,
+    strategy: {
+      // Initial tuning; verify maximum range on the robot before execution integration.
+      maximum_shot_distance: 3.0,
+      obstacle_clearance: 0.05,
+      minimum_shot_angle: 0.02,
+      shot_angle_hysteresis: 0.05,
+      pressure_distance: 0.8,
+      clear_goal_distance: 1.5,
+      clear_distance_hysteresis: 0.2,
+    },
+    soft: false,
+    quick: false,
+    target_speed: 1.0, // Desired outgoing ball speed in m/s.
+    allow_strong_kicks: false,
+    kick_activation_distance: 1.3,
+    kick_activation_hysteresis: 0.3,
+    strong_kick_min_target_distance: 6.0,
+    approach_ball_standoff: 0.3,
+    minimum_interception_forward_distance: 0.3,
   },
   goalkeeper: {
     player_number: "One",
