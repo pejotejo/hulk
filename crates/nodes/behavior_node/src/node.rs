@@ -407,7 +407,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.ball = Some(LastBall {
                 position: ball.ball_in_field,
                 velocity: ball.ball_in_ground_velocity,
-                age: blackboard.world_state.now,
+                age: Time::from_wallclock(ball.last_seen_ball),
                 field_side: ball.field_side,
             });
             blackboard.last_ball.clone_from(&blackboard.ball);
