@@ -1,3 +1,4 @@
+pub mod execution;
 pub mod geometry;
 pub mod strategy;
 
@@ -43,6 +44,8 @@ pub fn kick_alternatives_subtree() -> Node<Blackboard> {
 }
 
 pub fn kick(blackboard: &mut Blackboard) -> Status {
+    blackboard.ball_action = None;
+    blackboard.kick_target = None;
     if let Some(ground_to_field) = &blackboard.world_state.robot.ground_to_field
         && let Some(ball_in_ground) = kick_ball_position_in_ground(blackboard, ground_to_field)
     {

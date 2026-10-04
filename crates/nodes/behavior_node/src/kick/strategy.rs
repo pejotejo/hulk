@@ -128,11 +128,12 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
 mod tests {
     use types::{
         field_dimensions::{FieldDimensions, Side},
+        motion_command::BodyMotion,
         obstacles::Obstacle,
         parameters::KickStrategyParameters,
     };
 
-    use crate::node::LastBall;
+    use crate::{kick::execution::execute_ball_action, node::LastBall, tree::striker_subtree};
 
     use super::*;
 
@@ -196,5 +197,109 @@ mod tests {
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         select_ball_action(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+    }
+
+    #[test]
+    fn execution_approaches_ball_revalidates_and_kicks_to_advance() {
+        let mut blackboard = blackboard();
+        blackboard.parameters.kicking.kick_activation_distance = 1.0;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard
+            .parameters
+            .walking
+            .walk_and_stand
+            .target_reached_thresholds = nalgebra::vector![0.05, 0.1];
+        blackboard.parameters.walking.path_planning.robot_radius = 0.4;
+        blackboard
+            .parameters
+            .walking
+            .path_planning
+            .ball_obstacle_radius = 0.05;
+        let transform =
+            linear_algebra::Isometry2::from_parts(linear_algebra::vector![0.2, -0.1], 0.3);
+        blackboard.world_state.robot.ground_to_field = Some(transform);
+        blackboard.world_state.obstacles = vec![Obstacle::robot(
+            transform.inverse() * point![3.5, 0.0],
+            0.1,
+            0.1,
+        )];
+        let tree = striker_subtree();
+        assert_eq!(tree.tick_with_trace(&mut blackboard).0, Status::Success);
+        let target = transform * blackboard.kick_target.unwrap();
+        let Some(BodyMotion::Walk {
+            target_orientation, ..
+        }) = blackboard.body_motion
+        else {
+            panic!("expected approach")
+        };
+        let ball_in_ground = transform.inverse() * point![2.0, 0.0];
+        let facing_ball = linear_algebra::Orientation2::from_vector(ball_in_ground.coords());
+        assert!((target_orientation.angle() - facing_ball.angle()).abs() < 1e-6);
+        let expected = linear_algebra::Orientation2::from_vector(
+            transform.inverse() * (target - point![2.0, 0.0]),
+        );
+        blackboard.parameters.kicking.kick_activation_distance = 3.0;
+        tree.tick_with_trace(&mut blackboard);
+        let Some(BodyMotion::Kick {
+            kick_direction,
+            ..
+        }) = blackboard.body_motion
+        else {
+            panic!("expected shot")
+        };
+        assert_eq!(blackboard.kick_target, Some(transform.inverse() * target));
+        assert!((kick_direction.angle() - expected.angle()).abs() < 1e-6);
+        blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
+        execute_ball_action(&mut blackboard);
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.kick_target, None);
+
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![-3.8, 0.7], 0.2, 0.2)];
+        blackboard.parameters.kicking.kick_activation_distance = 5.0;
+        tree.tick_with_trace(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
+        assert!(blackboard.kick_target.unwrap().x() > -3.8);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { .. })
+        ));
+
+        // The recorded stall had 6 cm lateral error; kick-policy alignment must handle it.
+        blackboard.parameters.kicking.kick_activation_distance = 2.0;
+        blackboard.ball.as_mut().unwrap().position = point![0.51, -0.06];
+        blackboard.world_state.obstacles.clear();
+        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard
+            .parameters
+            .kicking
+            .strong_kick_min_target_distance = 0.1;
+        blackboard.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+            BodyMotion::Kick {
+                ball_position: point![0.51, -0.06],
+                ball_velocity: Default::default(),
+                target_speed: 1.0,
+                soft: false,
+                quick: false,
+                kick_direction: Default::default(),
+                strong: true,
+            },
+            types::motion_command::HeadMotion::ZeroAngles,
+        );
+        tree.tick_with_trace(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                soft: true,
+                ..
+            })
+        ));
+        assert!(blackboard.kick_target.unwrap().x() > 0.51);
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![0.6, 0.0], 0.3, 0.3)];
+        tree.tick_with_trace(&mut blackboard);
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
     }
 }
