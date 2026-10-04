@@ -61,7 +61,7 @@
   },
   kicking: {
     strategy: {
-      // Initial tuning; verify maximum range on the robot before execution integration.
+      // Initial tuning; verify maximum range on the robot before deployment.
       maximum_shot_distance: 3.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,

@@ -14,7 +14,10 @@ use crate::{
     },
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
-    kick::{intercept, kick, kick_subtree, set_kick_target_beyond_ball, use_kick},
+    kick::{
+        execution::execute_ball_action, intercept, kick, kick_subtree, set_kick_target_beyond_ball,
+        strategy::select_ball_action, use_kick,
+    },
     negation,
     node::Blackboard,
     penalty_shootout::{is_penalty_shootout, penalty_shootout_subtree},
@@ -24,10 +27,7 @@ use crate::{
     subtree,
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
-    walk::{
-        walk_alternatives_subtree, walk_to_ball_subtree, walk_to_kickoff_pose,
-        walk_to_voronoi_position,
-    },
+    walk::{walk_alternatives_subtree, walk_to_kickoff_pose, walk_to_voronoi_position},
 };
 
 pub fn create_tree() -> Node<Blackboard> {
@@ -151,15 +151,18 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
         selection!(
             sequence!(condition!(is_in_sub_state), subtree!(sub_state_subtree),),
             sequence!(
-                negation!(condition!(is_close_to_ball)),
-                subtree!(walk_to_ball_subtree)
-            ),
-            sequence!(
-                condition!(is_ball_interception_candidate),
-                subtree!(kick_subtree),
-                action!(intercept),
-            ),
-            subtree!(kick_subtree)
+                negation!(condition!(is_in_sub_state)),
+                selection!(
+                    sequence!(
+                        condition!(is_close_to_ball),
+                        condition!(is_ball_interception_candidate),
+                        subtree!(kick_subtree),
+                        action!(intercept),
+                    ),
+                    sequence!(action!(select_ball_action), action!(execute_ball_action)),
+                    action!(stand),
+                )
+            )
         )
     )
 }

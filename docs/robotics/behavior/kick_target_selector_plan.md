@@ -1,19 +1,23 @@
 # Kick Target Selector Implementation Plan
 
-Status: geometry helpers and Blackboard-based shoot/dribble/clear strategy implemented;
-execution and behavior-tree integration remain planned. Passing remains deferred.
+Status: geometry, shoot/dribble/clear strategy, and ordinary-striker execution are
+implemented under `crates/nodes/behavior_node/src/kick/`. Passing remains deferred.
 
-The strategy in `crates/nodes/behavior_node/src/kick/strategy.rs` chooses emergency
-clearance under pressure near the own goal, otherwise a reachable goal opening,
-otherwise dribbling. It reads the remembered ball, world state, field dimensions,
-and `parameters.kicking.strategy` from `Blackboard`, and updates `ball_action`,
-using the previous value for hysteresis. Clear that intent when leaving ordinary
-striker play. No action is issued to the robot yet; tree wiring and execution-time
-capability checks remain pending. Shot output
-is a region, not an exact target; clear/dribble corridor refinement remains execution
-work. Future passing can add a receiver/reception-region action without changing
-the shot representation. Unknown robot affiliation is treated conservatively when
-estimating pressure; semantic opponent/teammate scoring remains deferred.
+Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
+`kick_target` for the emitted motion. Distant approach walks toward the ball;
+VisualKick handles final alignment. Shots bisect the selected opening after
+rechecking geometry from the SDK ball position.
+Clearances and dribbling choose an open forward corridor within the configured
+reach. Dribbling uses the low-power visual kick, then follows the ball for the next
+kick. The existing motion-switch timing and kick powers are reused. Invalid corridors stop
+motion; leaving ordinary striker play clears the intent. Remote control, set
+plays, penalties, goalkeeper clearance, and interception retain their own paths.
+
+Initial limits: kick reach and advancement distance need robot calibration.
+Forward corridor selection is a conservative heuristic; it can stand when no
+forward corridor exists. Robot affiliation remains unknown, so semantic
+teammate/opponent risk scoring is still deferred. The detailed stages below describe the broader target architecture,
+including capability calibration, richer evaluation, and passing.
 
 ## Objective
 
@@ -48,7 +52,7 @@ Paths in this document are relative to the repository root.
 | `crates/nodes/behavior_node/src/kick/mod.rs` | `select_kick_target()` aims at the goal center; target and power are filled after initializing a visual kick. | Consume a complete resolved plan and apply it atomically. |
 | `crates/nodes/behavior_node/src/walk.rs` | `walk_to_ball()` approaches along the goal-center direction; kick continuation reselects the target. | Use the selected plan for ordinary striker approach and every continuation path. |
 | `crates/nodes/behavior_node/src/tree.rs` | Striker behavior chooses approach before kick-target selection. | Update the selected intent before the ordinary approach/kick branch. |
-| `crates/nodes/behavior_node/src/conditions.rs` | `is_close_to_ball_aligned()` uses goal-center geometry. | Make alignment consume the relevant plan wherever the new selector is used; retain explicit behavior for unmigrated contexts. |
+| `crates/nodes/behavior_node/src/conditions.rs` | `is_close_to_ball_aligned()` uses goal-center geometry. | Delegate final alignment to VisualKick for ordinary striker play; retain explicit behavior for unmigrated contexts. |
 | `crates/nodes/behavior_node/src/node.rs` | Owns live world-state assembly and persistent blackboard state. | Assemble planning input and maintain selected intent, validity, and debug state. |
 | `crates/types/src/obstacles.rs` | Robot obstacles have no team identity, observation age, or uncertainty. | Preserve or expose the evidence needed to distinguish confidently known teammates from unmatched robots. |
 | `crates/nodes/obstacle_filter/src/lib.rs` | Network teammate observations become generic robot hypotheses. | Preserve teammate association through fusion before using lower teammate risk. |
@@ -147,8 +151,8 @@ Work:
 
 - Update ordinary-striker planning before approach/kick branching in `tree.rs`.
 - Refine a target within the selected shot interval, initially maximizing margin to its usable edges. Prefer the previous valid target when differences are insignificant.
-- Derive the approach pose from the ball-to-target direction and the existing stand-off distance.
-- Make ordinary-striker walking, relevant alignment checks, kicking, and motion-transition continuation consume the same plan. Preserve dedicated approach behavior for unmigrated contexts.
+- Approach the ball until it is within VisualKick range, then let the SDK handle final alignment toward the selected target.
+- Use the selected target for ordinary-striker kicking and motion-transition continuation. Do not require a behavior-level alignment gate before VisualKick; preserve dedicated behavior for unmigrated contexts.
 - Select power using ball-to-target distance and the capability model, then revalidate the resulting trajectory and angular tolerance.
 - Construct the resolved plan locally; modify `body_motion` only after success. Behavior-tree failure must not leave a partially initialized visual kick available to another branch.
 - Try each eligible candidate at most once per planning cycle if refinement rejects it. If all fail, emit an explicit no-plan result and use a deliberate stand/search/reposition fallback as appropriate. Never restore a blocked goal-center shot as an implicit fallback.
@@ -159,7 +163,7 @@ Work:
 
 Acceptance:
 
-- Approach orientation and emitted kick follow the same selected opening.
+- The emitted kick follows the selected opening; distant approach reaches VisualKick range without requiring shot alignment.
 - Small obstacle/ball perturbations do not alternate between equivalent openings every cycle.
 - A closing corridor invalidates the plan; commitment cannot preserve an unsafe candidate indefinitely.
 - Kick continuation never silently replaces the target with the goal center.
@@ -210,7 +214,7 @@ Acceptance:
 Implement these as separate increments after shooting and passing work.
 
 - Clearance: generate reachable regions that reduce immediate danger; evaluate turnover and own-goal exposure. Explicitly define when deliberate ball-out is permitted by the action context instead of globally requiring every trajectory to remain in the field.
-- Dribble: first establish a supported short-touch/control behavior and its range/error envelope. Do not assume the weaker existing power mode provides controlled dribbling. Then evaluate both the ball corridor and the robot's follow-up path.
+- Dribble: use low-power kicks to advance the ball, then follow it for the next kick. Calibrate the resulting travel distance and error envelope, and evaluate the ball corridor and subsequent walking path.
 - Define urgency as tactical context: emergency clearance may outweigh ordinary possession/progress scores, while an unavailable action remains ineligible.
 - Give each action a complete execution and failure path before exposing it to strategy.
 

@@ -94,6 +94,9 @@ impl SimulatorRobotBehavior {
         }
 
         let (status, trace) = self.tree.tick_with_trace(&mut self.blackboard);
+        if self.blackboard.kick_target.is_none() {
+            self.blackboard.ball_action = None;
+        }
         let motion_command = assemble_motion_command(&self.blackboard, status)?;
         self.blackboard.last_motion_command = Some(motion_command.clone());
 
