@@ -505,6 +505,9 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         }
 
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
+        if blackboard.kick_target.is_none() {
+            blackboard.ball_action = None;
+        }
         let motion_command: MotionCommand = assemble_motion_command(&blackboard, status)?;
 
         let previous_motion_command = blackboard.last_motion_command.clone();
