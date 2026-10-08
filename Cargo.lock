@@ -5567,7 +5567,7 @@ dependencies = [
  "log",
  "ros-z",
  "serde",
- "socket2 0.6.4",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "types",
@@ -10753,7 +10753,7 @@ dependencies = [
  "player_states_receiver",
  "primary_state_filter",
  "projection",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_distr 0.5.1",
  "ros-z",
  "ros-z-streams",
@@ -13643,7 +13643,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.4",
+ "rustix 1.1.5",
 ]
 
 [[package]]
@@ -14542,7 +14542,7 @@ dependencies = [
  "arbitrary",
  "crc32fast",
  "flate2",
- "indexmap 2.14.0",
+ "indexmap 2.14.2",
  "memchr",
  "zopfli",
 ]
