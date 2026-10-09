@@ -194,12 +194,13 @@ impl PrimaryStateFilter {
             (PrimaryState::Initial, game_state) => {
                 game_state_to_primary_state(game_state, is_penalized)
             }
+            (
+                PrimaryState::Finished,
+                game_state @ (FilteredGameState::Initial | FilteredGameState::Ready),
+            ) => game_state_to_primary_state(game_state, is_penalized),
             (PrimaryState::Ready, FilteredGameState::Set) if !is_penalized => PrimaryState::Set,
             (
-                PrimaryState::Ready
-                | PrimaryState::Playing
-                | PrimaryState::Set
-                | PrimaryState::Finished,
+                PrimaryState::Ready | PrimaryState::Playing | PrimaryState::Set,
                 FilteredGameState::Initial,
             ) if !is_penalized => PrimaryState::Initial,
             (PrimaryState::Set, FilteredGameState::Playing { .. }) if !is_penalized => {
@@ -360,6 +361,51 @@ mod tests {
         };
         filter.update_with_filtered_game_controller_state(&state, PlayerNumber::Three);
         assert_eq!(filter.primary_state, PrimaryState::Playing);
+    }
+
+    #[test]
+    fn finished_accepts_the_next_half_initial_and_ready_states() {
+        for (game_state, expected) in [
+            (FilteredGameState::Initial, PrimaryState::Initial),
+            (FilteredGameState::Ready, PrimaryState::Ready),
+        ] {
+            for penalized in [false, true] {
+                let mut filter = PrimaryStateFilter {
+                    primary_state: PrimaryState::Finished,
+                };
+                let mut game = FilteredGameControllerState {
+                    game_state,
+                    ..Default::default()
+                };
+                game.penalties[PlayerNumber::One] = penalized.then(Default::default);
+                filter.update_with_filtered_game_controller_state(&game, PlayerNumber::One);
+                assert_eq!(
+                    filter.primary_state,
+                    if penalized {
+                        PrimaryState::Penalized
+                    } else {
+                        expected
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn next_half_packets_preserve_damping_and_prepare() {
+        for primary_state in [PrimaryState::Damping, PrimaryState::Prepare] {
+            for game_state in [FilteredGameState::Initial, FilteredGameState::Ready] {
+                let mut filter = PrimaryStateFilter { primary_state };
+                filter.update_with_filtered_game_controller_state(
+                    &FilteredGameControllerState {
+                        game_state,
+                        ..Default::default()
+                    },
+                    PlayerNumber::One,
+                );
+                assert_eq!(filter.primary_state, primary_state);
+            }
+        }
     }
 
     #[test]
