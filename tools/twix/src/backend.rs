@@ -1,6 +1,6 @@
 use std::sync::{
-    Arc, Mutex, MutexGuard,
-    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use crate::replay::ReplaySession;
@@ -27,6 +27,8 @@ pub struct RobotBackend {
     replay: Mutex<ReplaySession>,
     connection: Mutex<Connection>,
     live: Arc<Live>,
+    replay_revision: AtomicU64,
+    replay_active: AtomicBool,
 }
 
 impl RobotBackend {
@@ -136,6 +138,8 @@ impl RobotBackend {
             replay: Mutex::new(Default::default()),
             connection: Mutex::new(connection),
             live,
+            replay_revision: AtomicU64::new(0),
+            replay_active: AtomicBool::new(false),
         })
     }
 
@@ -238,7 +242,22 @@ impl RobotBackend {
         )
     }
 
-    pub fn replay(&self) -> MutexGuard<'_, ReplaySession> {
+    pub fn set_replay_sources(&self, sources: Option<ros_z_debug::replay::ReplaySources>) {
+        self.replay_active
+            .store(sources.is_some(), Ordering::Relaxed);
+        self.observer.set_replay_sources(sources);
+        self.replay_revision.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn is_replaying(&self) -> bool {
+        self.replay_active.load(Ordering::Relaxed)
+    }
+
+    pub fn replay_revision(&self) -> u64 {
+        self.replay_revision.load(Ordering::Relaxed)
+    }
+
+    pub fn replay(&self) -> std::sync::MutexGuard<'_, crate::replay::ReplaySession> {
         self.replay
             .lock()
             .expect("replay mutex should not be poisoned")
