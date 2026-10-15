@@ -4,12 +4,15 @@ Status: geometry, shoot/dribble/clear strategy, and ordinary-striker execution a
 implemented under `crates/nodes/behavior_node/src/kick/`. Passing remains deferred.
 
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
-`kick_target` for the emitted motion. Distant approach walks toward the ball;
-VisualKick handles final alignment. Shots bisect the selected opening after
-rechecking geometry from the SDK ball position.
+`kick_target` in Ground coordinates for the emitted motion. Distant approach walks
+toward the ball; the kick policy handles final alignment. Shots bisect the selected
+opening after rechecking geometry from the selected kick-ball position.
 Clearances and dribbling choose an open forward corridor within the configured
-reach. Dribbling uses the low-power visual kick, then follows the ball for the next
-kick. The existing motion-switch timing and kick powers are reused. Invalid corridors stop
+reach. Dribbling prefers the corridor toward goal and aims along that direction
+when it is clear. Strategy and execution use the same ball position.
+Dribbling uses the soft-kick policy, then follows the ball for the next kick.
+Execution uses the native `BodyMotion::Kick` API and the configured target speed.
+The existing motion-switch timing and strong-kick settings are reused. Invalid corridors stop
 motion; leaving ordinary striker play clears the intent. Remote control, set
 plays, penalties, goalkeeper clearance, and interception retain their own paths.
 
