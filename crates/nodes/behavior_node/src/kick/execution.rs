@@ -1,5 +1,5 @@
 use coordinate_systems::Field;
-use geometry::{circle::Circle, line_segment::LineSegment, visibility::visible_segments};
+use geometry::{Distance, circle::Circle, line_segment::LineSegment, visibility::visible_segments};
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{
     behavior_tree::Status,
@@ -35,7 +35,9 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         && kicking.allow_strong_kicks
         && (target - ball).norm() >= kicking.strong_kick_min_target_distance;
     if !dribbling
-        && let MotionCommand::Kick { strong: previous, .. } = blackboard.last_motion_command
+        && let MotionCommand::Kick {
+            strong: previous, ..
+        } = blackboard.last_motion_command
         && (!previous || kicking.allow_strong_kicks)
     {
         strong = previous;
@@ -150,11 +152,31 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
             )
         }
     };
+    let target_x = openings.first()?.0.x();
+    let preferred = (action == BallAction::Dribble).then(|| {
+        let goal = point![field.length / 2.0, 0.0];
+        ball + (goal - ball) * ((target_x - ball.x()) / (goal.x() - ball.x()))
+    });
     let opening = openings.into_iter().max_by(|a, b| {
+        if let Some(preferred) = preferred {
+            let ordering = b
+                .squared_distance_to(preferred)
+                .total_cmp(&a.squared_distance_to(preferred));
+            if !ordering.is_eq() {
+                return ordering;
+            }
+        }
         LineSegment(ball, a.0)
             .angle(LineSegment(ball, a.1))
             .total_cmp(&LineSegment(ball, b.0).angle(LineSegment(ball, b.1)))
     })?;
+    // Advance toward goal when that ray is inside a safe opening.
+    if let Some(preferred) = preferred
+        && opening.projection_factor(preferred) > 0.0
+        && opening.projection_factor(preferred) < 1.0
+    {
+        return Some(preferred);
+    }
     // Bisect the angle, not the goal-line length, to maximize angular edge clearance.
     let direction = (opening.0 - ball).normalize() + (opening.1 - ball).normalize();
     let target = ball + direction * ((opening.0.x() - ball.x()) / direction.x());
