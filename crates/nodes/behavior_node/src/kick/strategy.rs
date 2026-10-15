@@ -10,7 +10,7 @@ use types::{behavior_tree::Status, obstacles::ObstacleKind};
 
 use crate::node::Blackboard;
 
-use super::geometry::goal_openings;
+use super::{geometry::goal_openings, kick_ball_position_in_ground};
 
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
 /// A future pass variant can identify a receiver and reception region.
@@ -33,12 +33,13 @@ pub fn select_ball_action(blackboard: &mut Blackboard) -> Status {
 }
 
 fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
-    let ball = blackboard.ball.as_ref()?.position;
     let world = &blackboard.world_state;
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
     let previous = blackboard.ball_action;
     let ground_to_field = world.robot.ground_to_field?;
+    let ball_in_ground = kick_ball_position_in_ground(blackboard, &ground_to_field)?;
+    let ball = ground_to_field * ball_in_ground;
     let goal_x = field.length / 2.0;
     if ball.x().abs() >= goal_x || ball.y().abs() >= field.width / 2.0 {
         return None;
@@ -49,7 +50,6 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         point![-goal_x, -field.goal_inner_width / 2.0],
         point![-goal_x, field.goal_inner_width / 2.0],
     );
-    let ball_in_ground = ground_to_field.inverse() * ball;
     // Robot affiliation is unknown; nearby robots conservatively count as pressure.
     let under_pressure = world.obstacles.iter().any(|obstacle| {
         matches!(
@@ -127,6 +127,7 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
 #[cfg(test)]
 mod tests {
     use types::{
+        ball_position::BallPosition,
         field_dimensions::{FieldDimensions, Side},
         motion_command::BodyMotion,
         obstacles::Obstacle,
@@ -180,6 +181,50 @@ mod tests {
         blackboard.ball = None;
         assert_eq!(select_ball_action(&mut blackboard), Status::Failure);
         assert_eq!(blackboard.ball_action, None);
+    }
+
+    #[test]
+    fn dribble_advances_toward_goal_through_a_clear_corridor() {
+        let mut blackboard = blackboard();
+        let ball = point![1.0, 1.0];
+        blackboard.ball.as_mut().unwrap().position = ball;
+        blackboard.parameters.kicking.kick_activation_distance = 10.0;
+        select_ball_action(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+        execute_ball_action(&mut blackboard);
+        let goal = point![blackboard.field_dimensions.length / 2.0, 0.0];
+        let target =
+            blackboard.world_state.robot.ground_to_field.unwrap() * blackboard.kick_target.unwrap();
+        assert!(target.x() > ball.x() && target.x() < goal.x());
+        assert!(LineSegment(ball, target).angle(LineSegment(ball, goal)) < 1e-6);
+
+        let obstacle = Obstacle::robot(point![2.0, 0.714], 0.2, 0.2);
+        blackboard.world_state.obstacles = vec![obstacle];
+        execute_ball_action(&mut blackboard);
+        let target =
+            blackboard.world_state.robot.ground_to_field.unwrap() * blackboard.kick_target.unwrap();
+        assert!(
+            LineSegment(ball, target).distance_to(
+                blackboard.world_state.robot.ground_to_field.unwrap() * obstacle.position,
+            ) > obstacle.radius_at_foot_height
+                + blackboard.field_dimensions.ball_radius
+                + blackboard.parameters.kicking.strategy.obstacle_clearance
+        );
+
+        // Strategy and execution must use the same observed ball, not disagree on range.
+        blackboard.world_state.obstacles.clear();
+        blackboard.visual_kick_ball_position = Some(BallPosition {
+            position: point![2.0, 0.0],
+            velocity: Default::default(),
+            last_seen: Default::default(),
+        });
+        select_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.ball_action,
+            Some(BallAction::Shoot { .. })
+        ));
+        execute_ball_action(&mut blackboard);
+        assert_eq!(blackboard.kick_target.unwrap().x(), goal.x());
     }
 
     #[test]
@@ -240,11 +285,7 @@ mod tests {
         );
         blackboard.parameters.kicking.kick_activation_distance = 3.0;
         tree.tick_with_trace(&mut blackboard);
-        let Some(BodyMotion::Kick {
-            kick_direction,
-            ..
-        }) = blackboard.body_motion
-        else {
+        let Some(BodyMotion::Kick { kick_direction, .. }) = blackboard.body_motion else {
             panic!("expected shot")
         };
         assert_eq!(blackboard.kick_target, Some(transform.inverse() * target));
