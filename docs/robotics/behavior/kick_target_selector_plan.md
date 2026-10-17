@@ -9,7 +9,8 @@ Experimental ball pursuit uses `position + velocity * ball.pursuit_lookahead`,
 clipped inside the field. The base lookahead is 0.5 s; zero restores observed-position
 pursuit. Approach walking, closest-player selection, and receiver preparation/handoff
 use this projection. Kick geometry and the motion policy retain measured ball position
-and velocity. Constant velocity ignores deceleration and still needs simulator trials.
+and velocity. Inside 0.75 m of the robot, pursuit and handoff use measured position too.
+Constant velocity ignores deceleration and still needs simulator trials.
 
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
@@ -23,8 +24,11 @@ snapshots produce no plan. Clear openings are clipped to forward progress before
 choosing their angular midpoint.
 Dribbling uses the soft-kick policy, then follows the ball for the next kick.
 Execution uses the native `BodyMotion::Kick` API and the configured target speed.
-The existing motion-switch timing and strong-kick settings are reused. Invalid corridors stop
-motion; leaving ordinary striker play clears the intent. Remote control, set
+The existing motion-switch timing and strong-kick settings are reused. An unusable
+corridor selects the explicit `ShootAtGoalCenter` fallback. This fallback bypasses
+corridor and range checks, so it can kick into an obstacle. Missing ball/localization,
+invalid parameters, and a ball on/outside the field still stop execution. Leaving
+ordinary striker play clears the intent. Remote control, set
 plays, penalties, goalkeeper clearance, and interception retain their own paths.
 
 Dribble execution checks corridors covering `kicking.strategy.maximum_dribble_distance`
@@ -36,7 +40,7 @@ Field boundaries remove corridors instead of shortening them. Execution chooses
 the safe direction closest to the goal, including sideways/backward recovery.
 Clears use `maximum_shot_distance` as their planning horizon and retain forward
 progress. Shots check through the inflated posts, then return a target on the
-goal line. No valid corridor means stand.
+goal line. No valid corridor means the goal-center fallback.
 
 Ordinary striker priority is emergency clearance, an eligible shot, a forward
 pass, then dribbling. Pass intent identifies a receiver without fixing the final
@@ -213,7 +217,7 @@ Work:
 - Use the selected target for ordinary-striker kicking and motion-transition continuation. Do not require a behavior-level alignment gate before VisualKick; preserve dedicated behavior for unmigrated contexts.
 - Select power using ball-to-target distance and the capability model, then revalidate the resulting trajectory and angular tolerance.
 - Construct the resolved plan locally; modify `body_motion` only after success. Behavior-tree failure must not leave a partially initialized visual kick available to another branch.
-- Try each eligible candidate at most once per planning cycle if refinement rejects it. If all fail, emit an explicit no-plan result and use a deliberate stand/search/reposition fallback as appropriate. Never restore a blocked goal-center shot as an implicit fallback.
+- Try each eligible candidate at most once per planning cycle if refinement rejects it. Current testing behavior uses explicit `ShootAtGoalCenter` when no selected corridor remains. Keep invalid-input and out-of-field hard stops; do not represent the fallback as a validated opening.
 - Add score hysteresis for switching valid intents and bounded target refinement during approach.
 - Define a conservative commitment policy around entry into visual-kick mode. Treat the existing last-motion state as commanded mode, not proof of physical contact or completion. Confirm which updates/cancellations Booster supports before enabling them during commitment.
 - Revalidate hard constraints during commitment. Invalidity bypasses ordinary score hysteresis; motion cancellation must use the supported transition path.
@@ -227,7 +231,7 @@ Acceptance:
 - Kick continuation never silently replaces the target with the goal center.
 - Special contexts retain their explicit authority and existing behavior.
 
-This completes the first release. A no-plan fallback may be tactically limited until clearance or dribbling is added; expose it in diagnostics rather than disguising it as a valid shot.
+This completes the first release. Goal-center fallback can ignore blockers and kick reach; expose it in diagnostics rather than disguising it as a validated shot.
 
 ## Stage 4 — Preserve teammate evidence and evaluate semantic risk
 

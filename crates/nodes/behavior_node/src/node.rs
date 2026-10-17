@@ -96,6 +96,8 @@ pub struct Blackboard {
     pub voronoi_map: Option<VoronoiGrid>,
 }
 
+const PROJECTION_CUTOFF_DISTANCE: f32 = 0.75;
+
 impl Blackboard {
     pub(crate) fn projected_ball_position(
         &self,
@@ -106,6 +108,13 @@ impl Blackboard {
         let field = &self.field_dimensions;
         if lookahead.is_zero()
             || velocity.norm_squared() == 0.0
+            || self
+                .world_state
+                .robot
+                .ground_to_field
+                .is_some_and(|transform| {
+                    (position - transform.as_pose().position()).norm() <= PROJECTION_CUTOFF_DISTANCE
+                })
             || position.x().abs() >= field.length / 2.0
             || position.y().abs() >= field.width / 2.0
         {
