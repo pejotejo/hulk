@@ -54,6 +54,7 @@ zenoh = { workspace = true }
 
 [features]
 simulator = ["dep:simulate"]
+bhuman = ["simulator", "simulate/bhuman"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
