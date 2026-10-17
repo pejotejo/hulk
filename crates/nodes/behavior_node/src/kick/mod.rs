@@ -247,7 +247,7 @@ pub fn set_kick_target_beyond_ball(blackboard: &mut Blackboard) -> Status {
     Status::Failure
 }
 
-fn kick_ball_position_in_ground(
+pub(crate) fn kick_ball_position_in_ground(
     blackboard: &Blackboard,
     ground_to_field: &Isometry2<Ground, Field>,
 ) -> Option<Point2<Ground>> {
