@@ -18,8 +18,12 @@ use crate::{
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
-        execution::execute_ball_action, intercept, kick, kick_subtree, set_kick_target_beyond_ball,
-        strategy::select_ball_action, use_kick_power,
+        execution::execute_ball_action,
+        intercept, kick, kick_subtree,
+        passing::{is_pass_ball_arriving, is_pass_receiver, prepare_to_receive_pass},
+        set_kick_target_beyond_ball,
+        strategy::select_ball_action,
+        use_kick_power,
     },
     negation,
     node::Blackboard,
@@ -116,6 +120,19 @@ fn playing_subtree() -> Node<Blackboard> {
             )
         ),
         sequence!(condition!(is_goalkeeper), subtree!(goalkeeper_subtree)),
+        sequence!(
+            negation!(condition!(is_in_sub_state)),
+            condition!(is_pass_receiver),
+            subtree!(look_at_ball_subtree),
+            selection!(
+                sequence!(condition!(is_pass_ball_arriving), subtree!(striker_subtree)),
+                switch_motion_type(
+                    MotionType::Walk,
+                    action!(prepare_to_receive_pass),
+                    action!(stand)
+                ),
+            ),
+        ),
         sequence!(
             negation!(condition!(has_ball_position)),
             subtree!(search_subtree)

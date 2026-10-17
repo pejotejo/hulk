@@ -9,7 +9,7 @@ use color_eyre::Result;
 use types::fall_detection::FallDetection;
 
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::PlayerNumber;
+use hsl_network_messages::{PassIntent, PlayerNumber};
 use linear_algebra::{Isometry2, Point2, Pose2, Vector2};
 use ros_z::{prelude::*, qos::QosDurability, time::Time};
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,7 @@ pub struct Blackboard {
     pub last_motion_type: Option<MotionType>,
     pub last_sent_game_controller_return_message_time: Option<Time>,
     pub last_sent_hsl_message_time: Option<Time>,
+    pub last_announced_pass: Option<TimeWrapper<PassIntent>>,
     pub last_closest_to_ball: bool,
     pub closest_to_ball_entered_area_since: Option<Time>,
     pub closest_to_ball_left_area_since: Option<Time>,
@@ -315,6 +316,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_motion_type: None,
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
+        last_announced_pass: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,
@@ -439,6 +441,9 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
         if blackboard.kick_target.is_none() {
             blackboard.ball_action = None;
+        }
+        if !matches!(blackboard.ball_action, Some(BallAction::Pass { .. })) {
+            blackboard.last_announced_pass = None;
         }
         let motion_command: MotionCommand = assemble_motion_command(&blackboard, status)?;
 
