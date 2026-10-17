@@ -5,6 +5,12 @@ are implemented under `crates/nodes/behavior_node/src/kick/`. Passing uses fresh
 static receiver positions with budgeted pass announcements and receiver preparation;
 receiver prediction remains deferred.
 
+Experimental ball pursuit uses `position + velocity * ball.pursuit_lookahead`,
+clipped inside the field. The base lookahead is 0.5 s; zero restores observed-position
+pursuit. Approach walking, closest-player selection, and receiver preparation/handoff
+use this projection. Kick geometry and the motion policy retain measured ball position
+and velocity. Constant velocity ignores deceleration and still needs simulator trials.
+
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
 toward the ball; the kick policy handles final alignment. Shots bisect the selected

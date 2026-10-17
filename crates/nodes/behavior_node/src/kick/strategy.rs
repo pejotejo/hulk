@@ -526,9 +526,18 @@ mod tests {
         assert_eq!(angular_velocity.abs(), 1.0);
         assert!(receiver.kick_target.is_none());
 
-        receiver.ball.as_mut().unwrap().position = point![1.2, 0.0];
-        receiver.world_state.ball.as_mut().unwrap().ball_in_ground = point![-0.8, 0.0];
-        receiver.world_state.ball.as_mut().unwrap().ball_in_field = point![1.2, 0.0];
+        receiver.ball.as_mut().unwrap().position = point![0.4, 0.0];
+        receiver.ball.as_mut().unwrap().velocity = linear_algebra::vector![2.0, 0.0];
+        receiver.world_state.ball.as_mut().unwrap().ball_in_ground = point![-1.6, 0.0];
+        receiver.world_state.ball.as_mut().unwrap().ball_in_field = point![0.4, 0.0];
+        receiver
+            .world_state
+            .ball
+            .as_mut()
+            .unwrap()
+            .ball_in_ground_velocity = linear_algebra::vector![2.0, 0.0];
+        assert!(!is_pass_ball_arriving(&mut receiver));
+        receiver.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
         tree.tick_with_trace(&mut receiver);
         assert!(receiver.last_closest_to_ball);
         assert!(matches!(
@@ -564,6 +573,38 @@ mod tests {
         });
         receiver.world_state.now = receiver.world_state.now + Duration::from_secs(1);
         assert!(!is_pass_receiver(&mut receiver));
+    }
+
+    #[test]
+    fn pursuit_projection_is_optional_bounded_and_ignores_invalid_velocity() {
+        let mut blackboard = blackboard();
+        let position = point![1.0, 0.5];
+        let velocity = linear_algebra::vector![2.0, -1.0];
+        assert_eq!(
+            blackboard.projected_ball_position(position, velocity),
+            position
+        );
+        blackboard.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        assert_eq!(
+            blackboard.projected_ball_position(position, velocity),
+            point![2.0, 0.0]
+        );
+        assert_eq!(
+            blackboard.projected_ball_position(position, linear_algebra::Vector2::zeros()),
+            position
+        );
+        assert_eq!(
+            blackboard.projected_ball_position(position, linear_algebra::vector![f32::NAN, 1.0]),
+            position
+        );
+        let projected =
+            blackboard.projected_ball_position(position, linear_algebra::vector![20.0, -20.0]);
+        assert_eq!(projected, point![4.45, -2.95]);
+        let outside = point![4.6, 0.0];
+        assert_eq!(
+            blackboard.projected_ball_position(outside, -velocity),
+            outside
+        );
     }
 
     #[test]
@@ -931,6 +972,16 @@ mod tests {
         let transform =
             linear_algebra::Isometry2::from_parts(linear_algebra::vector![0.2, -0.1], 0.3);
         blackboard.world_state.robot.ground_to_field = Some(transform);
+        blackboard.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        blackboard.ball.as_mut().unwrap().velocity = linear_algebra::vector![0.0, 1.0];
+        let observed = transform.inverse() * point![2.0, 0.0];
+        let velocity = transform.inverse() * linear_algebra::vector![0.0, 1.0];
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: observed,
+            ball_in_field: point![2.0, 0.0],
+            ball_in_ground_velocity: velocity,
+            ..Default::default()
+        });
         blackboard.world_state.obstacles = vec![Obstacle::robot(
             transform.inverse() * point![3.5, 0.0],
             0.1,
@@ -940,24 +991,39 @@ mod tests {
         assert_eq!(tree.tick_with_trace(&mut blackboard).0, Status::Success);
         let target = transform * blackboard.kick_target.unwrap();
         let Some(BodyMotion::Walk {
-            target_orientation, ..
+            target_orientation,
+            ref path,
+            ..
         }) = blackboard.body_motion
         else {
             panic!("expected approach")
         };
-        let ball_in_ground = transform.inverse() * point![2.0, 0.0];
+        let ball_in_ground = transform.inverse() * point![2.0, 0.5];
         let facing_ball = linear_algebra::Orientation2::from_vector(ball_in_ground.coords());
         assert!((target_orientation.angle() - facing_ball.angle()).abs() < 1e-6);
+        let expected_approach = ball_in_ground - ball_in_ground.coords().normalize() * 0.3;
+        let types::path::PathSegment::LineSegment(last) = path.last_segment() else {
+            panic!("expected final straight approach")
+        };
+        assert!((last.1 - expected_approach).norm() < 1e-5);
         let expected = linear_algebra::Orientation2::from_vector(
             transform.inverse() * (target - point![2.0, 0.0]),
         );
         blackboard.parameters.kicking.kick_activation_distance = 3.0;
         tree.tick_with_trace(&mut blackboard);
-        let Some(BodyMotion::Kick { kick_direction, .. }) = blackboard.body_motion else {
+        let Some(BodyMotion::Kick {
+            kick_direction,
+            ball_position,
+            ball_velocity,
+            ..
+        }) = blackboard.body_motion
+        else {
             panic!("expected shot")
         };
         assert!((blackboard.kick_target.unwrap() - transform.inverse() * target).norm() < 1e-6);
         assert!((kick_direction.angle() - expected.angle()).abs() < 1e-6);
+        assert_eq!(ball_position, observed);
+        assert_eq!(ball_velocity, velocity);
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         execute_ball_action(&mut blackboard);
         assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));

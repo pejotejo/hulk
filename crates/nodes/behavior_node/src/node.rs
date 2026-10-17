@@ -12,7 +12,7 @@ use types::fall_detection::FallDetection;
 use coordinate_systems::{Field, Ground};
 use hsl_network_messages::{PassIntent, PlayerNumber};
 use kinematics::joints::head::HeadJoints;
-use linear_algebra::{Isometry2, Point2, Pose2, Vector2};
+use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point};
 use ros_z::{
     prelude::*,
     qos::{QosDurability, QosHistory},
@@ -93,6 +93,35 @@ pub struct Blackboard {
     pub body_motion: Option<BodyMotion>,
     pub head_motion: Option<HeadMotion>,
     pub voronoi_map: Option<VoronoiGrid>,
+}
+
+impl Blackboard {
+    pub(crate) fn projected_ball_position(
+        &self,
+        position: Point2<Field>,
+        velocity: Vector2<Field>,
+    ) -> Point2<Field> {
+        let lookahead = self.parameters.ball.pursuit_lookahead;
+        let field = &self.field_dimensions;
+        if lookahead.is_zero()
+            || velocity.norm_squared() == 0.0
+            || position.x().abs() >= field.length / 2.0
+            || position.y().abs() >= field.width / 2.0
+        {
+            return position;
+        }
+        // shortcut: constant velocity ignores ball deceleration; calibrate after simulator trials.
+        let projected = position + velocity * lookahead.as_secs_f32();
+        if !projected.x().is_finite() || !projected.y().is_finite() {
+            return position;
+        }
+        let x_limit = field.length / 2.0 - field.ball_radius;
+        let y_limit = field.width / 2.0 - field.ball_radius;
+        point![
+            projected.x().clamp(-x_limit, x_limit),
+            projected.y().clamp(-y_limit, y_limit)
+        ]
+    }
 }
 
 pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {

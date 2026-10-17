@@ -59,6 +59,9 @@ pub struct BehaviorControlParameters {
 pub struct BallBehaviorParameters {
     pub last_ball_timeout: Duration,
     pub team_ball_timeout: Duration,
+    /// Linear lookahead for pursuit and possession selection; zero disables it.
+    #[serde(default)]
+    pub pursuit_lookahead: Duration,
     pub interception: InterceptBallParameters,
     pub closest_to_ball: ClosestToBallParameters,
 }
