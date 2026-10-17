@@ -66,6 +66,8 @@
     strategy: {
       // Initial tuning; verify maximum range on the robot before deployment.
       maximum_shot_distance: 3.0,
+      // Provisional travel bound including uncertainty; calibrate for target_speed and surface.
+      maximum_dribble_distance: 3.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,
       shot_angle_hysteresis: 0.05,

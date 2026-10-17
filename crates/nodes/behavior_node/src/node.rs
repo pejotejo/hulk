@@ -148,6 +148,9 @@ fn validate_behavior_parameters(
     if !parameters.kicking.target_speed.is_finite() || parameters.kicking.target_speed < 0.0 {
         errors.push("kicking.target_speed must be finite and non-negative".to_owned());
     }
+    if let Err(error) = parameters.kicking.strategy.validate() {
+        errors.push(error);
+    }
 
     if errors.is_empty() {
         Ok(())

@@ -509,12 +509,38 @@ impl Default for KickingParameters {
 pub struct KickStrategyParameters {
     /// Conservative reach of supported kicks; zero disables shooting.
     pub maximum_shot_distance: f32,
+    /// Upper bound on soft-kick travel, including uncertainty, at the configured speed.
+    /// Zero disables dribbling; recalibrate when speed, policy, or surface changes.
+    #[serde(default)]
+    pub maximum_dribble_distance: f32,
     pub obstacle_clearance: f32,
     pub minimum_shot_angle: f32,
     pub shot_angle_hysteresis: f32,
     pub pressure_distance: f32,
     pub clear_goal_distance: f32,
     pub clear_distance_hysteresis: f32,
+}
+
+impl KickStrategyParameters {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("maximum_shot_distance", self.maximum_shot_distance),
+            ("maximum_dribble_distance", self.maximum_dribble_distance),
+            ("obstacle_clearance", self.obstacle_clearance),
+            ("minimum_shot_angle", self.minimum_shot_angle),
+            ("shot_angle_hysteresis", self.shot_angle_hysteresis),
+            ("pressure_distance", self.pressure_distance),
+            ("clear_goal_distance", self.clear_goal_distance),
+            ("clear_distance_hysteresis", self.clear_distance_hysteresis),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "kicking.strategy.{name} must be finite and non-negative (got {value})"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]

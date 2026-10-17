@@ -1,11 +1,10 @@
 use coordinate_systems::Field;
-use geometry::{Distance, circle::Circle, line_segment::LineSegment, visibility::visible_segments};
-use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
+use geometry::{line::Line2, line_segment::LineSegment};
+use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point, vector};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
     motion_type::MotionType,
-    obstacles::ObstacleKind,
 };
 
 use crate::{
@@ -13,7 +12,11 @@ use crate::{
     switch_motion_type::is_allowed_to_switch, walk::walk_to,
 };
 
-use super::{geometry::goal_openings, kick_ball_position_in_ground, strategy::BallAction};
+use super::{
+    geometry::{goal_openings, travel_openings},
+    kick_ball_position_in_ground,
+    strategy::BallAction,
+};
 
 /// Resolve and validate before writing any motion. No corridor means stand.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
@@ -89,6 +92,7 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
     let ball = transform * kick_ball_position_in_ground(blackboard, &transform)?;
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
+    parameters.validate().ok()?;
     if ball.x().abs() >= field.length / 2.0 || ball.y().abs() >= field.width / 2.0 {
         return None;
     }
@@ -122,63 +126,87 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
             .collect()
         }
         BallAction::Dribble | BallAction::Clear => {
-            let radius = field.ball_radius + parameters.obstacle_clearance;
-            let distance = parameters.maximum_shot_distance;
-            // A forward cross-section bounds every target to the configured reach.
-            let step = distance / std::f32::consts::SQRT_2;
-            let x = (ball.x() + step).min(field.length / 2.0 - radius);
-            let half_width = field.width / 2.0 - radius;
-            let lower = (ball.y() - step).max(-half_width);
-            let upper = (ball.y() + step).min(half_width);
-            if step <= 0.0 || x <= ball.x() || lower >= upper {
-                return None;
-            }
-            let obstacles: Vec<_> = blackboard
-                .world_state
-                .obstacles
-                .iter()
-                .filter(|obstacle| obstacle.kind != ObstacleKind::Ball)
-                .map(|obstacle| {
-                    Circle::new(
-                        transform * obstacle.position,
-                        obstacle.radius_at_foot_height + radius,
-                    )
-                })
-                .collect();
-            visible_segments(
+            let distance = if action == BallAction::Dribble {
+                parameters.maximum_dribble_distance
+            } else {
+                parameters.maximum_shot_distance
+            };
+            travel_openings(
                 ball,
-                LineSegment(point![x, lower], point![x, upper]),
-                &obstacles,
+                transform,
+                &blackboard.world_state.obstacles,
+                field,
+                distance,
+                parameters.obstacle_clearance,
             )
         }
     };
-    let target_x = openings.first()?.0.x();
-    let preferred = (action == BallAction::Dribble).then(|| {
+    if action == BallAction::Dribble {
         let goal = point![field.length / 2.0, 0.0];
-        ball + (goal - ball) * ((target_x - ball.x()) / (goal.x() - ball.x()))
-    });
-    let opening = openings.into_iter().max_by(|a, b| {
-        if let Some(preferred) = preferred {
-            let ordering = b
-                .squared_distance_to(preferred)
-                .total_cmp(&a.squared_distance_to(preferred));
-            if !ordering.is_eq() {
-                return ordering;
-            }
-        }
-        LineSegment(ball, a.0)
-            .angle(LineSegment(ball, a.1))
-            .total_cmp(&LineSegment(ball, b.0).angle(LineSegment(ball, b.1)))
-    })?;
-    // Advance toward goal when that ray is inside a safe opening.
-    if let Some(preferred) = preferred
-        && opening.projection_factor(preferred) > 0.0
-        && opening.projection_factor(preferred) < 1.0
-    {
-        return Some(preferred);
+        return openings
+            .into_iter()
+            .map(|opening| goalward_target(ball, goal, opening))
+            .min_by(|a, b| {
+                (a - ball)
+                    .angle(&(goal - ball))
+                    .total_cmp(&(b - ball).angle(&(goal - ball)))
+            });
     }
-    // Bisect the angle, not the goal-line length, to maximize angular edge clearance.
-    let direction = (opening.0 - ball).normalize() + (opening.1 - ball).normalize();
-    let target = ball + direction * ((opening.0.x() - ball.x()) / direction.x());
-    (target.x().is_finite() && target.y().is_finite()).then_some(target)
+
+    openings
+        .into_iter()
+        .filter_map(|mut opening| {
+            if action == BallAction::Clear {
+                if opening.0.x().max(opening.1.x()) <= ball.x() {
+                    return None;
+                }
+                if opening.0.x() < ball.x() || opening.1.x() < ball.x() {
+                    let forward_boundary = Line2 {
+                        point: ball,
+                        direction: vector![0.0, 1.0],
+                    };
+                    let intersection = Line2::from(opening).intersection(&forward_boundary);
+                    if opening.0.x() < ball.x() {
+                        opening.0 = intersection;
+                    } else {
+                        opening.1 = intersection;
+                    }
+                }
+            }
+            // Shots and clears maximize angular edge clearance; clears must advance.
+            let direction = (opening.0 - ball).normalize() + (opening.1 - ball).normalize();
+            let target = Line2::from(opening).intersection(&Line2 {
+                point: ball,
+                direction,
+            });
+            (target.x().is_finite()
+                && target.y().is_finite()
+                && (action != BallAction::Clear || target.x() > ball.x()))
+            .then_some((
+                target,
+                LineSegment(ball, opening.0).angle(LineSegment(ball, opening.1)),
+            ))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(target, _)| target)
+}
+
+fn goalward_target(
+    ball: Point2<Field>,
+    goal: Point2<Field>,
+    opening: LineSegment<Field>,
+) -> Point2<Field> {
+    // Stay inside tangent boundaries, including when the preferred ray is blocked.
+    let inset = (opening.1 - opening.0) * (0.001 / opening.length()).min(0.5);
+    let opening = LineSegment(opening.0 + inset, opening.1 - inset);
+    let preferred = Line2::from(opening).intersection(&Line2::from_points(ball, goal));
+    if (0.0..=1.0).contains(&opening.projection_factor(preferred))
+        && (preferred - ball).dot(&(goal - ball)) > 0.0
+    {
+        preferred
+    } else if (opening.0 - ball).angle(&(goal - ball)) <= (opening.1 - ball).angle(&(goal - ball)) {
+        opening.0
+    } else {
+        opening.1
+    }
 }
