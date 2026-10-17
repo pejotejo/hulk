@@ -1,7 +1,8 @@
 # Kick Target Selector Implementation Plan
 
-Status: geometry, shoot/dribble/clear strategy, and ordinary-striker execution are
-implemented under `crates/nodes/behavior_node/src/kick/`. Passing remains deferred.
+Status: geometry, shoot/pass/dribble/clear strategy, and ordinary-striker execution
+are implemented under `crates/nodes/behavior_node/src/kick/`. Passing uses fresh,
+static receiver positions; prediction and coordinated receiving remain deferred.
 
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
@@ -30,10 +31,32 @@ Clears use `maximum_shot_distance` as their planning horizon and retain forward
 progress. Shots check through the inflated posts, then return a target on the
 goal line. No valid corridor means stand.
 
+Ordinary striker priority is emergency clearance, an eligible shot, a forward
+pass, then dribbling. Pass intent identifies a receiver without fixing the final
+target. Teammate receive timestamps are preserved in `WorldState.player_states`
+in both production and simulation. Self, penalized, missing, future-dated, and
+stale receivers are ineligible. Initial passing settings allow reports received
+under 500 ms ago, require 0.5 m forward progress, and check up to 3 m soft-kick reach.
+Zero reach disables passing; the default for older configurations is disabled.
+
+Pass execution constructs a reception segment 0.5 m in front of the receiver,
+with a 0.2 m half-width. It clips that segment to reach, field clearance, and
+forward-progress constraints, subtracts obstacle shadows, and bisects an open
+angle. The receiver's obstacle remains in the check, so targets cannot require
+shooting through their body. A valid receiver is retained until another offers
+over 0.25 m more forward progress; hard invalidity bypasses this hysteresis.
+Execution rechecks availability and geometry and uses a soft kick with the
+configured target speed, with quick and strong modes disabled.
+
+Pass reach and reception offset need calibration at the configured speed. The
+motion API controls outgoing speed and direction, not an exact stopping point.
+This first version relies on the existing supporter/striker handoff and sends no
+pass-intent messages; it does not assume a teammate will follow a predicted path.
+
 Initial limits: kick reach and travel bounds need robot calibration. Robot
 affiliation remains unknown, so semantic teammate/opponent risk scoring is still
 deferred. The detailed stages below describe the broader target architecture,
-including capability calibration, richer evaluation, and passing.
+including capability calibration, richer evaluation, and coordinated passing.
 
 ## Objective
 

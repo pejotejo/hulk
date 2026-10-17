@@ -237,6 +237,7 @@ mod tests {
         obstacles::ObstacleKind,
         players::Players,
         primary_state::PrimaryState,
+        time_wrapper::TimeWrapper,
         world_state::PlayerState,
     };
 
@@ -402,15 +403,18 @@ mod tests {
                 player_states_by_receiver: BTreeMap::from([(
                     robot_id(PlayerNumber::Four),
                     Players {
-                        three: Some(PlayerState {
-                            pose: Pose2::new(point![1.0, 0.5], 0.0),
-                            ball_position: Some(BallPosition::from_network_ball(
-                                hsl_network_messages::BallPosition {
-                                    age: Duration::from_millis(500),
-                                    position: point![2.0, 0.5],
-                                },
-                                ros_z::time::Time::from_wallclock(received_at),
-                            )),
+                        three: Some(TimeWrapper {
+                            time: ros_z::time::Time::from_wallclock(received_at),
+                            inner: PlayerState {
+                                pose: Pose2::new(point![1.0, 0.5], 0.0),
+                                ball_position: Some(BallPosition::from_network_ball(
+                                    hsl_network_messages::BallPosition {
+                                        age: Duration::from_millis(500),
+                                        position: point![2.0, 0.5],
+                                    },
+                                    ros_z::time::Time::from_wallclock(received_at),
+                                )),
+                            },
                         }),
                         ..Default::default()
                     },
@@ -445,10 +449,16 @@ mod tests {
             .get(&robot_id(PlayerNumber::Four))
             .expect("receiver world state should exist");
         let teammate_state = receiver_world_state.player_states[PlayerNumber::Three]
+            .as_ref()
             .expect("teammate state should come from HSL message");
-        assert_eq!(teammate_state.pose.position(), point![1.0, 0.5]);
+        assert_eq!(
+            teammate_state.time,
+            ros_z::time::Time::from_wallclock(received_at)
+        );
+        assert_eq!(teammate_state.inner.pose.position(), point![1.0, 0.5]);
         assert_eq!(
             teammate_state
+                .inner
                 .ball_position
                 .expect("teammate ball should come from HSL message")
                 .position,
@@ -581,8 +591,9 @@ mod tests {
         let teammate_state = app.world().resource::<SimulatorWorldStates>().0
             [&robot_id(PlayerNumber::Four)]
             .player_states[PlayerNumber::Three]
+            .as_ref()
             .expect("teammate state should persist without new HSL messages");
-        assert_eq!(teammate_state.pose.position(), point![1.0, 0.5]);
+        assert_eq!(teammate_state.inner.pose.position(), point![1.0, 0.5]);
         assert!(
             app.world()
                 .resource::<SimulatorIncomingMessages>()

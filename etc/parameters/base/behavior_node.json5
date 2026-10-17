@@ -74,6 +74,15 @@
       pressure_distance: 0.8,
       clear_goal_distance: 1.5,
       clear_distance_hysteresis: 0.2,
+      passing: {
+        // Provisional soft-kick reach; calibrate at target_speed before deployment.
+        maximum_distance: 3.0,
+        minimum_progress: 0.5,
+        receiver_standoff: 0.5,
+        target_half_width: 0.2,
+        selection_hysteresis: 0.25,
+        maximum_receiver_age: { secs: 0, nanos: 500000000 },
+      },
     },
     soft: false,
     quick: false,
