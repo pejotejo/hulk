@@ -3,6 +3,7 @@ pub mod geometry;
 pub mod strategy;
 
 use coordinate_systems::{Field, Ground};
+use hsl_network_messages::PlayerNumber;
 use linear_algebra::{Isometry2, Orientation2, Point2, Vector2, point};
 use types::{
     behavior_tree::Status,
@@ -273,4 +274,37 @@ pub(crate) fn kick_ball_position_in_ground(
                 .as_ref()
                 .map(|ball| ground_to_field.inverse() * ball.position)
         })
+}
+
+pub(super) fn pass_receiver_position(
+    blackboard: &Blackboard,
+    ball: Point2<Field>,
+    receiver: PlayerNumber,
+) -> Option<Point2<Field>> {
+    let world = &blackboard.world_state;
+    let parameters = &blackboard.parameters.kicking.strategy.passing;
+    if receiver == world.robot.player_number
+        || world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|state| state.penalties[receiver].is_some())
+    {
+        return None;
+    }
+    let state = world.player_states[receiver].as_ref()?;
+    if state.time > world.now
+        || world.now.duration_since(state.time) >= parameters.maximum_receiver_age
+    {
+        return None;
+    }
+    let position = state.inner.pose.position();
+    let field = &blackboard.field_dimensions;
+    (position
+        .inner
+        .iter()
+        .all(|coordinate| coordinate.is_finite())
+        && position.x().abs() < field.length / 2.0
+        && position.y().abs() < field.width / 2.0
+        && position.x() - ball.x() >= parameters.minimum_progress)
+        .then_some(position)
 }

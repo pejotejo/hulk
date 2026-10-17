@@ -42,7 +42,9 @@ use types::{
 };
 use voronoi::VoronoiGrid;
 
-use crate::{kick::strategy::BallAction, motion_assembler::assemble_motion_command, tree::create_tree};
+use crate::{
+    kick::strategy::BallAction, motion_assembler::assemble_motion_command, tree::create_tree,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct LastBall {
@@ -437,12 +439,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
 
         let player_states = player_states_cache
             .get_latest()
-            .map(|player_states| {
-                player_states
-                    .as_ref()
-                    .clone()
-                    .map(|player_state| player_state.map(|state| state.inner))
-            })
+            .map(|player_states| player_states.as_ref().clone())
             .unwrap_or_default();
 
         let primary_state = primary_state_cache

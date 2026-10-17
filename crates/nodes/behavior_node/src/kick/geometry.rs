@@ -6,6 +6,7 @@ use linear_algebra::{Isometry2, Point2, point, vector};
 use types::{
     field_dimensions::{FieldDimensions, Half, Side},
     obstacles::{Obstacle, ObstacleKind},
+    parameters::PassingParameters,
 };
 
 /// Geometrically open opponent-goal segments for the ball center, in field coordinates.
@@ -92,6 +93,75 @@ pub fn travel_openings(
     .collect()
 }
 
+/// Visible reception regions on the ball-facing side of the receiver's current pose.
+/// Keep every obstacle, including the receiver, in the finite corridor check.
+pub fn pass_openings(
+    ball: Point2<Field>,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+    obstacles: &[Obstacle],
+    field: &FieldDimensions,
+    parameters: &PassingParameters,
+    clearance: f32,
+) -> Vec<LineSegment<Field>> {
+    let delta = receiver - ball;
+    let distance = delta.norm();
+    let travel = distance - parameters.receiver_standoff;
+    if parameters.validate().is_err()
+        || !distance.is_finite()
+        || travel <= f32::EPSILON
+        || travel >= parameters.maximum_distance
+    {
+        return Vec::new();
+    }
+    let direction = delta / distance;
+    let center = ball + direction * travel;
+    let lateral = vector![-direction.y(), direction.x()];
+    let half_width = parameters
+        .target_half_width
+        .min((parameters.maximum_distance.powi(2) - travel.powi(2)).sqrt());
+    let mut lower = -half_width;
+    let mut upper = half_width;
+    let margin = field.ball_radius + clearance;
+    // Clip the region to field bounds and required forward progress, preserving its line.
+    for (coordinate, axis, minimum, maximum) in [
+        (
+            center.x(),
+            lateral.x(),
+            (-field.length / 2.0 + margin).max(ball.x() + parameters.minimum_progress),
+            field.length / 2.0 - margin,
+        ),
+        (
+            center.y(),
+            lateral.y(),
+            -field.width / 2.0 + margin,
+            field.width / 2.0 - margin,
+        ),
+    ] {
+        if minimum > maximum {
+            return Vec::new();
+        }
+        if axis.abs() <= f32::EPSILON {
+            if !(minimum..=maximum).contains(&coordinate) {
+                return Vec::new();
+            }
+        } else {
+            let first = (minimum - coordinate) / axis;
+            let second = (maximum - coordinate) / axis;
+            lower = lower.max(first.min(second));
+            upper = upper.min(first.max(second));
+        }
+    }
+    if lower >= upper {
+        return Vec::new();
+    }
+    visible_segments(
+        ball,
+        LineSegment(center + lateral * lower, center + lateral * upper),
+        &obstacle_circles(ground_to_field, obstacles, field, clearance),
+    )
+}
+
 fn obstacle_circles(
     ground_to_field: Isometry2<Ground, Field>,
     obstacles: &[Obstacle],
@@ -132,6 +202,53 @@ mod tests {
     use linear_algebra::IntoTransform;
 
     use super::*;
+
+    #[test]
+    fn pass_regions_respect_field_bounds_range_and_progress() {
+        let field = FieldDimensions::SPL_2025;
+        let mut parameters = PassingParameters {
+            maximum_distance: 3.0,
+            minimum_progress: 0.5,
+            receiver_standoff: 0.5,
+            target_half_width: 0.2,
+            ..Default::default()
+        };
+        for (ball, receiver) in [
+            (point![0.0, 2.89], point![2.0, 2.99]),
+            (point![0.0, 0.0], point![3.499, 0.0]),
+        ] {
+            let openings = pass_openings(
+                ball,
+                receiver,
+                Default::default(),
+                &[],
+                &field,
+                &parameters,
+                0.05,
+            );
+            assert_eq!(openings.len(), 1);
+            assert!(openings[0].length() < 2.0 * parameters.target_half_width);
+            for target in [openings[0].0, openings[0].center(), openings[0].1] {
+                assert!(target.x() - ball.x() >= parameters.minimum_progress);
+                assert!((target - ball).norm() <= parameters.maximum_distance + 1e-6);
+                assert!(target.x().abs() <= field.length / 2.0 - 0.1 + 1e-6);
+                assert!(target.y().abs() <= field.width / 2.0 - 0.1 + 1e-6);
+            }
+        }
+        parameters.minimum_progress = 5.0;
+        assert!(
+            pass_openings(
+                point![0.0, 0.0],
+                point![2.0, 0.0],
+                Default::default(),
+                &[],
+                &field,
+                &parameters,
+                0.05
+            )
+            .is_empty()
+        );
+    }
 
     #[test]
     fn goal_openings_transform_obstacles_and_include_ball_clearance() {

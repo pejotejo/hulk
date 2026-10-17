@@ -432,6 +432,8 @@ pub struct KickStrategyParameters {
     pub pressure_distance: f32,
     pub clear_goal_distance: f32,
     pub clear_distance_hysteresis: f32,
+    #[serde(default)]
+    pub passing: PassingParameters,
 }
 
 impl KickStrategyParameters {
@@ -449,6 +451,38 @@ impl KickStrategyParameters {
             if !value.is_finite() || value < 0.0 {
                 return Err(format!(
                     "kicking.strategy.{name} must be finite and non-negative (got {value})"
+                ));
+            }
+        }
+        self.passing.validate()
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
+pub struct PassingParameters {
+    /// Conservative soft-kick reach in meters; zero disables passing.
+    pub maximum_distance: f32,
+    pub minimum_progress: f32,
+    /// Reception region sits this far in front of the receiver, toward the ball.
+    pub receiver_standoff: f32,
+    pub target_half_width: f32,
+    /// Required improvement in forward progress, in meters, to change receivers.
+    pub selection_hysteresis: f32,
+    pub maximum_receiver_age: Duration,
+}
+
+impl PassingParameters {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("maximum_distance", self.maximum_distance),
+            ("minimum_progress", self.minimum_progress),
+            ("receiver_standoff", self.receiver_standoff),
+            ("target_half_width", self.target_half_width),
+            ("selection_hysteresis", self.selection_hysteresis),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "kicking.strategy.passing.{name} must be finite and non-negative (got {value})"
                 ));
             }
         }

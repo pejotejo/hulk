@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    geometry::{goal_openings, travel_openings},
-    kick_ball_position_in_ground,
+    geometry::{goal_openings, pass_openings, travel_openings},
+    kick_ball_position_in_ground, pass_receiver_position,
     strategy::BallAction,
 };
 
@@ -33,11 +33,14 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let orientation = Orientation2::from_vector(direction);
     let kicking = &blackboard.parameters.kicking;
     let walk = blackboard.parameters.walking.walk_and_stand;
-    let dribbling = blackboard.ball_action == Some(BallAction::Dribble);
-    let mut strong = !dribbling
+    let controlled = matches!(
+        blackboard.ball_action,
+        Some(BallAction::Dribble | BallAction::Pass { .. })
+    );
+    let mut strong = !controlled
         && kicking.allow_strong_kicks
         && (target - ball).norm() >= kicking.strong_kick_min_target_distance;
-    if !dribbling
+    if !controlled
         && let MotionCommand::Kick {
             strong: previous, ..
         } = blackboard.last_motion_command
@@ -46,8 +49,8 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         strong = previous;
     }
     let target_speed = kicking.target_speed;
-    let soft = dribbling || kicking.soft;
-    let quick = !dribbling && kicking.quick;
+    let soft = controlled || kicking.soft;
+    let quick = !controlled && kicking.quick;
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
     let can_switch = is_allowed_to_switch(blackboard);
     if (is_close_to_ball(blackboard) || (was_kicking && !can_switch)) && (was_kicking || can_switch)
@@ -125,6 +128,15 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
             })
             .collect()
         }
+        BallAction::Pass { receiver } => pass_openings(
+            ball,
+            pass_receiver_position(blackboard, ball, receiver)?,
+            transform,
+            &blackboard.world_state.obstacles,
+            field,
+            &parameters.passing,
+            parameters.obstacle_clearance,
+        ),
         BallAction::Dribble | BallAction::Clear => {
             let distance = if action == BallAction::Dribble {
                 parameters.maximum_dribble_distance
@@ -173,7 +185,7 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
                     }
                 }
             }
-            // Shots and clears maximize angular edge clearance; clears must advance.
+            // Bisect the visible angle to maximize angular edge clearance.
             let direction = (opening.0 - ball).normalize() + (opening.1 - ball).normalize();
             let target = Line2::from(opening).intersection(&Line2 {
                 point: ball,
