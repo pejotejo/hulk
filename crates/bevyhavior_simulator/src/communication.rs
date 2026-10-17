@@ -8,6 +8,7 @@ use types::{
     messages::{IncomingMessage, OutgoingMessage},
     parameters::HslNetworkParameters,
     players::Players,
+    time_wrapper::TimeWrapper,
     world_state::PlayerState,
 };
 
@@ -30,7 +31,8 @@ pub struct SimulatorOutgoingMessages {
 pub struct SimulatorReceivedHslMessages {
     pub messages_by_receiver:
         BTreeMap<SimulatorRobotId, BTreeMap<SimulatorRobotId, SimulatorReceivedHslMessage>>,
-    pub player_states_by_receiver: BTreeMap<SimulatorRobotId, Players<Option<PlayerState>>>,
+    pub player_states_by_receiver:
+        BTreeMap<SimulatorRobotId, Players<Option<TimeWrapper<PlayerState>>>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -114,10 +116,14 @@ pub fn apply_incoming_hsl_messages(
                 )
             }),
         };
-        received_hsl_messages
+        let player_states = received_hsl_messages
             .player_states_by_receiver
             .entry(incoming_message.receiver)
-            .or_default()[state_message.player_number] = Some(player_state);
+            .or_default();
+        player_states[state_message.player_number] = Some(TimeWrapper {
+            time: ros_z::time::Time::from_wallclock(incoming_message.received_at),
+            inner: player_state,
+        });
 
         received_hsl_messages
             .messages_by_receiver
@@ -186,11 +192,11 @@ pub fn route_outgoing_communication(
 pub fn player_states_from_received_hsl_messages(
     receiver: SimulatorRobotId,
     received_hsl_messages: &SimulatorReceivedHslMessages,
-) -> Players<Option<PlayerState>> {
+) -> Players<Option<TimeWrapper<PlayerState>>> {
     received_hsl_messages
         .player_states_by_receiver
         .get(&receiver)
-        .copied()
+        .cloned()
         .unwrap_or_default()
 }
 

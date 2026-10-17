@@ -3,6 +3,7 @@ use filtering::hysteresis::{
     greater_than_with_relative_hysteresis, less_than_with_relative_hysteresis,
 };
 use geometry::{Distance, line_segment::LineSegment};
+use hsl_network_messages::PlayerNumber;
 use linear_algebra::point;
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
@@ -10,13 +11,16 @@ use types::{behavior_tree::Status, obstacles::ObstacleKind};
 
 use crate::node::Blackboard;
 
-use super::{geometry::goal_openings, kick_ball_position_in_ground};
+use super::{
+    geometry::{goal_openings, pass_openings},
+    kick_ball_position_in_ground, pass_receiver_position,
+};
 
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
-/// A future pass variant can identify a receiver and reception region.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
 pub enum BallAction {
     Shoot { opening: LineSegment<Field> },
+    Pass { receiver: PlayerNumber },
     Dribble,
     Clear,
 }
@@ -122,17 +126,59 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         }
     }
 
+    let mut best = None;
+    let mut retained = None;
+    for (receiver, _) in world.player_states.iter() {
+        let Some(position) = pass_receiver_position(blackboard, ball, receiver) else {
+            continue;
+        };
+        if pass_openings(
+            ball,
+            position,
+            ground_to_field,
+            &world.obstacles,
+            field,
+            &parameters.passing,
+            parameters.obstacle_clearance,
+        )
+        .is_empty()
+        {
+            continue;
+        }
+        let progress = position.x() - ball.x();
+        if best.is_none_or(|(_, best_progress)| progress > best_progress) {
+            best = Some((receiver, progress));
+        }
+        if previous == Some(BallAction::Pass { receiver }) {
+            retained = Some((receiver, progress));
+        }
+    }
+    if let Some((receiver, progress)) = best {
+        let receiver = retained
+            .filter(|(_, old_progress)| {
+                progress <= old_progress + parameters.passing.selection_hysteresis
+            })
+            .map_or(receiver, |(receiver, _)| receiver);
+        return Some(BallAction::Pass { receiver });
+    }
+
     Some(BallAction::Dribble)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use hsl_network_messages::Penalty;
+    use linear_algebra::Pose2;
     use types::{
         ball_position::BallPosition,
         field_dimensions::{FieldDimensions, Half, Side},
         motion_command::BodyMotion,
         obstacles::Obstacle,
-        parameters::KickStrategyParameters,
+        parameters::{KickStrategyParameters, PassingParameters},
+        time_wrapper::TimeWrapper,
+        world_state::PlayerState,
     };
 
     use crate::{kick::execution::execute_ball_action, node::LastBall, tree::striker_subtree};
@@ -161,8 +207,263 @@ mod tests {
             pressure_distance: 0.8,
             clear_goal_distance: 1.5,
             clear_distance_hysteresis: 0.2,
+            passing: Default::default(),
         };
         blackboard
+    }
+
+    fn passing_blackboard() -> Blackboard {
+        let mut blackboard = blackboard();
+        blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
+        blackboard.parameters.kicking.strategy.passing = PassingParameters {
+            maximum_distance: 3.0,
+            minimum_progress: 0.5,
+            receiver_standoff: 0.5,
+            target_half_width: 0.2,
+            selection_hysteresis: 0.25,
+            maximum_receiver_age: Duration::from_millis(500),
+        };
+        blackboard.parameters.kicking.kick_activation_distance = 3.0;
+        blackboard.parameters.kicking.target_speed = 1.0;
+        blackboard.world_state.player_states.two = Some(TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: PlayerState {
+                pose: Pose2::new(point![2.0, 0.0], 0.0),
+                ..Default::default()
+            },
+        });
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.0, 0.0], 0.2, 0.25)];
+        blackboard
+    }
+
+    #[test]
+    fn pass_refines_receiver_region_and_revalidates_before_kicking() {
+        let mut blackboard = passing_blackboard();
+        let transform =
+            linear_algebra::Isometry2::from_parts(linear_algebra::vector![0.3, -0.2], 0.6);
+        blackboard.world_state.robot.ground_to_field = Some(transform);
+        blackboard.world_state.obstacles = [
+            Obstacle::robot(transform.inverse() * point![2.0, 0.0], 0.2, 0.25),
+            Obstacle::robot(transform.inverse() * point![0.8, -0.04], 0.01, 0.01),
+        ]
+        .to_vec();
+        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard
+            .parameters
+            .kicking
+            .strong_kick_min_target_distance = 0.1;
+        blackboard.parameters.kicking.quick = true;
+        select_ball_action(&mut blackboard);
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::Pass {
+                receiver: PlayerNumber::Two
+            })
+        );
+        execute_ball_action(&mut blackboard);
+        let target = transform * blackboard.kick_target.unwrap();
+        assert!((target.x() - 1.5).abs() < 1e-5);
+        assert!(target.y() > 0.0 && target.y() < 0.2);
+        let Some(BodyMotion::Kick {
+            kick_direction,
+            soft: true,
+            strong: false,
+            quick: false,
+            target_speed: 1.0,
+            ..
+        }) = blackboard.body_motion
+        else {
+            panic!("expected controlled pass")
+        };
+        let direction = transform * kick_direction.as_unit_vector();
+        assert!((direction - target.coords().normalize()).norm() < 1e-5);
+        for obstacle in &blackboard.world_state.obstacles {
+            assert!(
+                LineSegment(point![0.0, 0.0], target).distance_to(transform * obstacle.position)
+                    > obstacle.radius_at_foot_height + 0.1
+            );
+        }
+
+        let receiver = point![2.0, 0.4];
+        blackboard
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(receiver, 0.0);
+        blackboard.world_state.obstacles[0].position = transform.inverse() * receiver;
+        execute_ball_action(&mut blackboard);
+        let refined = transform * blackboard.kick_target.unwrap();
+        assert!(refined.y() > target.y());
+        assert!((refined - receiver).norm() <= 0.54);
+
+        blackboard.world_state.obstacles.push(Obstacle::robot(
+            transform.inverse() * point![0.8, 0.0],
+            0.4,
+            0.4,
+        ));
+        execute_ball_action(&mut blackboard);
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.kick_target, None);
+        assert_eq!(blackboard.ball_action, None);
+    }
+
+    #[test]
+    fn pass_rejects_unavailable_receivers_and_unsafe_corridors() {
+        type InvalidateReceiver = fn(&mut Blackboard);
+        let cases: [(&str, InvalidateReceiver); 10] = [
+            ("disabled", |b| {
+                b.parameters.kicking.strategy.passing.maximum_distance = 0.0
+            }),
+            ("missing", |b| b.world_state.player_states.two = None),
+            ("self", |b| {
+                b.world_state.robot.player_number = PlayerNumber::Two
+            }),
+            ("stale", |b| {
+                b.world_state.now = b.world_state.now + Duration::from_millis(500)
+            }),
+            ("future", |b| {
+                b.world_state.player_states.two.as_mut().unwrap().time =
+                    b.world_state.now + Duration::from_nanos(1)
+            }),
+            ("penalized", |b| {
+                let mut game =
+                    types::filtered_game_controller_state::FilteredGameControllerState::default();
+                game.penalties.two = Some(Penalty::PickUp {
+                    remaining: Duration::from_secs(1),
+                });
+                b.world_state.filtered_game_controller_state = Some(game);
+            }),
+            ("behind", |b| {
+                b.world_state.player_states.two.as_mut().unwrap().inner.pose =
+                    Pose2::new(point![-1.0, 0.0], 0.0)
+            }),
+            ("range", |b| {
+                b.world_state.player_states.two.as_mut().unwrap().inner.pose =
+                    Pose2::new(point![4.1, 0.0], 0.0)
+            }),
+            ("blocked", |b| {
+                b.world_state
+                    .obstacles
+                    .push(Obstacle::robot(point![0.7, 0.0], 0.4, 0.4))
+            }),
+            ("opponent near receiver", |b| {
+                b.world_state
+                    .obstacles
+                    .push(Obstacle::robot(point![1.65, 0.0], 0.2, 0.2))
+            }),
+        ];
+        for (name, invalidate) in cases {
+            let mut blackboard = passing_blackboard();
+            invalidate(&mut blackboard);
+            select_ball_action(&mut blackboard);
+            assert_eq!(blackboard.ball_action, Some(BallAction::Dribble), "{name}");
+            blackboard.ball_action = Some(BallAction::Pass {
+                receiver: PlayerNumber::Two,
+            });
+            execute_ball_action(&mut blackboard);
+            assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand), "{name}");
+            assert_eq!(blackboard.kick_target, None, "{name}");
+        }
+    }
+
+    #[test]
+    fn pass_retains_receiver_until_improvement_or_corridor_closure() {
+        let mut blackboard = passing_blackboard();
+        blackboard
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![2.0, 1.0], 0.0);
+        let fourth = TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: PlayerState {
+                pose: Pose2::new(point![1.9, -1.0], 0.0),
+                ..Default::default()
+            },
+        };
+        blackboard.world_state.player_states.four = Some(fourth);
+        blackboard.world_state.obstacles.clear();
+        for (x, expected) in [
+            (1.9, PlayerNumber::Two),
+            (2.1, PlayerNumber::Two),
+            (2.4, PlayerNumber::Four),
+        ] {
+            blackboard
+                .world_state
+                .player_states
+                .four
+                .as_mut()
+                .unwrap()
+                .inner
+                .pose = Pose2::new(point![x, -1.0], 0.0);
+            select_ball_action(&mut blackboard);
+            assert_eq!(
+                blackboard.ball_action,
+                Some(BallAction::Pass { receiver: expected })
+            );
+        }
+        blackboard
+            .world_state
+            .obstacles
+            .push(Obstacle::robot(point![0.8, -0.4], 0.2, 0.2));
+        select_ball_action(&mut blackboard);
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::Pass {
+                receiver: PlayerNumber::Two
+            })
+        );
+    }
+
+    #[test]
+    fn shots_and_emergency_clears_take_priority_over_passes() {
+        let mut blackboard = passing_blackboard();
+        blackboard.ball.as_mut().unwrap().position = point![2.0, 0.0];
+        blackboard
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![3.3, 1.0], 0.0);
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.3, 1.0], 0.2, 0.2)];
+        select_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.ball_action,
+            Some(BallAction::Shoot { .. })
+        ));
+
+        blackboard
+            .world_state
+            .obstacles
+            .push(Obstacle::robot(point![3.6, 0.0], 0.4, 0.4));
+        select_ball_action(&mut blackboard);
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::Pass {
+                receiver: PlayerNumber::Two
+            })
+        );
+
+        blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
+        blackboard
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![-1.8, 0.0], 0.0);
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![-3.8, 0.7], 0.2, 0.2)];
+        select_ball_action(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
     }
 
     #[test]

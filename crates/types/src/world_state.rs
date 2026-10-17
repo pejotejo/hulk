@@ -15,6 +15,7 @@ use crate::{
     players::Players,
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
+    time_wrapper::TimeWrapper,
 };
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Message)]
@@ -24,7 +25,7 @@ pub struct WorldState {
     pub hypothetical_ball_positions: Vec<HypotheticalBallPosition<Ground>>,
     pub now: Time,
     pub obstacles: Vec<Obstacle>,
-    pub player_states: Players<Option<PlayerState>>,
+    pub player_states: Players<Option<TimeWrapper<PlayerState>>>,
     pub position_of_interest: Point2<Ground>,
     pub robot: RobotState,
     pub rule_ball: Option<BallState>,

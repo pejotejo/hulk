@@ -240,7 +240,7 @@ pub struct SimulatorIncomingMessage {
 
 pub struct SimulatorReceivedHslMessages {
     pub messages_by_receiver: BTreeMap<SimulatorRobotId, BTreeMap<SimulatorRobotId, SimulatorReceivedHslMessage>>,
-    pub player_states_by_receiver: BTreeMap<SimulatorRobotId, Players<Option<PlayerState>>>,
+    pub player_states_by_receiver: BTreeMap<SimulatorRobotId, Players<Option<TimeWrapper<PlayerState>>>>,
 }
 
 pub struct SimulatorReceivedHslMessage {
