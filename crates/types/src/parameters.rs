@@ -1,7 +1,6 @@
 use std::{ops::Range, path::PathBuf, time::Duration};
 
 use hsl_network_messages::PlayerNumber;
-use kinematics::joints::head::HeadJoints;
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +54,10 @@ pub struct BehaviorControlParameters {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
 pub struct BallBehaviorParameters {
     pub last_ball_timeout: Duration,
+    pub team_ball_timeout: Duration,
+    /// Linear lookahead for pursuit and possession selection; zero disables it.
+    #[serde(default)]
+    pub pursuit_lookahead: Duration,
     pub interception: InterceptBallParameters,
     pub closest_to_ball: ClosestToBallParameters,
 }

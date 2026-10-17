@@ -95,9 +95,10 @@ pub fn is_pass_ball_arriving(blackboard: &mut Blackboard) -> bool {
             .as_pose()
             .position();
         blackboard.ball.as_ref().is_some_and(|ball| {
-            (ball.position - pass.target).norm()
+            let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
+            (projected - pass.target).norm()
                 <= parameters.receiver_standoff + parameters.target_half_width
-                && (ball.position - own_position).norm() < (ball.position - sender).norm()
+                && (projected - own_position).norm() < (projected - sender).norm()
         })
     });
     if arriving {
@@ -114,10 +115,9 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     };
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
-    let ball = blackboard
-        .ball
-        .as_ref()
-        .map_or(sender, |ball| ball.position);
+    let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
+        blackboard.projected_ball_position(ball.position, ball.velocity)
+    });
     let direction = transform.inverse() * ball;
     let Some(direction) = direction.coords().try_normalize(f32::EPSILON) else {
         return stand(blackboard);
