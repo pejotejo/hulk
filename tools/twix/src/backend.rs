@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
 };
 
 use crate::replay::ReplaySession;
@@ -27,8 +27,6 @@ pub struct RobotBackend {
     replay: Mutex<ReplaySession>,
     connection: Mutex<Connection>,
     live: Arc<Live>,
-    replay_revision: AtomicU64,
-    replay_active: AtomicBool,
 }
 
 impl RobotBackend {
@@ -123,7 +121,6 @@ impl RobotBackend {
             backend: live.clone(),
             cursor: CursorHandle::new(Cursor::Live),
         };
-        observer.set_backend(connection.clone());
 
         Ok(Self {
             runtime_handle,
@@ -138,8 +135,6 @@ impl RobotBackend {
             replay: Mutex::new(Default::default()),
             connection: Mutex::new(connection),
             live,
-            replay_revision: AtomicU64::new(0),
-            replay_active: AtomicBool::new(false),
         })
     }
 
@@ -194,8 +189,12 @@ impl RobotBackend {
         });
     }
 
-    fn set_connection(&self, connection: Connection) {
-        self.observer.set_backend(connection.clone());
+    pub(crate) fn set_connection(&self, connection: Connection) {
+        if matches!(connection.cursor.position().cursor, Cursor::Live) {
+            self.observer.clear_backend();
+        } else {
+            self.observer.set_backend(connection.clone());
+        }
         let mut current = self.connection.lock().expect("connection mutex");
         *current = connection;
         self.connection_generation.fetch_add(1, Ordering::Relaxed);
@@ -242,19 +241,11 @@ impl RobotBackend {
         )
     }
 
-    pub fn set_replay_sources(&self, sources: Option<ros_z_debug::replay::ReplaySources>) {
-        self.replay_active
-            .store(sources.is_some(), Ordering::Relaxed);
-        self.observer.set_replay_sources(sources);
-        self.replay_revision.fetch_add(1, Ordering::Relaxed);
-    }
-
     pub fn is_replaying(&self) -> bool {
-        self.replay_active.load(Ordering::Relaxed)
-    }
-
-    pub fn replay_revision(&self) -> u64 {
-        self.replay_revision.load(Ordering::Relaxed)
+        !matches!(
+            self.query_connection().cursor.position().cursor,
+            Cursor::Live
+        )
     }
 
     pub fn replay(&self) -> std::sync::MutexGuard<'_, crate::replay::ReplaySession> {
