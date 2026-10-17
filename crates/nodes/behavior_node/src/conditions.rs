@@ -8,7 +8,7 @@ use types::{
 };
 use voronoi::Ownership;
 
-use crate::node::Blackboard;
+use crate::{kick::kick_ball_position_in_ground, node::Blackboard};
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
     if let (Some(ball), Some(ground_to_field)) = (
@@ -40,11 +40,10 @@ pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
 
 pub fn is_close_to_ball(blackboard: &mut Blackboard) -> bool {
     let mut is_close = false;
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.ball,
-        &blackboard.world_state.robot.ground_to_field,
-    ) {
-        let distance_to_ball = (ground_to_field.inverse() * ball.position).coords().norm();
+    if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field
+        && let Some(ball) = kick_ball_position_in_ground(blackboard, &ground_to_field)
+    {
+        let distance_to_ball = ball.coords().norm();
         let parameters = &blackboard.parameters.kicking;
         is_close = less_than_with_hysteresis(
             blackboard.last_close_enough_to_kick,

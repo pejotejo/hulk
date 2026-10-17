@@ -7,19 +7,32 @@ Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
 toward the ball; the kick policy handles final alignment. Shots bisect the selected
 opening after rechecking geometry from the selected kick-ball position.
-Clearances and dribbling choose an open forward corridor within the configured
-reach. Dribbling prefers the corridor toward goal and aims along that direction
-when it is clear. Strategy and execution use the same ball position.
+Clearances choose an open corridor that advances the ball. Dribbling chooses
+the safe direction closest to the goal. Strategy and execution use the same ball position.
+The walk-to-kick handoff uses that selected ball too. Strategy parameters must be
+finite and nonnegative; parameter updates reject invalid values, and invalid
+snapshots produce no plan. Clear openings are clipped to forward progress before
+choosing their angular midpoint.
 Dribbling uses the soft-kick policy, then follows the ball for the next kick.
 Execution uses the native `BodyMotion::Kick` API and the configured target speed.
 The existing motion-switch timing and strong-kick settings are reused. Invalid corridors stop
 motion; leaving ordinary striker play clears the intent. Remote control, set
 plays, penalties, goalkeeper clearance, and interception retain their own paths.
 
-Initial limits: kick reach and advancement distance need robot calibration.
-Forward corridor selection is a conservative heuristic; it can stand when no
-forward corridor exists. Robot affiliation remains unknown, so semantic
-teammate/opponent risk scoring is still deferred. The detailed stages below describe the broader target architecture,
+Dribble execution checks corridors covering `kicking.strategy.maximum_dribble_distance`
+(provisionally 3 m, including travel uncertainty). The bound must cover the soft
+kick at the configured target speed; recalibrate after speed, policy, or surface
+changes. Zero or invalid values disable dribbling. Candidate corridors use a
+square around the ball, so checks can extend up to sqrt(2) times the bound.
+Field boundaries remove corridors instead of shortening them. Execution chooses
+the safe direction closest to the goal, including sideways/backward recovery.
+Clears use `maximum_shot_distance` as their planning horizon and retain forward
+progress. Shots check through the inflated posts, then return a target on the
+goal line. No valid corridor means stand.
+
+Initial limits: kick reach and travel bounds need robot calibration. Robot
+affiliation remains unknown, so semantic teammate/opponent risk scoring is still
+deferred. The detailed stages below describe the broader target architecture,
 including capability calibration, richer evaluation, and passing.
 
 ## Objective
