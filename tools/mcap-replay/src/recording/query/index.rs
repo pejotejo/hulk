@@ -490,7 +490,12 @@ impl<'a> IndexScan<'a> {
         let Some(slots) = self.by_channel.get(&header.channel_id) else {
             return Ok(());
         };
-        let source = Time::from_nanos(header.publish_time.try_into()?);
+        let channel = &self.recording.channels[&header.channel_id];
+        let source = Time::from_nanos(if channel.replay_receipt_time {
+            header.log_time.try_into()?
+        } else {
+            header.publish_time.try_into()?
+        });
         for &index in slots {
             let (projection, schema) = &self.plans[index];
             batch.push(match projection.project_cdr(source, &data, schema) {
