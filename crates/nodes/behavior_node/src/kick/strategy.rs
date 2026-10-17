@@ -19,10 +19,16 @@ use super::{
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
 pub enum BallAction {
-    Shoot { opening: LineSegment<Field> },
-    Pass { receiver: PlayerNumber },
+    Shoot {
+        opening: LineSegment<Field>,
+    },
+    Pass {
+        receiver: PlayerNumber,
+    },
     Dribble,
     Clear,
+    /// Last resort; does not require an open corridor or a reachable goal.
+    ShootAtGoalCenter,
 }
 
 /// Select ordinary striker intent. Clear `ball_action` when leaving that context.
@@ -335,9 +341,13 @@ mod tests {
             0.4,
         ));
         execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        assert_eq!(blackboard.kick_target, None);
-        assert_eq!(blackboard.ball_action, None);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { .. })
+        ));
+        assert!((transform * blackboard.kick_target.unwrap() - point![4.5, 0.0]).norm() < 1e-5);
+        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
+        assert!(blackboard.last_announced_pass.is_none());
     }
 
     #[test]
@@ -404,8 +414,16 @@ mod tests {
                 receiver: PlayerNumber::Two,
             });
             execute_ball_action(&mut blackboard);
-            assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand), "{name}");
-            assert_eq!(blackboard.kick_target, None, "{name}");
+            assert!(
+                matches!(blackboard.body_motion, Some(BodyMotion::Kick { .. })),
+                "{name}"
+            );
+            assert_eq!(blackboard.kick_target, Some(point![4.5, 0.0]), "{name}");
+            assert_eq!(
+                blackboard.ball_action,
+                Some(BallAction::ShootAtGoalCenter),
+                "{name}"
+            );
         }
     }
 
@@ -545,6 +563,19 @@ mod tests {
             Some(BodyMotion::Kick { .. })
         ));
 
+        // A fast ball beside the receiver must not project beyond the reception area.
+        receiver.ball.as_mut().unwrap().position = point![1.6, 0.0];
+        receiver.ball.as_mut().unwrap().velocity = linear_algebra::vector![4.0, 0.0];
+        let ball = receiver.world_state.ball.as_mut().unwrap();
+        ball.ball_in_ground = point![-0.4, 0.0];
+        ball.ball_in_field = point![1.6, 0.0];
+        ball.ball_in_ground_velocity = linear_algebra::vector![4.0, 0.0];
+        tree.tick_with_trace(&mut receiver);
+        assert!(
+            matches!(receiver.body_motion, Some(BodyMotion::Kick { ball_position, .. })
+            if (ball_position - point![-0.4, 0.0]).norm() < 1e-6)
+        );
+
         receiver
             .world_state
             .player_states
@@ -604,6 +635,14 @@ mod tests {
         assert_eq!(
             blackboard.projected_ball_position(outside, -velocity),
             outside
+        );
+        blackboard.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::from_parts(
+            linear_algebra::vector![0.5, 0.5],
+            1.0,
+        ));
+        assert_eq!(
+            blackboard.projected_ball_position(position, velocity),
+            position
         );
     }
 
@@ -839,11 +878,12 @@ mod tests {
     }
 
     #[test]
-    fn dribble_stands_when_full_travel_does_not_fit_or_bound_is_invalid() {
+    fn dribble_falls_back_to_goal_center_but_invalid_parameters_still_stop() {
         let mut blackboard = blackboard();
         blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
         blackboard.field_dimensions.length = 1.0;
         blackboard.field_dimensions.width = 1.0;
+        blackboard.parameters.kicking.kick_activation_distance = 1.0;
         for distance in [3.0, 0.0, -1.0, f32::NAN, f32::INFINITY] {
             blackboard.ball_action = Some(BallAction::Dribble);
             blackboard
@@ -852,9 +892,18 @@ mod tests {
                 .strategy
                 .maximum_dribble_distance = distance;
             execute_ball_action(&mut blackboard);
-            assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-            assert_eq!(blackboard.kick_target, None);
-            assert_eq!(blackboard.ball_action, None);
+            if distance.is_finite() && distance >= 0.0 {
+                assert!(matches!(
+                    blackboard.body_motion,
+                    Some(BodyMotion::Kick { .. })
+                ));
+                assert_eq!(blackboard.kick_target, Some(point![0.5, 0.0]));
+                assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
+            } else {
+                assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+                assert_eq!(blackboard.kick_target, None);
+                assert_eq!(blackboard.ball_action, None);
+            }
         }
     }
 
@@ -869,6 +918,28 @@ mod tests {
             execute_ball_action(&mut blackboard);
             assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
             assert_eq!(blackboard.kick_target, None);
+        }
+    }
+
+    #[test]
+    fn goal_center_fallback_stops_without_valid_ball_or_localization() {
+        for case in 0..5 {
+            let mut blackboard = blackboard();
+            blackboard.ball_action = Some(BallAction::ShootAtGoalCenter);
+            match case {
+                0 => blackboard.ball = None,
+                1 => blackboard.world_state.robot.ground_to_field = None,
+                2 => blackboard.ball.as_mut().unwrap().position = point![4.5, 0.0],
+                3 => blackboard.ball.as_mut().unwrap().position = point![0.0, 3.0],
+                _ => blackboard.ball.as_mut().unwrap().position = point![f32::NAN, 0.0],
+            }
+            execute_ball_action(&mut blackboard);
+            assert_eq!(
+                blackboard.body_motion,
+                Some(BodyMotion::Stand),
+                "case {case}"
+            );
+            assert_eq!(blackboard.kick_target, None, "case {case}");
         }
     }
 
@@ -1026,8 +1097,12 @@ mod tests {
         assert_eq!(ball_velocity, velocity);
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        assert_eq!(blackboard.kick_target, None);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { .. })
+        ));
+        assert!((transform * blackboard.kick_target.unwrap() - point![4.5, 0.0]).norm() < 1e-5);
+        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
 
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
@@ -1075,6 +1150,11 @@ mod tests {
         assert!(blackboard.kick_target.unwrap().x() > 0.51);
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![0.6, 0.0], 0.3, 0.3)];
         tree.tick_with_trace(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { .. })
+        ));
+        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
+        assert_eq!(blackboard.kick_target, Some(point![4.5, 0.0]));
     }
 }

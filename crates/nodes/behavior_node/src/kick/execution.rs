@@ -1,6 +1,6 @@
-use coordinate_systems::Field;
+use coordinate_systems::{Field, Ground};
 use geometry::{line::Line2, line_segment::LineSegment};
-use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point, vector};
+use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point, vector};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
@@ -19,7 +19,7 @@ use super::{
     strategy::BallAction,
 };
 
-/// Resolve and validate before writing any motion. No corridor means stand.
+/// Resolve a corridor or fall back to goal center after validating ball and localization.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let Some(target) = resolve_target(blackboard) else {
         blackboard.ball_action = None;
@@ -104,17 +104,42 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     )
 }
 
-fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
+fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
     let action = blackboard.ball_action?;
     let transform = blackboard.world_state.robot.ground_to_field?;
     let ball = transform * kick_ball_position_in_ground(blackboard, &transform)?;
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
     parameters.validate().ok()?;
-    if ball.x().abs() >= field.length / 2.0 || ball.y().abs() >= field.width / 2.0 {
+    if !ball.x().is_finite()
+        || !ball.y().is_finite()
+        || !field.length.is_finite()
+        || !field.width.is_finite()
+        || field.length <= 0.0
+        || field.width <= 0.0
+        || ball.x().abs() >= field.length / 2.0
+        || ball.y().abs() >= field.width / 2.0
+    {
         return None;
     }
+    if let Some(target) = resolve_action_target(blackboard, action, transform, ball) {
+        return Some(target);
+    }
+    blackboard.ball_action = Some(BallAction::ShootAtGoalCenter);
+    blackboard.last_announced_pass = None;
+    Some(point![field.length / 2.0, 0.0])
+}
+
+fn resolve_action_target(
+    blackboard: &Blackboard,
+    action: BallAction,
+    transform: Isometry2<Ground, Field>,
+    ball: Point2<Field>,
+) -> Option<Point2<Field>> {
+    let field = &blackboard.field_dimensions;
+    let parameters = &blackboard.parameters.kicking.strategy;
     let openings = match action {
+        BallAction::ShootAtGoalCenter => return Some(point![field.length / 2.0, 0.0]),
         BallAction::Shoot { opening: selected } => {
             let dx = field.length / 2.0 - ball.x();
             if parameters.maximum_shot_distance <= dx {
