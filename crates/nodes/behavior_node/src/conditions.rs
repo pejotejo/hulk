@@ -98,11 +98,12 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
 
     let raw_is_closest =
         if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
-            let ownership_at_ball = voronoi_map.ownership_at(ball.position);
+            let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
+            let ownership_at_ball = voronoi_map.ownership_at(projected);
             match ownership_at_ball {
                 Some(Ownership::Robot(player_number)) if player_number == own_player_number => true,
                 Some(Ownership::Blocked) => voronoi_map
-                    .nearest_non_blocked_ownership(ball.position)
+                    .nearest_non_blocked_ownership(projected)
                     .is_some_and(|ownership| ownership == Ownership::Robot(own_player_number)),
                 _ => false,
             }

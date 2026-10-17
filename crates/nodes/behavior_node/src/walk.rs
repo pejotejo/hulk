@@ -143,7 +143,8 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
         &blackboard.world_state.robot.ground_to_field,
     ) {
         let field_to_ground = ground_to_field.inverse();
-        let ball_in_ground = field_to_ground * ball.position;
+        let ball_in_ground =
+            field_to_ground * blackboard.projected_ball_position(ball.position, ball.velocity);
         let goal_position = field_to_ground * point!(blackboard.field_dimensions.length / 2.0, 0.0);
         let orientation = Orientation2::from_vector(goal_position - ball_in_ground);
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;

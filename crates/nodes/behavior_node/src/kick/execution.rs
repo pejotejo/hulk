@@ -84,13 +84,19 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     }
 
     // Only get within kick range. The kick policy handles final alignment.
-    let Some(toward_ball) = ball.coords().try_normalize(f32::EPSILON) else {
+    let velocity = blackboard
+        .ball
+        .as_ref()
+        .map_or(Vector2::zeros(), |ball| ball.velocity);
+    let projected = ground_to_field.inverse()
+        * blackboard.projected_ball_position(ground_to_field * ball, velocity);
+    let Some(toward_ball) = projected.coords().try_normalize(f32::EPSILON) else {
         return stand(blackboard);
     };
-    let approach = ball - toward_ball * blackboard.parameters.kicking.approach_ball_standoff;
+    let approach = projected - toward_ball * blackboard.parameters.kicking.approach_ball_standoff;
     walk_to(
         blackboard,
-        Pose2::from_parts(approach, Orientation2::from_vector(ball.coords())),
+        Pose2::from_parts(approach, Orientation2::from_vector(projected.coords())),
         blackboard.parameters.walking.speed.kicking,
         OrientationMode::AlignWithPath,
         walk.normal_distance_to_be_aligned,
