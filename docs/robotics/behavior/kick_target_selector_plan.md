@@ -2,7 +2,8 @@
 
 Status: geometry, shoot/pass/dribble/clear strategy, and ordinary-striker execution
 are implemented under `crates/nodes/behavior_node/src/kick/`. Passing uses fresh,
-static receiver positions; prediction and coordinated receiving remain deferred.
+static receiver positions with budgeted pass announcements and receiver preparation;
+receiver prediction remains deferred.
 
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
@@ -50,8 +51,20 @@ configured target speed, with quick and strong modes disabled.
 
 Pass reach and reception offset need calibration at the configured speed. The
 motion API controls outgoing speed and direction, not an exact stopping point.
-This first version relies on the existing supporter/striker handoff and sends no
-pass-intent messages; it does not assume a teammate will follow a predicted path.
+Pass intent (receiver and refined target) rides the existing HSL state message,
+respecting its cooldown and message budget. No extra packets or acknowledgements
+are sent. Before kicking, the sender waits for a normal update carrying the intent
+and a 150 ms preparation interval; material target changes restart that interval.
+Below the message-budget cutoff, strategy chooses another action instead of passing.
+
+An addressed field player holds position and faces the ball, then claims the ball
+near the reception target once it is closer to them than to the sender, without the
+normal striker-entry delay. Goalkeepers are excluded as receivers, and special-play
+behavior retains priority. Cancellation is carried by the next ordinary
+update; missing updates expire intent after 1 s from receipt. This changes the HSL
+packet format: all teammates must run the same build. Delivery and receiver readiness
+are not confirmed; packet loss can still prevent preparation. No predicted receiver
+movement is assumed.
 
 Initial limits: kick reach and travel bounds need robot calibration. Robot
 affiliation remains unknown, so semantic teammate/opponent risk scoring is still

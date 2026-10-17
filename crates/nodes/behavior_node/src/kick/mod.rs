@@ -1,5 +1,6 @@
 pub mod execution;
 pub mod geometry;
+pub mod passing;
 pub mod strategy;
 
 use coordinate_systems::{Field, Ground};
@@ -284,6 +285,7 @@ pub(super) fn pass_receiver_position(
     let world = &blackboard.world_state;
     let parameters = &blackboard.parameters.kicking.strategy.passing;
     if receiver == world.robot.player_number
+        || receiver == blackboard.parameters.goalkeeper.player_number
         || world
             .filtered_game_controller_state
             .as_ref()

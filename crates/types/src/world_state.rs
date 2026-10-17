@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hsl_network_messages::PlayerNumber;
+use hsl_network_messages::{PassIntent, PlayerNumber};
 use ros_z::{Message, time::Time};
 use serde::{Deserialize, Serialize};
 
@@ -115,4 +115,5 @@ pub struct RobotState {
 pub struct PlayerState {
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
+    pub pass: Option<PassIntent>,
 }
