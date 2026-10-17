@@ -15,6 +15,7 @@ use crate::{
 use super::{
     geometry::{goal_openings, pass_openings, travel_openings},
     kick_ball_position_in_ground, pass_receiver_position,
+    passing::pass_is_announced,
     strategy::BallAction,
 };
 
@@ -23,10 +24,15 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let Some(target) = resolve_target(blackboard) else {
         blackboard.ball_action = None;
         blackboard.kick_target = None;
+        blackboard.last_announced_pass = None;
         return stand(blackboard);
     };
     let ground_to_field = blackboard.world_state.robot.ground_to_field.unwrap();
     let ball = kick_ball_position_in_ground(blackboard, &ground_to_field).unwrap();
+    let pass_ready = match blackboard.ball_action {
+        Some(BallAction::Pass { receiver }) => pass_is_announced(blackboard, receiver, target),
+        _ => true,
+    };
     let target = ground_to_field.inverse() * target;
     blackboard.kick_target = Some(target);
     let direction = (target - ball).normalize();
@@ -55,6 +61,9 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let can_switch = is_allowed_to_switch(blackboard);
     if (is_close_to_ball(blackboard) || (was_kicking && !can_switch)) && (was_kicking || can_switch)
     {
+        if !pass_ready {
+            return stand(blackboard);
+        }
         blackboard.body_motion = Some(BodyMotion::Kick {
             ball_position: ball,
             ball_velocity: blackboard
@@ -128,6 +137,7 @@ fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
             })
             .collect()
         }
+        BallAction::Pass { .. } if !blackboard.has_team_message_budget() => return None,
         BallAction::Pass { receiver } => pass_openings(
             ball,
             pass_receiver_position(blackboard, ball, receiver)?,

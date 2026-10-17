@@ -97,17 +97,24 @@ impl SimulatorRobotBehavior {
         if self.blackboard.kick_target.is_none() {
             self.blackboard.ball_action = None;
         }
+        if !matches!(
+            self.blackboard.ball_action,
+            Some(behavior_node::kick::strategy::BallAction::Pass { .. })
+        ) {
+            self.blackboard.last_announced_pass = None;
+        }
         let motion_command = assemble_motion_command(&self.blackboard, status)?;
         self.blackboard.last_motion_command = Some(motion_command.clone());
 
         let motion_type = match motion_command.clone() {
             MotionCommand::Kick { .. } => Some(types::motion_type::MotionType::Kick),
-            MotionCommand::Walk { .. } => Some(types::motion_type::MotionType::Walk),
+            MotionCommand::Walk { .. } | MotionCommand::WalkWithVelocity { .. } => {
+                Some(types::motion_type::MotionType::Walk)
+            }
             MotionCommand::Stand { .. } => Some(types::motion_type::MotionType::Stand),
             MotionCommand::StandUp => Some(types::motion_type::MotionType::StandUp),
             MotionCommand::Prepare => Some(types::motion_type::MotionType::Prepare),
             MotionCommand::Damping => Some(types::motion_type::MotionType::Damping),
-            _ => None,
         };
 
         if motion_type != self.blackboard.last_motion_type {
@@ -202,6 +209,7 @@ fn create_behavior_blackboard(
         last_motion_type: None,
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
+        last_announced_pass: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,

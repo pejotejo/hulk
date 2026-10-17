@@ -91,6 +91,7 @@ fn apply_message(
         time,
         inner: PlayerState {
             pose: state_message.pose,
+            pass: state_message.pass,
             ball_position: state_message
                 .ball_position
                 .map(|ball| BallPosition::from_network_ball(ball, time)),
@@ -160,6 +161,10 @@ mod tests {
                     pose,
                     head_yaw: 0.0,
                     ball_position: None,
+                    pass: Some(hsl_network_messages::PassIntent {
+                        receiver: PlayerNumber::Three,
+                        target: Default::default(),
+                    }),
                 })),
             },
         );
@@ -167,6 +172,7 @@ mod tests {
         let player = states[PlayerNumber::Two].as_ref().unwrap();
         assert_eq!(player.time, time);
         assert_eq!(player.inner.pose, pose);
+        assert_eq!(player.inner.pass.unwrap().receiver, PlayerNumber::Three);
     }
 
     #[test]

@@ -260,6 +260,7 @@ mod tests {
                 position: point![x + 1.0, y],
             }),
             head_yaw: 0.0,
+            pass: None,
         })
     }
 
@@ -405,6 +406,7 @@ mod tests {
                             time: ros_z::time::Time::from_wallclock(received_at),
                             inner: PlayerState {
                                 pose: Pose2::new(point![1.0, 0.5], 0.0),
+                                pass: None,
                                 ball_position: Some(BallPosition::from_network_ball(
                                     hsl_network_messages::BallPosition {
                                         age: Duration::from_millis(500),
