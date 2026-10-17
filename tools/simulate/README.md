@@ -42,6 +42,10 @@ Set `ORT_DYLIB_PATH` to your ONNX Runtime library if it is not available in the 
 ```
 
 The launcher enables Twix's optional `simulator` Cargo feature and configures its MuJoCo library path.
+For native B-Human opponents on Linux x86-64, use
+`./twix --simulator --bhuman /hulks/1`. This also builds the pinned worker in the
+local cache, enables the B-Human selector and configures its paths and ONNX Runtime.
+See the [B-Human setup](bhuman/README.md) for build dependencies and overrides.
 Robot N uses global Zenoh prefix `hulk_simulator/hulks/N` and ROS namespace `/hulks/N`, including raw Booster topics, discovery, parameters and RPCs.
 The top-left namespace selector switches Twix and simulator body controls between `/hulks/1` through `/hulks/5` and `/opponents/1` through `/opponents/5`.
 The namespace selector autocompletes live graph namespaces, including robots discovered across the simulator scopes.
@@ -252,8 +256,8 @@ No robotics source changes are required.
 
 [B-Human 2026 opponents](bhuman/README.md) run native behavior and motion in one
 process per robot, with perfect world models and native whistle, button and LED
-handlers. Build Twix with `--features bhuman` to select them during simulator setup.
-The native worker is built separately; vision and audio capture are excluded.
+handlers. Launch with `./twix --simulator --bhuman /hulks/1`, then enable
+**B-Human 2026** below the opponent count. Vision and audio capture are excluded.
 
 ## Verify
 
