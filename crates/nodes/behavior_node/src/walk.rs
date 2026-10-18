@@ -10,6 +10,7 @@ use types::{
     motion_type::MotionType,
     parameters::VoronoiParameters,
     path::{Path, direct_path},
+    rule_obstacles::RuleObstacle,
 };
 use voronoi::{Ownership, VoronoiGrid};
 
@@ -30,6 +31,15 @@ pub fn plan(
     target_in_ground: Point2<Ground>,
     ground_to_field: Isometry2<Ground, Field>,
 ) -> Path {
+    try_plan(blackboard, target_in_ground, ground_to_field)
+        .unwrap_or_else(|| direct_path(Point::origin(), target_in_ground))
+}
+
+fn try_plan(
+    blackboard: &mut Blackboard,
+    target_in_ground: Point2<Ground>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> Option<Path> {
     let parameters: &types::parameters::PathPlanningParameters =
         &blackboard.parameters.walking.path_planning;
     let field_dimensions = blackboard.field_dimensions;
@@ -79,7 +89,7 @@ pub fn plan(
         .plan(Point::origin(), clamped_target_in_robot)
         .unwrap();
     blackboard.path_obstacles_output = planner.obstacles;
-    path.unwrap_or_else(|| direct_path(Point::origin(), target_in_ground))
+    path
 }
 
 pub fn walk_to(
@@ -89,6 +99,26 @@ pub fn walk_to(
     orientation_mode: OrientationMode,
     distance_to_be_aligned: f32,
     hysteresis: nalgebra::Vector2<f32>,
+) -> Status {
+    walk_to_with_path(
+        blackboard,
+        target_pose,
+        maximal_walk_speed,
+        orientation_mode,
+        distance_to_be_aligned,
+        hysteresis,
+        None,
+    )
+}
+
+fn walk_to_with_path(
+    blackboard: &mut Blackboard,
+    target_pose: Pose2<Ground>,
+    maximal_walk_speed: f32,
+    orientation_mode: OrientationMode,
+    distance_to_be_aligned: f32,
+    hysteresis: nalgebra::Vector2<f32>,
+    planned_path: Option<Path>,
 ) -> Status {
     if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field {
         let parameters = &blackboard.parameters.walking.walk_and_stand;
@@ -120,7 +150,8 @@ pub fn walk_to(
             blackboard.body_motion = Some(BodyMotion::Stand);
             Status::Success
         } else {
-            let path = plan(blackboard, target_pose.position(), ground_to_field);
+            let path = planned_path
+                .unwrap_or_else(|| plan(blackboard, target_pose.position(), ground_to_field));
             blackboard.body_motion = Some(BodyMotion::Walk {
                 path,
                 orientation_mode,
@@ -253,13 +284,68 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
     if let (Some(ground_to_field), Some(map)) = (
         blackboard.world_state.robot.ground_to_field,
         &blackboard.voronoi_map,
-    ) && let Some(target_position) = target_player_position(
+    ) && let Some((target_position, is_reentry)) = target_player_position(
         map,
         blackboard.world_state.robot.player_number,
         blackboard.ball.as_ref().map(|ball| ball.position),
         &blackboard.field_dimensions,
         &blackboard.parameters.voronoi,
-    ) {
+    )
+    .map(|position| (position, false))
+    .or_else(|| {
+        // A robot beyond the grid has no support region. Re-enter the field
+        // so it can participate in the next ownership election.
+        let position = ground_to_field.as_pose().position();
+        let half_length = blackboard.field_dimensions.length / 2.0;
+        let half_width = blackboard.field_dimensions.width / 2.0;
+        if position.x().abs() <= half_length && position.y().abs() <= half_width {
+            return None;
+        }
+        let margin = blackboard.parameters.walking.path_planning.robot_radius;
+        let target_x = half_length - margin;
+        let target_y = half_width - margin;
+        map.cells()
+            .filter(|(point, ownership)| {
+                *ownership != Ownership::Blocked
+                    && point.x().abs() <= target_x
+                    && point.y().abs() <= target_y
+                    && blackboard
+                        .world_state
+                        .rule_obstacles
+                        .iter()
+                        .all(|obstacle| match obstacle {
+                            RuleObstacle::Circle(circle) => {
+                                (point - circle.center).norm_squared()
+                                    > (circle.radius + margin).powi(2)
+                            }
+                            RuleObstacle::Rectangle(rectangle) => {
+                                !(rectangle.min.x() - margin..=rectangle.max.x() + margin)
+                                    .contains(&point.x())
+                                    || !(rectangle.min.y() - margin..=rectangle.max.y() + margin)
+                                        .contains(&point.y())
+                            }
+                        })
+            })
+            .min_by(|(a, _), (b, _)| {
+                (a - position)
+                    .norm_squared()
+                    .total_cmp(&(b - position).norm_squared())
+            })
+            .map(|(point, _)| (point, true))
+    }) {
+        let planned_path = if is_reentry {
+            let Some(path) = try_plan(
+                blackboard,
+                ground_to_field.inverse() * target_position,
+                ground_to_field,
+            ) else {
+                // Recovery must not take a direct shortcut through a rule area.
+                return Status::Failure;
+            };
+            Some(path)
+        } else {
+            None
+        };
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;
         let orientation_mode = if let Some(ball) = &blackboard.ball {
@@ -280,7 +366,7 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
                         ground_to_field.inverse() * (ball.position - target_position),
                     )
                 });
-        walk_to(
+        walk_to_with_path(
             blackboard,
             Pose2::from_parts(
                 ground_to_field.inverse() * target_position,
@@ -290,6 +376,7 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
             orientation_mode,
             walk_and_stand.normal_distance_to_be_aligned,
             walk_and_stand.hysteresis,
+            planned_path,
         )
     } else {
         Status::Failure

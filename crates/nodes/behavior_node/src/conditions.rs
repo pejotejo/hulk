@@ -1,14 +1,18 @@
+use coordinate_systems::Field;
 use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
-use linear_algebra::{point, vector};
+use linear_algebra::{Point2, point, vector};
 use types::{
     controller_input::Button, fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
     filtered_game_state::FilteredGameState, primary_state::PrimaryState,
 };
-use voronoi::Ownership;
+use voronoi::{Ownership, VoronoiGrid};
 
-use crate::node::Blackboard;
+use crate::{
+    goalkeeper::is_goalkeeper_striker_candidate, node::Blackboard,
+    voronoi::create_voronoi_grid_without_goalkeeper,
+};
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
     if let (Some(ball), Some(ground_to_field)) = (
@@ -97,19 +101,27 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     let own_player_number = blackboard.world_state.robot.player_number;
 
-    let raw_is_closest =
-        if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
-            let ownership_at_ball = voronoi_map.ownership_at(ball.position);
-            match ownership_at_ball {
-                Some(Ownership::Robot(player_number)) if player_number == own_player_number => true,
-                Some(Ownership::Blocked) => voronoi_map
-                    .nearest_non_blocked_ownership(ball.position)
-                    .is_some_and(|ownership| ownership == Ownership::Robot(own_player_number)),
-                _ => false,
-            }
+    let raw_is_closest = if let (Some(ball_position), Some(voronoi_map)) = (
+        blackboard.ball.as_ref().map(|ball| ball.position),
+        &blackboard.voronoi_map,
+    ) {
+        let ownership = resolved_ownership(voronoi_map, ball_position);
+        let ownership = if ownership
+            == Some(Ownership::Robot(
+                blackboard.parameters.goalkeeper.player_number,
+            ))
+            && !is_goalkeeper_striker_candidate(blackboard)
+        {
+            // Elect a field player without moving the goalkeeper's support region.
+            create_voronoi_grid_without_goalkeeper(blackboard)
+                .and_then(|map| resolved_ownership(&map, ball_position))
         } else {
-            false
+            ownership
         };
+        ownership == Some(Ownership::Robot(own_player_number))
+    } else {
+        false
+    };
 
     let now = blackboard.world_state.now;
     if raw_is_closest {
@@ -137,6 +149,13 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
 
     blackboard.last_closest_to_ball = is_closest;
     is_closest
+}
+
+fn resolved_ownership(map: &VoronoiGrid, position: Point2<Field>) -> Option<Ownership> {
+    match map.ownership_at(position) {
+        Some(Ownership::Blocked) => map.nearest_non_blocked_ownership(position),
+        ownership => ownership,
+    }
 }
 
 fn posture(blackboard: &Blackboard) -> Option<Posture> {

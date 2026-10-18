@@ -32,14 +32,34 @@ fn calculate_voronoi_grid_from_sites(
     ground_to_field: Isometry2<Ground, Field>,
     sites: &[(Pose2<Field>, PlayerNumber)],
 ) -> Status {
+    for (pose, _) in sites {
+        blackboard.voronoi_inputs.push(*pose);
+    }
+
+    blackboard.voronoi_map = Some(create_voronoi_grid(blackboard, ground_to_field, sites));
+    Status::Success
+}
+
+pub(crate) fn create_voronoi_grid_without_goalkeeper(
+    blackboard: &Blackboard,
+) -> Option<VoronoiGrid> {
+    let ground_to_field = blackboard.world_state.robot.ground_to_field?;
+    let mut sites = collect_sites(blackboard, ground_to_field.as_pose());
+    let goalkeeper = blackboard.parameters.goalkeeper.player_number;
+    sites.retain(|(_, player_number)| *player_number != goalkeeper);
+
+    Some(create_voronoi_grid(blackboard, ground_to_field, &sites))
+}
+
+fn create_voronoi_grid(
+    blackboard: &Blackboard,
+    ground_to_field: Isometry2<Ground, Field>,
+    sites: &[(Pose2<Field>, PlayerNumber)],
+) -> VoronoiGrid {
     let field_dimensions = &blackboard.field_dimensions;
     let voronoi_parameters = &blackboard.parameters.voronoi;
     let obstacles = &blackboard.world_state.obstacles;
     let rule_obstacles = &blackboard.world_state.rule_obstacles;
-
-    for (pose, _) in sites {
-        blackboard.voronoi_inputs.push(*pose);
-    }
 
     let length_half = field_dimensions.length / 2.0;
     let width_half = field_dimensions.width / 2.0;
@@ -51,8 +71,7 @@ fn calculate_voronoi_grid_from_sites(
     let mut map = VoronoiGrid::new(grid_min, grid_max, voronoi_parameters.grid_resolution);
     map.initialize_obstacles(obstacles, rule_obstacles, ground_to_field);
     map.multi_source_dijkstra(sites);
-    blackboard.voronoi_map = Some(map);
-    Status::Success
+    map
 }
 
 fn collect_sites(

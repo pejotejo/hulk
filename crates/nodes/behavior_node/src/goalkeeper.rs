@@ -54,7 +54,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                 )
             ),
             sequence!(
-                condition!(is_ball_close_enough_to_goal_to_become_striker),
+                condition!(is_goalkeeper_striker_candidate),
                 selection!(sequence!(
                     action!(calculate_voronoi_grid),
                     condition!(is_closest_to_ball),
@@ -97,8 +97,7 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
             subtree!(goalkeeper_active_defense_position_subtree)
         ),
         sequence!(
-            condition!(hulks_is_kicking_team),
-            condition!(is_sub_state, SubState::GoalKick),
+            condition!(is_goalkeeper_striker_candidate),
             action!(calculate_voronoi_grid),
             condition!(is_closest_to_ball),
             subtree!(striker_subtree),
@@ -222,7 +221,12 @@ fn is_ball_in_own_penalty_area(blackboard: &mut Blackboard) -> bool {
     })
 }
 
-fn is_ball_close_enough_to_goal_to_become_striker(blackboard: &mut Blackboard) -> bool {
+/// Only assign the goalkeeper balls that its behavior is willing to pursue.
+pub fn is_goalkeeper_striker_candidate(blackboard: &mut Blackboard) -> bool {
+    if is_in_sub_state(blackboard) {
+        return hulks_is_kicking_team(blackboard) && is_sub_state(blackboard, SubState::GoalKick);
+    }
+
     blackboard.ball.as_ref().is_some_and(|ball| {
         let own_goal_x = -blackboard.field_dimensions.length / 2.0;
         let maximum_ball_x = own_goal_x + blackboard.parameters.goalkeeper.striker_distance;
@@ -298,13 +302,11 @@ pub fn walk_to_goalkeeper_default_position(blackboard: &mut Blackboard) -> Statu
                 target: ball.ball_in_ground,
                 tolerance: walk_and_stand.orientation_tolerance,
             }
-        } else if blackboard
-            .ball
-            .as_ref()
-            .is_some_and(|ball| ball.position.x() <= 0.0)
+        } else if let Some(ball) = &blackboard.ball
+            && ball.position.x() <= 0.0
         {
             OrientationMode::LookAt {
-                target: ground_to_field.inverse() * point!(own_goal_line_x, 0.0),
+                target: ground_to_field.inverse() * ball.position,
                 tolerance: walk_and_stand.orientation_tolerance,
             }
         } else {

@@ -53,6 +53,7 @@ The playing subtree assigns one of four high-level tasks:
 - **Striker:** the last active robot always becomes striker.
   Otherwise, the team's Voronoi map determines which field player is closest to the ball and should become striker.
   Timing hysteresis prevents rapid switching between striker and supporter.
+  If the map assigns the ball to the goalkeeper outside its pursuit region or during a restart it does not take, field players elect a striker with the same obstacle-aware costs while keeping the support map unchanged.
 - **Supporter:** every remaining field player runs the supporter subtree.
 
 Simple mode bypasses this team-based task assignment: the robot searches when the ball is unknown and otherwise acts as striker.
@@ -84,6 +85,7 @@ At a high level it handles game substates, clears a nearby ball, intercepts a da
 
 The supporter tracks the ball and walks to a support position derived from the team's Voronoi map.
 This distributes field players while accounting for known teammates and obstacles.
+A supporter that has left the field and lost its Voronoi region returns to an unblocked field position when a planned route is available, respecting rule-area clearance.
 If no support position can be produced, it stands.
 
 ## Team Communication
