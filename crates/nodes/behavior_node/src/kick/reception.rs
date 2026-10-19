@@ -38,6 +38,13 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return false;
     };
+    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+        && position.x() > 0.0
+        && position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance
+        && position.coords().dot(&velocity) < 0.0
+    {
+        return true;
+    }
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
         .max(2.0 * blackboard.field_dimensions.ball_radius);
@@ -279,6 +286,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    use hsl_network_messages::PlayerNumber;
     use linear_algebra::{point, vector};
     use types::{
         field_dimensions::{FieldDimensions, Side},
@@ -287,6 +295,66 @@ mod tests {
     };
 
     use crate::node::LastBall;
+
+    #[test]
+    fn field_player_receives_near_approaching_ball_with_kick_policy() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![0.8, -0.7],
+                velocity: vector![0.0, 1.0],
+                age: Default::default(),
+                field_side: Side::Right,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.player_number = PlayerNumber::Two;
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.goalkeeper.player_number = PlayerNumber::One;
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        blackboard.parameters.kicking.target_speed = 3.4;
+        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard
+            .parameters
+            .kicking
+            .strong_kick_min_target_distance = 0.1;
+        assert!(is_ready_to_receive_kick(&blackboard));
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                ball_position,
+                ball_velocity,
+                quick: false,
+                strong: false,
+                soft: false,
+                target_speed: 3.4,
+                ..
+            }) if ball_position == point![0.8, -0.7] && ball_velocity == vector![0.0, 1.0]
+        ));
+        for (position, velocity) in [
+            (point![1.4, 0.0], vector![-0.5, 0.0]),
+            (point![0.8, 0.7], vector![0.4, 0.3]),
+            (point![-0.5, -0.7], vector![0.3, 0.5]),
+        ] {
+            let ball = blackboard.ball.as_mut().unwrap();
+            ball.position = position;
+            ball.velocity = velocity;
+            assert!(!is_ready_to_receive_kick(&blackboard));
+        }
+        blackboard.world_state.robot.player_number = PlayerNumber::One;
+        blackboard.ball.as_mut().unwrap().position = point![0.8, -0.7];
+        blackboard.ball.as_mut().unwrap().velocity = vector![0.0, 1.0];
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        blackboard.ball.as_mut().unwrap().position = point![0.3, -0.2];
+        assert!(is_ready_to_receive_kick(&blackboard));
+    }
 
     #[test]
     fn walks_to_incoming_ball_and_hands_off_close_ball() {
@@ -362,6 +430,7 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.parameters.kicking.quick = true;
         blackboard.parameters.walking.path_planning.robot_radius = 0.4;
         blackboard.world_state.ball = Some(BallState {
             ball_in_ground: point![1.0, 0.15],
@@ -659,6 +728,7 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.parameters.kicking.quick = true;
         blackboard.parameters.kicking.approach_ball_standoff = 0.3;
         blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
         blackboard.parameters.walking.path_planning.robot_radius = 0.4;
@@ -706,7 +776,7 @@ mod tests {
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { quick: true, .. })
+            Some(BodyMotion::Kick { quick: false, .. })
         ));
         for position in [point![0.8, -0.6], point![0.3, 0.6], point![0.3, -0.9]] {
             blackboard.ball.as_mut().unwrap().position = position;
