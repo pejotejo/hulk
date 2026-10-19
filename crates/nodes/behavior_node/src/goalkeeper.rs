@@ -232,7 +232,7 @@ fn set_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status {
 }
 
 fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
-    if !is_ball_in_own_penalty_area(blackboard) {
+    if !is_ball_in_own_penalty_area(blackboard) || !is_goalkeeper_under_pressure(blackboard) {
         return false;
     }
 
@@ -251,6 +251,10 @@ fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
     } else {
         false
     }
+}
+
+fn is_goalkeeper_under_pressure(blackboard: &Blackboard) -> bool {
+    crate::conditions::opponent_near_ball(blackboard, 6.0)
 }
 
 fn is_ball_in_own_penalty_area(blackboard: &mut Blackboard) -> bool {
@@ -423,7 +427,7 @@ fn is_interception_velocity_towards_own_half(
 
 #[cfg(test)]
 mod tests {
-    use linear_algebra::{Isometry2, point, vector};
+    use linear_algebra::{Isometry2, Pose2, point, vector};
     use types::{
         field_dimensions::{FieldDimensions, Side},
         motion_command::BodyMotion,
@@ -432,6 +436,43 @@ mod tests {
 
     use super::{goalkeeper_subtree, shot_y_at_defense_line};
     use crate::node::{Blackboard, LastBall};
+
+    #[test]
+    fn only_clears_when_opponent_is_nearby() {
+        use types::{obstacles::Obstacle, time_wrapper::TimeWrapper, world_state::PlayerState};
+        let mut board = Blackboard::default();
+        board.world_state.robot.ground_to_field = Some(Isometry2::identity());
+        board.field_dimensions = FieldDimensions::SPL_2025;
+        board
+            .parameters
+            .goalkeeper
+            .kick_away_ball_maximum_robot_distance = 1.5;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.ball = Some(LastBall {
+            position: point![-3.5, 0.0],
+            velocity: Default::default(),
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        assert!(!super::is_goalkeeper_kick_away_needed(&mut board));
+        board
+            .world_state
+            .obstacles
+            .push(Obstacle::robot(point![1.0, 0.0], 0.2, 0.3));
+        assert!(super::is_goalkeeper_under_pressure(&board));
+        board.world_state.player_states.two = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: Pose2::new(point![1.0, 0.0], 0.0),
+                ..Default::default()
+            },
+        });
+        assert!(!super::is_goalkeeper_under_pressure(&board));
+        board.world_state.player_states.two = None;
+        board.world_state.obstacles[0].position = point![3.0, 0.0];
+        assert!(!super::is_goalkeeper_under_pressure(&board));
+    }
 
     #[test]
     fn keeper_starts_walking_for_shot_from_halfway() {

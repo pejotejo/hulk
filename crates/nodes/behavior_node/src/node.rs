@@ -9,7 +9,7 @@ use color_eyre::Result;
 use types::fall_detection::FallDetection;
 
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::{PassIntent, PlayerNumber};
+use hsl_network_messages::{PassIntent, PlayerNumber, Team};
 use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point};
 use ros_z::{
     prelude::*,
@@ -25,6 +25,7 @@ use types::{
     controller_input::{Button, ControllerInput},
     field_dimensions::{FieldDimensions, Side},
     filtered_game_controller_state::FilteredGameControllerState,
+    filtered_game_state::FilteredGameState,
     messages::OutgoingMessage,
     motion_command::{BodyMotion, HeadMotion, MotionCommand},
     motion_type::MotionType,
@@ -80,6 +81,8 @@ pub struct Blackboard {
     pub last_sent_hsl_message_time: Option<Time>,
     pub last_announced_pass: Option<TimeWrapper<PassIntent>>,
     pub kickoff_receiver_wait_started: Option<Time>,
+    pub kickoff_prepared: bool,
+    pub kickoff_started: Option<Time>,
     pub last_closest_to_ball: bool,
     pub closest_to_ball_entered_area_since: Option<Time>,
     pub closest_to_ball_left_area_since: Option<Time>,
@@ -94,6 +97,42 @@ pub struct Blackboard {
 const PROJECTION_CUTOFF_DISTANCE: f32 = 0.75;
 
 impl Blackboard {
+    pub fn update_kickoff(&mut self) {
+        let game = self.world_state.filtered_game_controller_state.as_ref();
+        if game
+            .is_none_or(|game| game.kicking_team != Some(Team::Hulks) || game.sub_state.is_some())
+        {
+            self.kickoff_prepared = false;
+            self.kickoff_started = None;
+            return;
+        }
+        match game.unwrap().game_state {
+            FilteredGameState::Ready | FilteredGameState::Set => {
+                self.kickoff_prepared = true;
+                self.kickoff_started = None;
+            }
+            FilteredGameState::Playing { .. } => {
+                if self.kickoff_prepared {
+                    self.kickoff_started = Some(self.world_state.now);
+                    self.kickoff_prepared = false;
+                }
+                if self.kickoff_started.is_some_and(|start| {
+                    self.world_state.now.duration_since(start) >= Duration::from_secs(10)
+                }) || self
+                    .ball
+                    .as_ref()
+                    .is_some_and(|ball| ball.position.coords().norm() >= 0.5)
+                {
+                    self.kickoff_started = None;
+                }
+            }
+            _ => {
+                self.kickoff_prepared = false;
+                self.kickoff_started = None;
+            }
+        }
+    }
+
     pub(crate) fn projected_ball_position(
         &self,
         position: Point2<Field>,
@@ -361,6 +400,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_sent_hsl_message_time: None,
         last_announced_pass: None,
         kickoff_receiver_wait_started: None,
+        kickoff_prepared: false,
+        kickoff_started: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,
@@ -482,6 +523,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.ball = None;
         }
 
+        blackboard.update_kickoff();
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
         if blackboard.kick_target.is_none() {
             blackboard.ball_action = None;

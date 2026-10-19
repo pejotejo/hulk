@@ -52,14 +52,12 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
     blackboard.ball_action = None;
     blackboard.kick_target = None;
     if let Some(ground_to_field) = &blackboard.world_state.robot.ground_to_field
-        && let Some(ball_in_ground) = kick_ball_position_in_ground(blackboard, ground_to_field)
+        && let Some((ball_in_ground, ball_velocity)) =
+            kick_ball_in_ground(blackboard, ground_to_field)
     {
         blackboard.body_motion = Some(BodyMotion::Kick {
             ball_position: ball_in_ground,
-            ball_velocity: blackboard
-                .world_state
-                .ball
-                .map_or(Vector2::zeros(), |ball| ball.ball_in_ground_velocity),
+            ball_velocity,
             target_speed: blackboard.parameters.kicking.target_speed,
             soft: false,
             quick: blackboard.parameters.kicking.quick,
@@ -282,15 +280,43 @@ pub(crate) fn kick_ball_position_in_ground(
     blackboard: &Blackboard,
     ground_to_field: &Isometry2<Ground, Field>,
 ) -> Option<Point2<Ground>> {
-    blackboard
-        .visual_kick_ball_position
-        .as_ref()
-        .map(|ball| ball.position)
+    kick_ball_in_ground(blackboard, ground_to_field).map(|(position, _)| position)
+}
+
+pub(crate) fn kick_ball_in_ground(
+    blackboard: &Blackboard,
+    ground_to_field: &Isometry2<Ground, Field>,
+) -> Option<(Point2<Ground>, Vector2<Ground>)> {
+    let velocity = blackboard
+        .world_state
+        .ball
+        .map(|ball| ball.ball_in_ground_velocity)
         .or_else(|| {
             blackboard
                 .ball
                 .as_ref()
-                .map(|ball| ground_to_field.inverse() * ball.position)
+                .map(|ball| ground_to_field.inverse() * ball.velocity)
+        })
+        .filter(|velocity| velocity.inner.iter().all(|value| value.is_finite()))
+        .unwrap_or_else(Vector2::zeros);
+    // Percepts provide the close position; their selector does not estimate velocity.
+    blackboard
+        .visual_kick_ball_position
+        .as_ref()
+        .filter(|ball| {
+            ball.age_at(blackboard.world_state.now)
+                .is_some_and(|age| age <= std::time::Duration::from_millis(100))
+                && ball.position.inner.iter().all(|value| value.is_finite())
+                && ball.position.coords().norm()
+                    <= blackboard.parameters.kicking.kick_activation_distance
+                        + blackboard.parameters.kicking.kick_activation_hysteresis
+        })
+        .map(|ball| (ball.position, velocity))
+        .or_else(|| {
+            blackboard
+                .ball
+                .as_ref()
+                .map(|ball| (ground_to_field.inverse() * ball.position, velocity))
         })
 }
 
@@ -324,8 +350,17 @@ pub(super) fn pass_receiver_position(
         .all(|coordinate| coordinate.is_finite())
         && position.x().abs() < field.length / 2.0
         && position.y().abs() < field.width / 2.0
-        && position.x() - ball.x() >= parameters.minimum_progress)
-        .then_some(position)
+        && (position.x() - ball.x() >= parameters.minimum_progress
+            || world
+                .filtered_game_controller_state
+                .as_ref()
+                .is_some_and(|game| {
+                    game.kicking_team == Some(hsl_network_messages::Team::Hulks)
+                        && game.sub_state.is_some_and(|state| {
+                            state != hsl_network_messages::SubState::PenaltyKick
+                        })
+                })))
+    .then_some(position)
 }
 
 #[cfg(test)]
@@ -340,6 +375,49 @@ mod tests {
     use crate::node::LastBall;
 
     use super::*;
+
+    #[test]
+    fn fresh_close_percept_overrides_position_without_erasing_rolling_velocity() {
+        use std::time::Duration;
+        use types::{ball_position::BallPosition, world_state::BallState};
+        let mut board = Blackboard::default();
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.ball = Some(LastBall {
+            position: point![1.0, 0.2],
+            velocity: vector![-1.5, 0.0],
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        board.world_state.ball = Some(BallState {
+            ball_in_ground_velocity: vector![-1.5, 0.0],
+            ..Default::default()
+        });
+        board.visual_kick_ball_position = Some(BallPosition {
+            position: point![0.4, 0.1],
+            velocity: Vector2::zeros(),
+            last_seen: Default::default(),
+        });
+        assert_eq!(
+            kick_ball_in_ground(&board, &Isometry2::identity()),
+            Some((point![0.4, 0.1], vector![-1.5, 0.0]))
+        );
+        board.world_state.now = board.world_state.now + Duration::from_millis(101);
+        assert_eq!(
+            kick_ball_in_ground(&board, &Isometry2::identity())
+                .unwrap()
+                .0,
+            point![1.0, 0.2]
+        );
+        board.visual_kick_ball_position.as_mut().unwrap().last_seen = board.world_state.now;
+        board.visual_kick_ball_position.as_mut().unwrap().position = point![3.0, 0.0];
+        assert_eq!(
+            kick_ball_in_ground(&board, &Isometry2::identity())
+                .unwrap()
+                .0,
+            point![1.0, 0.2]
+        );
+    }
 
     #[test]
     fn setplay_shots_choose_clear_goal_opening_and_stop_when_blocked() {

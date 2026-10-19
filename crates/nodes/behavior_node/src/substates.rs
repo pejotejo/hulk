@@ -9,13 +9,12 @@ use crate::{
     action,
     behavior_tree::Node,
     condition,
-    conditions::{hulks_is_kicking_team, is_close_to_ball_aligned},
-    kick::kick_subtree,
-    negation,
+    conditions::hulks_is_kicking_team,
+    kick::{execution::execute_ball_action, strategy::select_ball_action},
     node::Blackboard,
     penalty_shootout::penalty_kick_striker_subtree,
     selection, sequence, subtree,
-    walk::{walk_to_ball_subtree, walk_to_block_position},
+    walk::walk_to_block_position,
 };
 
 pub fn sub_state_subtree() -> Node<Blackboard> {
@@ -27,11 +26,8 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
                     condition!(is_sub_state, SubState::PenaltyKick),
                     subtree!(penalty_kick_striker_subtree),
                 ),
-                sequence!(
-                    negation!(condition!(is_close_to_ball_aligned)),
-                    subtree!(walk_to_ball_subtree)
-                ),
-                subtree!(kick_subtree)
+                sequence!(action!(select_ball_action), action!(execute_ball_action)),
+                action!(crate::actions::stand),
             )
         ),
         sequence!(
@@ -160,5 +156,160 @@ pub fn set_block_position_penalty_kick(blackboard: &mut Blackboard) -> Status {
         Status::Success
     } else {
         Status::Failure
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use hsl_network_messages::{PlayerNumber, Team};
+    use linear_algebra::{Point2, Pose2};
+    use types::{
+        field_dimensions::FieldDimensions,
+        filtered_game_state::FilteredGameState,
+        motion_command::BodyMotion,
+        motion_type::MotionType,
+        parameters::{KickStrategyParameters, PassingParameters},
+        primary_state::PrimaryState,
+        time_wrapper::TimeWrapper,
+        world_state::PlayerState,
+    };
+
+    use crate::{kick::strategy::BallAction, node::LastBall};
+
+    use super::*;
+
+    fn restart(state: SubState, ball: Point2<coordinate_systems::Field>) -> Blackboard {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: ball,
+                velocity: Default::default(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: Default::default(),
+            }),
+            ..Default::default()
+        };
+        board.world_state.now = board.world_state.now + Duration::from_secs(1);
+        board.world_state.robot.primary_state = PrimaryState::Playing;
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(ball - linear_algebra::vector![0.6, 0.0], 0.7).as_transform());
+        board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
+            kicking_team: Some(Team::Hulks),
+            sub_state: Some(state),
+            game_state: FilteredGameState::Playing {
+                ball_is_free: false,
+                kick_off: false,
+            },
+            remaining_number_of_messages: 1000,
+            remaining_time_in_half: Duration::from_secs(100),
+            ..Default::default()
+        });
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        board.parameters.kicking.strategy = KickStrategyParameters {
+            maximum_shot_distance: 12.0,
+            maximum_dribble_distance: 3.0,
+            obstacle_clearance: 0.05,
+            minimum_shot_angle: 0.02,
+            passing: PassingParameters {
+                maximum_distance: 8.0,
+                minimum_progress: 0.25,
+                receiver_standoff: 0.5,
+                target_half_width: 0.2,
+                maximum_receiver_age: Duration::from_secs(3),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        board
+    }
+
+    #[test]
+    fn own_restarts_pass_from_touchlines_and_without_goal_alignment() {
+        for (state, ball, receiver) in [
+            (SubState::GoalKick, point![-3.5, 0.0], point![-1.5, 0.0]),
+            (SubState::ThrowIn, point![0.0, 3.0], point![-1.0, 1.0]),
+            (SubState::CornerKick, point![4.5, 3.0], point![2.5, 1.0]),
+            (
+                SubState::IndirectFreeKick,
+                point![0.0, 0.0],
+                point![2.0, 1.0],
+            ),
+        ] {
+            let mut board = restart(state, ball);
+            board.world_state.player_states.two = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PlayerState {
+                    pose: Pose2::new(receiver, 0.0),
+                    ..Default::default()
+                },
+            });
+            let tree = sub_state_subtree();
+            assert_eq!(
+                tree.tick_with_trace(&mut board).0,
+                Status::Success,
+                "{state:?}"
+            );
+            assert_eq!(
+                board.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Two
+                }),
+                "{state:?}"
+            );
+            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+            assert!(board.try_sending_state_message().is_some());
+            board.world_state.now = board.world_state.now + Duration::from_millis(150);
+            tree.tick_with_trace(&mut board);
+            assert!(
+                matches!(
+                    board.body_motion,
+                    Some(BodyMotion::Kick {
+                        soft: false,
+                        strong: false,
+                        ..
+                    })
+                ),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn own_restart_without_receiver_shoots_or_plays_infield() {
+        let mut board = restart(SubState::GoalKick, point![-3.5, 0.0]);
+        sub_state_subtree().tick_with_trace(&mut board);
+        assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                soft: false,
+                ..
+            })
+        ));
+
+        for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
+            let mut board = restart(state, point![0.0, 3.0]);
+            sub_state_subtree().tick_with_trace(&mut board);
+            assert_eq!(board.ball_action, Some(BallAction::Dribble), "{state:?}");
+            assert!(
+                matches!(
+                    board.body_motion,
+                    Some(BodyMotion::Kick {
+                        strong: false,
+                        soft: false,
+                        ..
+                    })
+                ),
+                "{state:?}"
+            );
+        }
     }
 }

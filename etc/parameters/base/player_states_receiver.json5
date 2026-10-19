@@ -1,6 +1,6 @@
 {
   maximum_age: {
     nanos: 0,
-    secs: 1,
+    secs: 3,
   },
 }

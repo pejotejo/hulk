@@ -47,7 +47,8 @@ pub struct PassIntent {
 
 impl PassIntent {
     /// Measured from receipt; clocks need not be synchronized.
-    pub const TIMEOUT: Duration = Duration::from_secs(1);
+    /// Includes flight time for passes up to 8 m at 3.4 m/s.
+    pub const TIMEOUT: Duration = Duration::from_secs(3);
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Message)]

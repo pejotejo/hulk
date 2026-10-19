@@ -10,10 +10,10 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::{
-        has_ball_position, hulks_is_kicking_team, is_ball_free, is_ball_interception_candidate,
-        is_close_to_ball, is_closest_to_ball, is_controller_connected, is_fallen, is_goalkeeper,
-        is_kickoff, is_last_hulk_standing, is_primary_state, is_ready_for_stand_up,
-        is_remote_control_enabled, is_remote_kick_mode, is_simple, requires_damping,
+        has_ball_position, hulks_is_kicking_team, is_ball_free, is_closest_to_ball,
+        is_controller_connected, is_fallen, is_finishing_striker_kick, is_goalkeeper, is_kickoff,
+        is_last_hulk_standing, is_primary_state, is_ready_for_stand_up, is_remote_control_enabled,
+        is_remote_kick_mode, is_simple, requires_damping,
     },
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
@@ -36,7 +36,10 @@ use crate::{
     subtree,
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
-    walk::{walk_alternatives_subtree, walk_to_kickoff_pose, walk_to_voronoi_position},
+    walk::{
+        block_opponent_with_ball, walk_alternatives_subtree, walk_to_kickoff_pose,
+        walk_to_voronoi_position,
+    },
 };
 
 pub fn create_tree() -> Node<Blackboard> {
@@ -125,6 +128,11 @@ fn playing_subtree() -> Node<Blackboard> {
         sequence!(condition!(is_goalkeeper), subtree!(goalkeeper_subtree)),
         sequence!(
             negation!(condition!(is_in_sub_state)),
+            condition!(is_finishing_striker_kick),
+            subtree!(striker_subtree),
+        ),
+        sequence!(
+            negation!(condition!(is_in_sub_state)),
             condition!(is_pass_receiver),
             subtree!(look_at_ball_subtree),
             selection!(
@@ -181,6 +189,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                 negation!(condition!(is_in_sub_state)),
                 selection!(
                     action!(receive_rolling_ball),
+                    action!(block_opponent_with_ball),
                     sequence!(action!(select_ball_action), action!(execute_ball_action)),
                     action!(stand),
                 )
