@@ -76,8 +76,22 @@ impl Blackboard {
         }
         let now = self.world_state.now;
         let game_controller_state = self.world_state.filtered_game_controller_state.as_ref()?;
-        let send_interval =
+        let mut send_interval =
             state_message_send_interval(game_controller_state, &self.parameters.network)?;
+        if matches!(self.ball_action, Some(BallAction::Pass { .. }))
+            || crate::kick::kickoff::needs_kickoff_updates(self)
+        {
+            // Keep pass preparation inside receiver freshness without spending the reserved budget.
+            let preparation_interval = (self
+                .parameters
+                .kicking
+                .strategy
+                .passing
+                .maximum_receiver_age
+                / 2)
+            .clamp(Duration::from_millis(100), PassIntent::TIMEOUT / 2);
+            send_interval = send_interval.min(preparation_interval);
+        }
         if !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval) {
             return None;
         }

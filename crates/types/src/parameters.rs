@@ -96,6 +96,8 @@ pub struct GoalkeeperParameters {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
 pub struct KickoffParameters {
+    #[serde(default)]
+    pub pass_to_left: bool,
     pub relative_goalkeeper_position: Point2<NormalizedField>,
     pub relative_striker_position: Point2<NormalizedField>,
     /// Own-kickoff support slots, filled in order by descending active player number.

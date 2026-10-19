@@ -20,7 +20,9 @@ use crate::{
     kick::{
         execution::execute_ball_action,
         intercept, kick, kick_subtree,
+        kickoff::kickoff_subtree,
         passing::{is_pass_ball_arriving, is_pass_receiver, prepare_to_receive_pass},
+        reception::receive_rolling_ball,
         set_kick_target_beyond_ball,
         strategy::select_ball_action,
         use_kick_power,
@@ -109,6 +111,7 @@ fn playing_subtree() -> Node<Blackboard> {
             condition!(is_penalty_shootout),
             subtree!(penalty_shootout_subtree)
         ),
+        subtree!(kickoff_subtree),
         sequence!(
             selection!(condition!(is_simple), condition!(is_last_hulk_standing)),
             selection!(
@@ -177,6 +180,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
             sequence!(
                 negation!(condition!(is_in_sub_state)),
                 selection!(
+                    action!(receive_rolling_ball),
                     sequence!(
                         condition!(is_close_to_ball),
                         condition!(is_ball_interception_candidate),
