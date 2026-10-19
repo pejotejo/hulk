@@ -9,6 +9,7 @@ use types::{
     filtered_game_controller_state::FilteredGameControllerState,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
     motion_type::MotionType,
+    obstacles::ObstacleKind,
     parameters::{KickoffParameters, VoronoiParameters},
     path::{Path, direct_path},
 };
@@ -64,7 +65,31 @@ fn plan_with_ball_obstacle(
         blackboard.last_motion_command.as_ref(),
         parameters.rotation_penalty_factor,
     );
-    planner.with_obstacles(&blackboard.world_state.obstacles, parameters.robot_radius);
+    let target_in_field = ground_to_field * target_in_ground;
+    let own_goal_x = -field_dimensions.length / 2.0;
+    let keeper_defending = blackboard.world_state.robot.player_number
+        == blackboard.parameters.goalkeeper.player_number
+        && (own_goal_x..=own_goal_x + field_dimensions.goal_box_area_length)
+            .contains(&target_in_field.x())
+        && target_in_field.y().abs() <= field_dimensions.goal_inner_width / 2.0;
+    for mut obstacle in blackboard.world_state.obstacles.iter().copied() {
+        let position = ground_to_field * obstacle.position;
+        let defending_own_post = keeper_defending
+            && obstacle.kind == ObstacleKind::GoalPost
+            && (position.x() - own_goal_x).abs() <= field_dimensions.goal_post_diameter
+            && (position.y().abs()
+                - (field_dimensions.goal_inner_width + field_dimensions.goal_post_diameter) / 2.0)
+                .abs()
+                <= field_dimensions.goal_post_diameter;
+        let robot_radius = if defending_own_post {
+            // Preserve body/post clearance without the maneuvering margin around other obstacles.
+            obstacle.radius_at_hip_height = field_dimensions.goal_post_diameter / 2.0;
+            parameters.robot_radius / 2.0
+        } else {
+            parameters.robot_radius
+        };
+        planner.with_obstacles(&[obstacle], robot_radius);
+    }
     planner.with_rule_obstacles(
         ground_to_field.inverse(),
         &blackboard.world_state.rule_obstacles,
@@ -88,7 +113,6 @@ fn plan_with_ball_obstacle(
         );
     }
 
-    let target_in_field = ground_to_field * target_in_ground;
     let x_max = field_dimensions.length / 2.0 + field_dimensions.border_strip_width;
     let y_max = field_dimensions.width / 2.0 + field_dimensions.border_strip_width;
     let clamped_target_in_robot = ground_to_field.inverse()
@@ -511,6 +535,109 @@ fn target_player_position(
 #[cfg(test)]
 mod ball_support_tests {
     use super::*;
+
+    #[test]
+    fn defending_keeper_reaches_post_target_without_reducing_other_margins() {
+        use crate::{goalkeeper::set_goalkeeper_active_defense_position, node::LastBall};
+        use types::{
+            field_dimensions::Side, obstacles::Obstacle, path::traits::EndPoints,
+            world_state::BallSource,
+        };
+        for side in [-1.0, 1.0] {
+            for post_radius in [0.05, 0.2] {
+                for mapped_offset in [0.0, 0.025] {
+                    let dimensions = FieldDimensions {
+                        length: 14.0,
+                        width: 9.0,
+                        goal_inner_width: 2.4,
+                        ..FieldDimensions::SPL_2025
+                    };
+                    let transform =
+                        Isometry2::from_parts(linear_algebra::vector![-6.7, side * 0.6], 0.0);
+                    let mut board = Blackboard {
+                        field_dimensions: dimensions,
+                        ball: Some(LastBall {
+                            position: point![-6.8, side * 2.8],
+                            velocity: Default::default(),
+                            age: Default::default(),
+                            field_side: Side::Left,
+                            source: BallSource::Own,
+                        }),
+                        ..Default::default()
+                    };
+                    board.world_state.robot.ground_to_field = Some(transform);
+                    board.parameters.goalkeeper.player_number = PlayerNumber::One;
+                    board.world_state.robot.player_number = PlayerNumber::One;
+                    board.parameters.goalkeeper.distance_to_goalpost = 0.15;
+                    board
+                        .parameters
+                        .goalkeeper
+                        .active_defense_maximum_robot_distance = 2.0;
+                    board.parameters.walking.path_planning.robot_radius = 0.4;
+                    let post = point![-7.0 - mapped_offset, side * 1.25];
+                    board.world_state.obstacles = vec![
+                        Obstacle::goal_post(transform.inverse() * post, post_radius),
+                        Obstacle::goal_post(
+                            transform.inverse() * point![7.0, side * 1.25],
+                            post_radius,
+                        ),
+                        Obstacle::robot(point![2.0, 2.0], 0.2, 0.2),
+                    ];
+                    assert_eq!(
+                        set_goalkeeper_active_defense_position(&mut board),
+                        Status::Success
+                    );
+                    let target = board.walk_position.unwrap();
+                    let path = plan(&mut board, target, transform);
+                    approx::assert_relative_eq!(path.end_point(), target, epsilon = 1e-4);
+                    assert!(((transform * path.end_point()) - post).norm() >= 0.25 - 1e-5);
+                    approx::assert_relative_eq!(
+                        board.path_obstacles_output[1]
+                            .shape
+                            .as_circle()
+                            .unwrap()
+                            .radius,
+                        post_radius + 0.4
+                    );
+                    approx::assert_relative_eq!(
+                        board.path_obstacles_output[2]
+                            .shape
+                            .as_circle()
+                            .unwrap()
+                            .radius,
+                        0.6
+                    );
+
+                    plan(
+                        &mut board,
+                        transform.inverse() * point![-5.0, 0.5],
+                        transform,
+                    );
+                    approx::assert_relative_eq!(
+                        board.path_obstacles_output[0]
+                            .shape
+                            .as_circle()
+                            .unwrap()
+                            .radius,
+                        post_radius + 0.4,
+                        epsilon = 1e-5
+                    );
+
+                    board.world_state.robot.player_number = PlayerNumber::Two;
+                    let fielder_path = plan(&mut board, target, transform);
+                    assert!((fielder_path.end_point() - target).norm() > 0.15);
+                    approx::assert_relative_eq!(
+                        board.path_obstacles_output[0]
+                            .shape
+                            .as_circle()
+                            .unwrap()
+                            .radius,
+                        post_radius + 0.4
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn approaches_contested_ball_from_own_goal_side() {
