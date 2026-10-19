@@ -1,10 +1,11 @@
 use coordinate_systems::{Field, Ground};
 use geometry::{line::Line2, line_segment::LineSegment};
-use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, point, vector};
+use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point, vector};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
     motion_type::MotionType,
+    path::traits::PathProgress,
 };
 
 use crate::{
@@ -51,7 +52,14 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         blackboard.ball_action,
         Some(BallAction::Dribble | BallAction::Pass { .. })
     );
+    let rolling = ball_velocity.norm()
+        > blackboard
+            .parameters
+            .ball
+            .interception
+            .minimum_ball_velocity;
     let mut strong = !controlled
+        && !rolling
         && kicking.allow_strong_kicks
         && (target - ball).norm() >= kicking.strong_kick_min_target_distance;
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
@@ -68,6 +76,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let receiving = super::reception::is_receiving_ball(blackboard);
     let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
     let quick = (!controlled && kicking.quick)
+        || rolling
         || receiving
         || (was_kicking
             && matches!(
@@ -77,7 +86,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let can_switch = is_allowed_to_switch(blackboard)
         || (receiving && ready_to_receive && blackboard.last_motion_type == Some(MotionType::Walk));
     let close_to_ball = is_close_to_ball(blackboard);
-    if (((!receiving || was_kicking) && close_to_ball)
+    if (((was_kicking || (!receiving && ball.x() >= 0.0)) && close_to_ball)
         || (receiving && ready_to_receive)
         || (was_kicking && !can_switch))
         && (was_kicking || can_switch)
@@ -109,14 +118,26 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         return stand(blackboard);
     };
     let approach = projected - toward_ball * blackboard.parameters.kicking.approach_ball_standoff;
-    walk_to(
+    let status = walk_to(
         blackboard,
         Pose2::from_parts(approach, Orientation2::from_vector(projected.coords())),
         blackboard.parameters.walking.speed.kicking,
         OrientationMode::AlignWithPath,
         walk.normal_distance_to_be_aligned,
         walk.hysteresis,
-    )
+    );
+    if let Some(BodyMotion::Walk { path, .. }) = &blackboard.body_motion {
+        let forward = path.forward(Point2::origin());
+        if forward.x() < 0.0 {
+            blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+                velocity: Vector2::zeros(),
+                angular_velocity: blackboard
+                    .walking_velocity_limits
+                    .scale_angular_axis(Orientation2::from_vector(forward).angle()),
+            });
+        }
+    }
+    status
 }
 
 pub(super) fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
@@ -296,14 +317,13 @@ fn goalward_target(
 mod tests {
     use super::*;
     use crate::node::LastBall;
-    use linear_algebra::Vector2;
     use types::{
         field_dimensions::{FieldDimensions, Side},
         world_state::BallSource,
     };
 
     #[test]
-    fn long_shots_use_strong_kicks_at_requested_speed() {
+    fn moving_receptions_use_regular_quick_kicks_but_settled_shots_stay_strong() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             ball_action: Some(BallAction::ShootAtGoalCenter),
@@ -335,6 +355,46 @@ mod tests {
                 target_speed: 3.4,
                 ..
             })
+        ));
+
+        blackboard.parameters.ball.last_ball_timeout = std::time::Duration::from_secs(1);
+        blackboard.ball.as_mut().unwrap().velocity = vector![-1.5, 0.0];
+        blackboard.last_motion_type = Some(MotionType::Walk);
+        execute_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                quick: true,
+                soft: false,
+                target_speed: 3.4,
+                ..
+            })
+        ));
+        blackboard.last_motion_command = MotionCommand::from_partial_motions(
+            blackboard.body_motion.clone().unwrap(),
+            types::motion_command::HeadMotion::Center {
+                image_region_target: Default::default(),
+            },
+        );
+        blackboard.last_motion_type = Some(MotionType::Kick);
+        blackboard.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        execute_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                quick: true,
+                ..
+            })
+        ));
+        blackboard.last_motion_type = Some(MotionType::Walk);
+        blackboard.world_state.now =
+            blackboard.world_state.now + std::time::Duration::from_millis(1);
+        execute_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { strong: true, .. })
         ));
 
         blackboard.parameters.kicking.allow_strong_kicks = false;

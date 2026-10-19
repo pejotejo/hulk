@@ -35,15 +35,13 @@ pub fn kickoff_receiver_position(blackboard: &Blackboard) -> Point2<Field> {
     } else {
         PlayerNumber::Four
     };
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
     let y = blackboard.parameters.kickoff.standard_positions[side]
         .position
         .y()
         .abs()
-        .max(
-            blackboard.field_dimensions.center_circle_diameter / 2.0
-                + blackboard.parameters.walking.path_planning.robot_radius
-                + 0.05,
-        );
+        .max(blackboard.field_dimensions.center_circle_diameter / 2.0 + radius + 0.05)
+        + radius;
     kickoff_support_position(
         blackboard,
         point![
@@ -424,15 +422,50 @@ mod tests {
     #[test]
     fn side_parameter_mirrors_receiver_and_backward_pass() {
         let mut board = blackboard();
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.field_dimensions.center_circle_diameter = 3.0;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        let right_position = kickoff_receiver_position(&board);
+        let minimum_y = board.field_dimensions.center_circle_diameter / 2.0
+            + 2.0 * board.parameters.walking.path_planning.robot_radius
+            + 0.05;
+        assert!(right_position.y().abs() >= minimum_y - 1e-5);
+        board
+            .world_state
+            .player_states
+            .four
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(right_position, 0.0);
         assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Four));
         let right = kickoff_pass_target(&board, PlayerNumber::Four).unwrap();
         assert!(right.x() < 0.0 && right.y() < 0.0);
         board.parameters.kickoff.pass_to_left = true;
+        let left_position = kickoff_receiver_position(&board);
+        board
+            .world_state
+            .player_states
+            .five
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(left_position, 0.0);
         assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Five));
         let left = kickoff_pass_target(&board, PlayerNumber::Five).unwrap();
         assert_eq!(left.x(), right.x());
         assert_eq!(left.y(), -right.y());
         assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
+
+        board.parameters.kickoff.standard_positions.five.position = point![-2.5, 10.0];
+        let bounded = kickoff_receiver_position(&board);
+        let radius = board.parameters.walking.path_planning.robot_radius;
+        assert!(bounded.x() + radius < 0.0);
+        assert!(bounded.y().abs() + radius < board.field_dimensions.width / 2.0);
+        assert!(
+            bounded.coords().norm() - radius > board.field_dimensions.center_circle_diameter / 2.0
+        );
     }
 
     #[test]
@@ -488,6 +521,7 @@ mod tests {
         };
         let target = kickoff_receiver_position(&receiver);
         assert!(target.coords().norm() - 0.4 > 1.5);
+        assert!(target.y().abs() >= 1.5 + 2.0 * 0.4 + 0.05 - 1e-5);
         assert!(target.x() + 0.4 < 0.0);
         let actual = receiver.world_state.robot.ground_to_field.unwrap() * segment.1;
         assert!((actual - point![-3.0, target.y()]).norm() < 0.001);
