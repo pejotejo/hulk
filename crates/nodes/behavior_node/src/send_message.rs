@@ -71,7 +71,14 @@ impl Blackboard {
     }
 
     pub fn try_sending_state_message(&mut self) -> Option<OutgoingMessage> {
-        if self.world_state.robot.primary_state != PrimaryState::Playing {
+        let preparing_kickoff = crate::kick::kickoff::needs_kickoff_updates(self);
+        if self.world_state.robot.primary_state != PrimaryState::Playing
+            && !(preparing_kickoff
+                && matches!(
+                    self.world_state.robot.primary_state,
+                    PrimaryState::Ready | PrimaryState::Set
+                ))
+        {
             return None;
         }
 
@@ -79,9 +86,7 @@ impl Blackboard {
         let game_controller_state = self.world_state.filtered_game_controller_state.as_ref()?;
         let mut send_interval =
             state_message_send_interval(game_controller_state, &self.parameters.network)?;
-        if matches!(self.ball_action, Some(BallAction::Pass { .. }))
-            || crate::kick::kickoff::needs_kickoff_updates(self)
-        {
+        if matches!(self.ball_action, Some(BallAction::Pass { .. })) || preparing_kickoff {
             // Keep pass preparation inside receiver freshness without spending the reserved budget.
             let preparation_interval = (self
                 .parameters
@@ -111,10 +116,14 @@ impl Blackboard {
                     });
 
             let pass = match (self.ball_action, self.kick_target) {
-                (Some(BallAction::Pass { receiver }), Some(target)) => Some(PassIntent {
-                    receiver,
-                    target: ground_to_field * target,
-                }),
+                (Some(BallAction::Pass { receiver }), Some(target))
+                    if self.world_state.robot.primary_state == PrimaryState::Playing =>
+                {
+                    Some(PassIntent {
+                        receiver,
+                        target: ground_to_field * target,
+                    })
+                }
                 _ => None,
             };
             let announcement_time = pass

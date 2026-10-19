@@ -427,7 +427,7 @@ impl Default for KickingParameters {
 pub struct KickStrategyParameters {
     /// Conservative reach of supported kicks; zero disables shooting.
     pub maximum_shot_distance: f32,
-    /// Upper bound on soft-kick travel, including uncertainty, at the configured speed.
+    /// Upper bound on dribble travel, including uncertainty, at the configured speed.
     /// Zero disables dribbling; recalibrate when speed, policy, or surface changes.
     #[serde(default)]
     pub maximum_dribble_distance: f32,
@@ -465,7 +465,7 @@ impl KickStrategyParameters {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
 pub struct PassingParameters {
-    /// Conservative soft-kick reach in meters; zero disables passing.
+    /// Conservative pass reach in meters; zero disables passing.
     pub maximum_distance: f32,
     pub minimum_progress: f32,
     /// Reception region sits this far in front of the receiver, toward the ball.

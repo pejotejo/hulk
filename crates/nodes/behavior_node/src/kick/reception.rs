@@ -1,5 +1,5 @@
 use coordinate_systems::Ground;
-use linear_algebra::{Orientation2, Point2, Pose2, Vector2};
+use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType};
 
 use crate::{
@@ -11,7 +11,31 @@ use crate::{
 
 // shortcut: short constant-velocity prediction; add calibrated friction when available.
 const MAXIMUM_INTERCEPTION_TIME: f32 = 3.0;
-const KICK_HANDOFF_DISTANCE: f32 = 0.75;
+
+pub(crate) fn is_receiving_ball(blackboard: &Blackboard) -> bool {
+    rolling_ball_in_ground(blackboard).is_some()
+}
+
+fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vector2<Ground>)> {
+    let ball = blackboard.ball.as_ref()?;
+    let transform = blackboard.world_state.robot.ground_to_field?;
+    let now = blackboard.world_state.now;
+    if ball.age > now
+        || now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+    {
+        return None;
+    }
+    let position = transform.inverse() * ball.position;
+    let velocity = transform.inverse() * ball.velocity;
+    (velocity.norm()
+        > blackboard
+            .parameters
+            .ball
+            .interception
+            .minimum_ball_velocity
+        && position.coords().dot(&velocity) < 0.0)
+        .then_some((position, velocity))
+}
 
 pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     if blackboard.last_motion_type != Some(MotionType::Walk) && !is_allowed_to_switch(blackboard) {
@@ -20,32 +44,15 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     if !blackboard.last_closest_to_ball && !is_pass_receiver(blackboard) {
         return Status::Failure;
     }
-    let (Some(ball), Some(transform)) = (
-        blackboard.ball.as_ref(),
-        blackboard.world_state.robot.ground_to_field,
-    ) else {
+    let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return Status::Failure;
     };
-    let now = blackboard.world_state.now;
-    if ball.age > now
-        || now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
-    {
+    if position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance {
         return Status::Failure;
     }
-    let position = transform.inverse() * ball.position;
-    let velocity = transform.inverse() * ball.velocity;
-    if position.coords().norm() <= KICK_HANDOFF_DISTANCE
-        || velocity.norm()
-            <= blackboard
-                .parameters
-                .ball
-                .interception
-                .minimum_ball_velocity
-        || position.coords().dot(&velocity) >= 0.0
-    {
-        return Status::Failure;
-    }
-    let Some(direction) = velocity.try_normalize(f32::EPSILON) else {
+    let transform = blackboard.world_state.robot.ground_to_field.unwrap();
+    let goal = transform.inverse() * point![blackboard.field_dimensions.length / 2.0, 0.0];
+    let Some(direction) = (goal - position).try_normalize(f32::EPSILON) else {
         return Status::Failure;
     };
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
@@ -55,8 +62,8 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         .min(-limits.forward_velocity_limits[0])
         .min(limits.lateral_velocity_limit)
         * walk_speed;
-    // Stand behind the interception point while facing the incoming ball.
-    let Some(target) = reachable_interception(position + direction * standoff, velocity, speed)
+    // Arrive behind the ball facing goal, ready to kick onward without another turn.
+    let Some(target) = reachable_interception(position - direction * standoff, velocity, speed)
     else {
         return Status::Failure;
     };
@@ -72,10 +79,10 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     blackboard.kick_target = None;
     walk_to(
         blackboard,
-        Pose2::from_parts(target, Orientation2::from_vector(-direction)),
+        Pose2::from_parts(target, Orientation2::from_vector(direction)),
         walk_speed,
-        OrientationMode::LookAt {
-            target: position,
+        OrientationMode::LookTowards {
+            direction: Orientation2::from_vector(direction),
             tolerance: walking.orientation_tolerance,
         },
         walking.normal_distance_to_be_aligned,
@@ -131,7 +138,7 @@ mod tests {
     use types::{
         field_dimensions::{FieldDimensions, Side},
         motion_command::BodyMotion,
-        world_state::BallSource,
+        world_state::{BallSource, BallState},
     };
 
     use crate::node::LastBall;
@@ -153,13 +160,21 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         blackboard.parameters.kicking.approach_ball_standoff = 0.2;
+        blackboard.parameters.kicking.kick_activation_distance = 0.75;
         blackboard.walking_velocity_limits.forward_velocity_limits = [-0.5, 0.5];
         blackboard.walking_velocity_limits.lateral_velocity_limit = 0.5;
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
-        assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Walk { .. })
-        ));
+        let Some(BodyMotion::Walk {
+            target_orientation,
+            orientation_mode: OrientationMode::LookTowards { direction, .. },
+            ..
+        }) = blackboard.body_motion
+        else {
+            panic!("expected goal-facing interception")
+        };
+        let goalward: Orientation2<Ground> = Orientation2::from_vector(vector![2.5, -0.3]);
+        assert!((target_orientation.angle() - goalward.angle()).abs() < 1e-6);
+        assert_eq!(target_orientation, direction);
 
         blackboard.ball.as_mut().unwrap().position = point![0.5, 0.0];
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
@@ -178,6 +193,65 @@ mod tests {
         blackboard.last_motion_type = Some(MotionType::Walk);
         blackboard.last_closest_to_ball = false;
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+    }
+
+    #[test]
+    fn hands_off_incoming_ball_directly_to_quick_goalward_kick() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_closest_to_ball: true,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![1.0, 0.15],
+                velocity: vector![-2.0, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![1.0, 0.15],
+            ball_in_ground_velocity: vector![-2.0, 0.0],
+            ..Default::default()
+        });
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        blackboard.parameters.control.allow_switch.walk = Duration::from_secs(1);
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        assert_eq!(
+            crate::tree::striker_subtree()
+                .tick_with_trace(&mut blackboard)
+                .0,
+            Status::Success
+        );
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, ball_velocity, .. })
+                if ball_velocity == vector![-2.0, 0.0]
+        ));
+        assert!(blackboard.kick_target.unwrap().x() > 1.0);
+        assert!(blackboard.ball_action.is_some());
+
+        blackboard.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+            blackboard.body_motion.clone().unwrap(),
+            blackboard.head_motion.unwrap(),
+        );
+        blackboard.last_motion_type = Some(MotionType::Kick);
+        blackboard.ball.as_mut().unwrap().velocity = vector![-0.2, 0.0];
+        blackboard
+            .world_state
+            .ball
+            .as_mut()
+            .unwrap()
+            .ball_in_ground_velocity = vector![-0.2, 0.0];
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, .. })
+        ));
     }
 
     #[test]

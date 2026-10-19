@@ -234,10 +234,12 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
         let mut target_position = standard_pose.position;
 
         let mut target_orientation = Orientation2::new(standard_pose.rotation);
-        if hulks_is_kicking_team(blackboard) {
+        if hulks_is_kicking_team(blackboard)
+            && player_number != blackboard.parameters.goalkeeper.player_number
+        {
             if player_number == PlayerNumber::Three {
                 target_position = striker_position;
-            } else if player_number == kickoff_receiver(blackboard) {
+            } else if Some(player_number) == kickoff_receiver(blackboard) {
                 target_position = kickoff_receiver_position(blackboard);
                 target_orientation = Orientation2::from_vector(-target_position.coords());
             }

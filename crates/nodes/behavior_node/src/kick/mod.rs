@@ -5,6 +5,7 @@ pub mod passing;
 pub mod reception;
 pub mod strategy;
 
+use ::geometry::line_segment::LineSegment;
 use coordinate_systems::{Field, Ground};
 use hsl_network_messages::PlayerNumber;
 use linear_algebra::{Isometry2, Orientation2, Point2, Vector2, point};
@@ -60,7 +61,7 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
                 .ball
                 .map_or(Vector2::zeros(), |ball| ball.ball_in_ground_velocity),
             target_speed: blackboard.parameters.kicking.target_speed,
-            soft: blackboard.parameters.kicking.soft,
+            soft: false,
             quick: blackboard.parameters.kicking.quick,
             kick_direction: Default::default(),
             strong: false,
@@ -81,9 +82,20 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
 }
 
 pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
-    let goal_position: Point2<Field> = point!(blackboard.field_dimensions.length / 2.0, 0.0);
-
-    apply_kick_target(blackboard, goal_position)
+    let field = &blackboard.field_dimensions;
+    blackboard.ball_action = Some(strategy::BallAction::Shoot {
+        opening: LineSegment(
+            point![field.length / 2.0, -field.goal_inner_width / 2.0],
+            point![field.length / 2.0, field.goal_inner_width / 2.0],
+        ),
+    });
+    let Some(target) = execution::resolve_target(blackboard) else {
+        blackboard.ball_action = None;
+        blackboard.kick_target = None;
+        stand(blackboard);
+        return Status::Failure;
+    };
+    apply_kick_target(blackboard, target)
 }
 
 pub fn apply_kick_target(
@@ -142,7 +154,6 @@ pub fn allow_strong_kicks(blackboard: &mut Blackboard) -> bool {
 pub fn use_last_kick_settings(blackboard: &mut Blackboard) -> Status {
     if let Some(MotionCommand::Kick {
         strong: last_strong,
-        soft: last_soft,
         quick: last_quick,
         target_speed: last_target_speed,
         ..
@@ -156,7 +167,7 @@ pub fn use_last_kick_settings(blackboard: &mut Blackboard) -> Status {
         }) = blackboard.body_motion.as_mut()
     {
         *motion_strong = last_strong;
-        *soft = last_soft;
+        *soft = false;
         *quick = last_quick;
         *target_speed = last_target_speed;
 
@@ -191,6 +202,8 @@ pub fn intercept(blackboard: &mut Blackboard) -> Status {
         ball_position,
         ball_velocity,
         kick_direction: motion_kick_direction,
+        strong,
+        soft,
         ..
     }) = blackboard.body_motion.as_mut()
     {
@@ -229,6 +242,8 @@ pub fn intercept(blackboard: &mut Blackboard) -> Status {
         // Use the predicted interception point only to choose kick direction.
         blackboard.kick_target = Some(*ball_position);
         *motion_kick_direction = kick_direction;
+        *strong = false;
+        *soft = false;
         return Status::Success;
     }
     Status::Failure
@@ -311,4 +326,81 @@ pub(super) fn pass_receiver_position(
         && position.y().abs() < field.width / 2.0
         && position.x() - ball.x() >= parameters.minimum_progress)
         .then_some(position)
+}
+
+#[cfg(test)]
+mod tests {
+    use linear_algebra::vector;
+    use types::{
+        field_dimensions::{FieldDimensions, Side},
+        obstacles::Obstacle,
+        world_state::BallSource,
+    };
+
+    use crate::node::LastBall;
+
+    use super::*;
+
+    #[test]
+    fn setplay_shots_choose_clear_goal_opening_and_stop_when_blocked() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ball: Some(LastBall {
+                position: point![0.5, 0.0],
+                velocity: Vector2::zeros(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        blackboard.parameters.kicking.strategy.obstacle_clearance = 0.05;
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.0, 0.0], 0.2, 0.2)];
+        assert_eq!(kick(&mut blackboard), Status::Success);
+        assert_eq!(select_kick_target(&mut blackboard), Status::Success);
+        assert!(blackboard.kick_target.unwrap().y().abs() > 0.1);
+
+        blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
+        assert_eq!(kick(&mut blackboard), Status::Success);
+        assert_eq!(select_kick_target(&mut blackboard), Status::Failure);
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.kick_target, None);
+    }
+
+    #[test]
+    fn interception_uses_regular_kick_after_a_strong_or_soft_command() {
+        let mut blackboard = Blackboard {
+            body_motion: Some(BodyMotion::Kick {
+                ball_position: point![1.0, 1.0],
+                ball_velocity: vector![-1.0, -2.0],
+                kick_direction: Default::default(),
+                target_speed: 3.4,
+                strong: true,
+                soft: true,
+                quick: false,
+            }),
+            ..Default::default()
+        };
+        blackboard
+            .parameters
+            .ball
+            .interception
+            .maximum_intercept_distance = 1.5;
+        blackboard
+            .parameters
+            .kicking
+            .minimum_interception_forward_distance = 0.3;
+        assert_eq!(intercept(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                soft: false,
+                target_speed: 3.4,
+                ..
+            })
+        ));
+    }
 }
