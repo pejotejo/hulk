@@ -22,19 +22,22 @@ selection. The kick command carries the resulting direction and inference
 inputs. `last_kick_target` holds the Field target across ticks for remote and
 penalty kicks.
 
-The behavior `kick` action prefers the visual percept for position and uses
-`world_state.ball.ball_in_ground_velocity` for velocity. The visual selector
-publishes zero velocity. Without a current tracked ball, the request uses zero
-velocity. Position and velocity are assumed to describe the same ball.
-Interception computes a future point locally while retaining the observed
-position and current velocity in the request.
+The behavior `kick` action uses a coherent tracked position/velocity pair. A
+recent, consistent visual percept may refine a close, slowly moving ball; it
+does not replace the position of a fast tracked ball. Interception and walking
+pursuit compute future points locally while retaining the observed position and
+current velocity in the policy request. `Kick` selects a locomotion policy that
+owns the final approach and alignment, including close balls beside or behind
+the robot. A request with a large aim angle is not evidence of a physical mis-hit.
 
 Initial choices come from `behavior_node.kicking.soft`, `.quick`, and
 `.target_speed` (defaults: `false`, `false`, and `3.4`). Target speed is configured
-independently of target distance. A continuing kick retains these choices and
-its strong flag while refreshing position, velocity, and aim. Goalkeeper and
-penalty actions can override the strong flag explicitly. The walk fallback
-preserves the same settings while a transition is blocked.
+independently of target distance. A long validated forward advance uses the
+regular kick. Short advances, passes and inward cutbacks use separate soft-kick
+speeds (1.2, 1.5 and 1.6 m/s). A continuing
+kick retains its policy and speed until switching is allowed, while refreshing
+position, velocity and a still-clear aim. Goalkeeper and penalty actions can
+override the strong flag explicitly.
 
 `StandUp` selects `GetUp`.
 It uses position targets and motor-side PD gains configured under
@@ -48,14 +51,32 @@ These parameters belong to `behavior_node.kicking`. All distances are in metres.
 | --- | --- | --- |
 | `allow_strong_kicks` | `false` | Permit strong striker and penalty kicks; this does not limit target speed. |
 | `strong_kick_min_target_distance` | `6.0` | Select strong striker kicks at or beyond this ball-to-target distance. Penalty selection only checks permission. |
-| `kick_activation_distance` | `2.0` | Centre of the normal striker's walk-to-kick handoff band. |
-| `kick_activation_hysteresis` | `0.5` | Total width of that band: enter below 1.75, leave above 2.25. |
-| `approach_ball_standoff` | `0.3` | Walking standoff behind the ball and set-play alignment position. |
-| `minimum_interception_forward_distance` | `0.3` | Minimum Ground x coordinate of the predicted interception point, for both striker and goalkeeper. |
+| `kick_activation_distance` | `1.1` | Centre of the normal striker's walk-to-kick handoff band; outgoing corridor and body access must also be clear. |
+| `kick_activation_hysteresis` | `0.2` | Total width of that band: enter below 1.0, leave above 1.2. |
+| `approach_ball_standoff` | `0.3` | Minimum walking standoff; approach also preserves robot plus physical ball clearance and a 0.05 m margin. |
+| `minimum_interception_forward_distance` | `0.3` | Minimum predicted interception distance along the outgoing direction for the striker, or along Ground x for the goalkeeper. |
 
 `disable_strong_kick` clears the strong flag without selecting the soft policy
-or lowering `target_speed`. The `kick_strength_subtree` retains settings while
-a kick continues. Goalkeeper actions disable strong explicitly.
+or lowering `target_speed`. The `kick_strength_subtree` retains settings during the current motion
+commitment interval. Once switching is allowed, legacy keeper and set-play
+actions use their current configured policy and speed; a prior soft pass must
+not keep those actions on the soft policy indefinitely. Goalkeeper actions disable strong explicitly.
+
+Ordinary handoff checks static obstacles, fresh teammate poses and rule areas.
+Observed robot footprints still block outgoing ball corridors, but do not impose
+walking clearance on a close opponent contest. Walking and Hold continue to
+check every robot footprint. This preserves the existing policy's contest role;
+it does not imply that opponent contact is eliminated.
+An initial overlap with a coarse Robot proxy permits only outgoing rays that
+never reduce separation from that proxy. Coincident centers, static collisions,
+fresh teammate body access and rule restrictions remain excluded. These proxies
+have no team identity and do not represent articulated foot geometry.
+
+`kicking.approach.maximum_heading` and `.maximum_lateral_distance` bound the
+additional incoming-ball handoff beyond the ordinary distance band and urgent
+keeper eligibility. They do not require normal close-ball requests to be aligned.
+`.maximum_ball_escape_speed` is currently unused. The locomotion policy receives
+the coherent measured velocity for ordinary close rolling balls.
 
 Strength selection and kick direction use the same target position. The separate
 `substates.distance_for_kick` and `substates.distance_for_kick_hysteresis`
@@ -69,11 +90,11 @@ kicks use the maximum speed regardless of `target_speed`. Soft kicks ignore the
 strong and quick flags. Base speed limits are `[0.5, 3.4]` m/s for normal kicks and
 `[0.1, 1.7]` m/s for soft kicks.
 
-Inference caps the ball-position observation at 2.0 m. The base kick exit
-distance is 2.25 m, so observations beyond the cap lose distance information.
-The observation cap does not establish the policy's physical reach.
+Inference caps the ball-position observation at 2.0 m. Ordinary behavior handoff
+leaves Kick above 1.2 m with the base configuration. The observation cap does not
+establish the policy's physical reach.
 
-The behavior simulator approximates the speed rules with configurable limits.
+The Bevy behavior simulator approximates the speed rules with configurable limits.
 It does not model the learned quick-kick movement or recovery timing;
 get-up clears the simulated fallen state immediately.
 

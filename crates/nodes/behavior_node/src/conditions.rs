@@ -1,17 +1,20 @@
 use coordinate_systems::Field;
 use filtering::hysteresis::less_than_with_hysteresis;
+use geometry::{Distance, line_segment::LineSegment, rectangle::Rectangle};
 use hsl_network_messages::Team;
 use linear_algebra::{Point2, point, vector};
 use types::{
     controller_input::Button, fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
-    filtered_game_state::FilteredGameState, primary_state::PrimaryState,
+    filtered_game_state::FilteredGameState, obstacles::ObstacleKind, primary_state::PrimaryState,
+    rule_obstacles::RuleObstacle,
 };
 use voronoi::{Ownership, VoronoiGrid};
 
 use crate::{
-    goalkeeper::is_goalkeeper_striker_candidate, node::Blackboard,
-    voronoi::create_voronoi_grid_without_goalkeeper,
+    goalkeeper::is_goalkeeper_striker_candidate,
+    node::Blackboard,
+    voronoi::{available_teammate_poses, create_voronoi_grid_without_goalkeeper},
 };
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
@@ -101,7 +104,7 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     let own_player_number = blackboard.world_state.robot.player_number;
 
-    let raw_is_closest = if let (Some(ball_position), Some(voronoi_map)) = (
+    let ownership = if let (Some(ball_position), Some(voronoi_map)) = (
         blackboard.ball.as_ref().map(|ball| ball.position),
         &blackboard.voronoi_map,
     ) {
@@ -118,10 +121,25 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
         } else {
             ownership
         };
-        ownership == Some(Ownership::Robot(own_player_number))
+        ownership
     } else {
-        false
+        None
     };
+    let territorial_owner = match ownership {
+        Some(Ownership::Robot(player)) => Some(player),
+        _ => None,
+    };
+    let local_owner = local_ball_owner(blackboard, territorial_owner);
+    // Resolve nearby ambiguous claims in both directions: the winner must take
+    // ownership as well as the loser yielding, or consistent poses can leave
+    // both robots waiting. Preserve the territorial support map.
+    if local_owner.is_some_and(|player| player != own_player_number) {
+        blackboard.closest_to_ball_entered_area_since = None;
+        blackboard.closest_to_ball_left_area_since = Some(blackboard.world_state.now);
+        blackboard.last_closest_to_ball = false;
+        return false;
+    }
+    let raw_is_closest = local_owner.or(territorial_owner) == Some(own_player_number);
 
     let now = blackboard.world_state.now;
     if raw_is_closest {
@@ -149,6 +167,130 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
 
     blackboard.last_closest_to_ball = is_closest;
     is_closest
+}
+
+fn local_ball_owner(
+    blackboard: &mut Blackboard,
+    territorial_owner: Option<hsl_network_messages::PlayerNumber>,
+) -> Option<hsl_network_messages::PlayerNumber> {
+    let ball_position = blackboard.ball.as_ref()?.position;
+    let own_position = blackboard
+        .world_state
+        .robot
+        .ground_to_field?
+        .as_pose()
+        .position();
+    // Team elections use the measured shared point, never the distance-dependent
+    // prediction used for each robot's approach.
+    let own_distance = (own_position - ball_position).norm();
+    let parameters = &blackboard.parameters;
+    let tie_distance = 2.0 * parameters.walking.path_planning.robot_radius;
+    let local_distance = parameters.voronoi.ball_support_distance.max(tie_distance);
+    let workspace = local_distance.max(
+        parameters.kicking.kick_activation_distance + parameters.kicking.kick_activation_hysteresis,
+    );
+    if own_distance > workspace {
+        return None;
+    }
+    let own_player = blackboard.world_state.robot.player_number;
+    let goalkeeper = parameters.goalkeeper.player_number;
+    let keeper_eligible = is_goalkeeper_striker_candidate(blackboard);
+    let mut candidates = vec![(own_player, own_distance)];
+    candidates.extend(
+        available_teammate_poses(blackboard).filter_map(|(player, pose)| {
+            let distance = (pose.position() - ball_position).norm();
+            (distance <= workspace
+                && (pose.position() - own_position).norm() <= local_distance
+                && (player != goalkeeper || keeper_eligible)
+                && local_contest_is_unseparated(blackboard, own_position, pose.position()))
+            .then_some((player, distance))
+        }),
+    );
+    // Do not override an obstacle-aware territorial owner outside this contest.
+    if candidates.len() < 2
+        || !candidates
+            .iter()
+            .any(|(player, _)| Some(*player) == territorial_owner)
+    {
+        return None;
+    }
+    let nearest = candidates
+        .iter()
+        .map(|(_, distance)| *distance)
+        .min_by(f32::total_cmp)?;
+    candidates
+        .into_iter()
+        .filter(|(_, distance)| *distance <= nearest + tie_distance)
+        .map(|(player, _)| player)
+        .min()
+}
+
+fn local_contest_is_unseparated(
+    blackboard: &Blackboard,
+    own_position: Point2<Field>,
+    teammate_position: Point2<Field>,
+) -> bool {
+    let corridor = LineSegment::new(own_position, teammate_position);
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
+    let distance_to_corridor = |position: Point2<Field>| {
+        if corridor.length_squared() <= f32::EPSILON {
+            (position - own_position).norm()
+        } else {
+            corridor.distance_to(position)
+        }
+    };
+    if blackboard
+        .world_state
+        .rule_obstacles
+        .iter()
+        .any(|obstacle| match obstacle {
+            RuleObstacle::Circle(circle) => {
+                distance_to_corridor(circle.center) <= circle.radius + radius
+            }
+            RuleObstacle::Rectangle(rectangle) => {
+                let expanded = Rectangle {
+                    min: rectangle.min - vector!(radius, radius),
+                    max: rectangle.max + vector!(radius, radius),
+                };
+                let bottom_right = point!(expanded.max.x(), expanded.min.y());
+                let top_left = point!(expanded.min.x(), expanded.max.y());
+                expanded.contains(own_position)
+                    || expanded.contains(teammate_position)
+                    || [
+                        LineSegment::new(expanded.min, bottom_right),
+                        LineSegment::new(bottom_right, expanded.max),
+                        LineSegment::new(expanded.max, top_left),
+                        LineSegment::new(top_left, expanded.min),
+                    ]
+                    .into_iter()
+                    .any(|edge| corridor.intersects_line_segment(edge))
+            }
+        })
+    {
+        return false;
+    }
+    let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field else {
+        return false;
+    };
+    blackboard.world_state.obstacles.iter().all(|obstacle| {
+        if obstacle.kind == ObstacleKind::Ball {
+            return true;
+        }
+        let position = ground_to_field * obstacle.position;
+        // The contenders themselves are observed as robots. They must not be
+        // mistaken for an intervening obstacle when deciding which one yields.
+        if obstacle.kind == ObstacleKind::Robot
+            && ((position - own_position).norm() <= radius
+                || (position - teammate_position).norm() <= radius)
+        {
+            return true;
+        }
+        distance_to_corridor(position)
+            > obstacle
+                .radius_at_foot_height
+                .max(obstacle.radius_at_hip_height)
+                + radius
+    })
 }
 
 fn resolved_ownership(map: &VoronoiGrid, position: Point2<Field>) -> Option<Ownership> {
@@ -267,7 +409,7 @@ pub fn is_last_hulk_standing(blackboard: &mut Blackboard) -> bool {
         .player_states
         .iter()
         .all(|(player_number, player_state)| {
-            player_number == own_player_number || player_state.is_none()
+            player_number == own_player_number || player_state.is_none_or(|state| state.unavailable)
         })
 }
 

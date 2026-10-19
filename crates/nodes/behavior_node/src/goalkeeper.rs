@@ -1,6 +1,6 @@
 use coordinate_systems::Field;
 use hsl_network_messages::SubState;
-use linear_algebra::{Orientation2, Pose2, Vector2, point};
+use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType};
 
 use crate::{
@@ -9,7 +9,10 @@ use crate::{
     condition,
     conditions::{hulks_is_kicking_team, is_closest_to_ball},
     head::look_at_ball_subtree,
-    kick::{apply_kick_target, disable_strong_kick, intercept, kick, kick_alternatives_subtree},
+    kick::{
+        apply_kick_target, ball::kick_ball_state, disable_strong_kick, intercept, kick,
+        kick_alternatives_subtree,
+    },
     negation,
     node::Blackboard,
     selection, sequence,
@@ -189,36 +192,37 @@ fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
 }
 
 fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
-    if !is_ball_in_own_penalty_area(blackboard) {
+    let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field else {
+        return false;
+    };
+    let Some((ball, _)) = kick_ball_state(blackboard, &ground_to_field) else {
+        return false;
+    };
+    let ball_in_field = ground_to_field * ball;
+    let field = &blackboard.field_dimensions;
+    let own_penalty_area_x = -field.length / 2.0 + field.penalty_area_length;
+    if ball_in_field.x() >= own_penalty_area_x
+        || ball_in_field.y().abs() >= field.penalty_area_width / 2.0
+    {
         return false;
     }
-
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.ball,
-        blackboard.world_state.robot.ground_to_field,
-    ) {
-        let ball_in_ground = ground_to_field.inverse() * ball.position;
-
-        ball_in_ground.x() > 0.0
-            && ball_in_ground.coords().norm()
-                < blackboard
-                    .parameters
-                    .goalkeeper
-                    .kick_away_ball_maximum_robot_distance
-    } else {
-        false
-    }
-}
-
-fn is_ball_in_own_penalty_area(blackboard: &mut Blackboard) -> bool {
-    blackboard.ball.as_ref().is_some_and(|ball| {
-        let field_dimensions = blackboard.field_dimensions;
-        let own_penalty_area_x =
-            -field_dimensions.length / 2.0 + field_dimensions.penalty_area_length;
-
-        ball.position.x() < own_penalty_area_x
-            && ball.position.y().abs() < field_dimensions.penalty_area_width / 2.0
-    })
+    let target = ground_to_field.inverse() * goalkeeper_kick_away_target(blackboard, ball_in_field);
+    let Some(direction) = (target - ball).try_normalize(f32::EPSILON) else {
+        return false;
+    };
+    let approach = &blackboard.parameters.kicking.approach;
+    // Urgency does not make a backwards or sideways policy entry feasible.
+    // Use the same measured ball and target as the actual kick command.
+    ball.x() > 0.0
+        && ball.coords().norm()
+            < blackboard
+                .parameters
+                .goalkeeper
+                .kick_away_ball_maximum_robot_distance
+        && ball.coords().dot(&direction) > 0.0
+        && direction.y().atan2(direction.x()).abs() <= approach.maximum_heading
+        && (ball.x() * direction.y() - ball.y() * direction.x()).abs()
+            <= approach.maximum_lateral_distance
 }
 
 /// Only assign the goalkeeper balls that its behavior is willing to pursue.
@@ -349,17 +353,23 @@ pub fn walk_to_goalkeeper_penalty_position(blackboard: &mut Blackboard) -> Statu
 }
 
 fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
-    if let Some(ball) = &blackboard.ball {
-        let target_y = if ball.position.y() >= 0.0 {
-            blackboard.field_dimensions.width / 4.0
-        } else {
-            -blackboard.field_dimensions.width / 4.0
-        };
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some((ball, _)) = kick_ball_state(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    let target = goalkeeper_kick_away_target(blackboard, transform * ball);
+    apply_kick_target(blackboard, target)
+}
 
-        apply_kick_target(blackboard, point!(0.0, target_y))
+fn goalkeeper_kick_away_target(blackboard: &Blackboard, ball: Point2<Field>) -> Point2<Field> {
+    let target_y = if ball.y() >= 0.0 {
+        blackboard.field_dimensions.width / 4.0
     } else {
-        Status::Failure
-    }
+        -blackboard.field_dimensions.width / 4.0
+    };
+    point!(0.0, target_y)
 }
 
 fn ball_interception_velocity_in_field(blackboard: &Blackboard) -> Option<Vector2<Field>> {
@@ -375,4 +385,114 @@ fn is_interception_velocity_towards_own_half(
 
     ball_velocity.norm() > parameters.minimum_ball_velocity
         && ball_velocity.x() < -parameters.minimum_ball_velocity_towards_own_half
+}
+
+#[cfg(test)]
+mod tests {
+    use coordinate_systems::Ground;
+    use linear_algebra::{Isometry2, vector};
+    use types::{
+        ball_position::BallPosition,
+        field_dimensions::FieldDimensions,
+        motion_command::BodyMotion,
+        world_state::{BallSource, BallState},
+    };
+
+    use super::*;
+
+    fn kick_away_blackboard(
+        ball: Point2<Ground>,
+        ball_in_field: Point2<Field>,
+        outgoing_direction: Vector2<Ground>,
+    ) -> Blackboard {
+        let mut b = Blackboard::default();
+        b.field_dimensions = FieldDimensions::SPL_2025;
+        b.field_dimensions.ball_radius = 0.073;
+        b.parameters
+            .goalkeeper
+            .kick_away_ball_maximum_robot_distance = 1.5;
+        b.parameters.kicking.approach.maximum_heading = 0.8;
+        b.parameters.kicking.approach.maximum_lateral_distance = 0.4;
+        let target = goalkeeper_kick_away_target(&b, ball_in_field);
+        let heading = Orientation2::from_vector(target - ball_in_field).angle()
+            - Orientation2::from_vector(outgoing_direction).angle();
+        let rotation: Isometry2<Ground, Field> = Isometry2::from_parts(Vector2::zeros(), heading);
+        let transform =
+            Isometry2::from_parts(ball_in_field.coords() - (rotation * ball).coords(), heading);
+        b.world_state.robot.ground_to_field = Some(transform);
+        b.world_state.ball = Some(BallState {
+            ball_in_ground: ball,
+            ball_in_field,
+            source: BallSource::Own,
+            ..Default::default()
+        });
+        b
+    }
+
+    #[test]
+    fn urgent_clearance_rejects_the_wrong_side_trace_and_its_reflection() {
+        for sign in [-1.0, 1.0] {
+            let ball = point![0.170, -0.302 * sign];
+            let mut b =
+                kick_away_blackboard(ball, point![-3.5, 0.8 * sign], vector![0.298, 0.954 * sign]);
+            let transform = b.world_state.robot.ground_to_field.unwrap();
+            let target = transform.inverse() * goalkeeper_kick_away_target(&b, transform * ball);
+            let direction = (target - ball).normalize();
+            assert!(ball.x() > 0.0 && ball.coords().norm() < 1.5);
+            assert!(ball.coords().dot(&direction) < 0.0);
+            assert!(direction.y().atan2(direction.x()).abs() > 1.2);
+            assert!(!is_goalkeeper_kick_away_needed(&mut b));
+        }
+    }
+
+    #[test]
+    fn aligned_close_clearance_remains_eligible_with_the_same_executed_target() {
+        let ball = point![0.3, 0.0];
+        let mut b = kick_away_blackboard(ball, point![-3.5, 0.8], vector![1.0, 0.0]);
+        assert!(is_goalkeeper_kick_away_needed(&mut b));
+        assert_eq!(kick(&mut b), Status::Success);
+        assert_eq!(select_goalkeeper_kick_away_target(&mut b), Status::Success);
+        let Some(BodyMotion::Kick {
+            ball_position,
+            kick_direction,
+            ..
+        }) = b.body_motion
+        else {
+            panic!("expected an aligned urgent clearance")
+        };
+        assert_eq!(ball_position, ball);
+        assert!(kick_direction.angle().abs() < 1e-5);
+    }
+
+    #[test]
+    fn forward_clearance_still_needs_lateral_ball_alignment() {
+        let mut b = kick_away_blackboard(point![0.2, 0.6], point![-3.5, 0.8], vector![1.0, 0.0]);
+        assert!(!is_goalkeeper_kick_away_needed(&mut b));
+    }
+
+    #[test]
+    fn eligibility_uses_the_same_visual_refinement_and_moving_ball_pair_as_kick() {
+        let mut b = kick_away_blackboard(point![0.35, -0.36], point![-3.5, 0.8], vector![1.0, 0.0]);
+        let visual = point![0.35, -0.44];
+        b.visual_kick_ball_position = Some(BallPosition {
+            position: visual,
+            velocity: Vector2::zeros(),
+            last_seen: b.world_state.now,
+        });
+        // A valid slow-ball refinement moves the ball outside the lateral band.
+        assert!(!is_goalkeeper_kick_away_needed(&mut b));
+        kick(&mut b);
+        assert!(
+            matches!(b.body_motion, Some(BodyMotion::Kick { ball_position, .. }) if ball_position == visual)
+        );
+
+        // Raw visual positions do not replace a moving filter's coherent pair.
+        b.world_state.ball.as_mut().unwrap().ball_in_ground_velocity = vector![1.0, 0.0];
+        assert!(is_goalkeeper_kick_away_needed(&mut b));
+        kick(&mut b);
+        assert!(
+            matches!(b.body_motion, Some(BodyMotion::Kick { ball_position, ball_velocity, .. })
+            if ball_position == point![0.35,-0.36] && ball_velocity == vector![1.0,0.0])
+        );
+    }
 }

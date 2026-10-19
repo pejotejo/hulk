@@ -3,7 +3,7 @@ use std::{boxed::Box, future::Future, pin::Pin};
 
 use color_eyre::Result;
 
-use hsl_network_messages::{HulkMessage, PlayerNumber, StateMessage};
+use hsl_network_messages::PlayerNumber;
 use ros_z::{prelude::*, qos::QosDurability};
 use types::{messages::IncomingMessage, time_wrapper::TimeWrapper};
 
@@ -39,9 +39,10 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
                 let Some(current_player_number) = player_number else {continue;};
                 let time_wrapped_message = received_time_wrapped_message?;
 
-                let should_filter_message_out = matches!(time_wrapped_message.inner, IncomingMessage::Hsl(
-                        HulkMessage::State(StateMessage { player_number, .. }),
-                    ) if player_number == current_player_number);
+                let should_filter_message_out = is_own_message(
+                    &time_wrapped_message.inner,
+                    current_player_number,
+                );
 
                 if !should_filter_message_out {
                     filtered_message_pub.publish(
@@ -55,6 +56,36 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
             received_player_number = player_number_sub.recv() => {
                 player_number = Some(received_player_number?);
             }
+        }
+    }
+}
+
+fn is_own_message(message: &IncomingMessage, own_player: PlayerNumber) -> bool {
+    matches!(message, IncomingMessage::Hsl(message) if message.state().player_number == own_player)
+}
+
+#[cfg(test)]
+mod tests {
+    use hsl_network_messages::{CoordinatedStateMessage, HulkMessage, StateMessage};
+
+    use super::*;
+
+    #[test]
+    fn both_state_envelopes_filter_the_embedded_sender() {
+        let state = StateMessage {
+            player_number: PlayerNumber::Two,
+            ..Default::default()
+        };
+        for message in [
+            HulkMessage::State(state),
+            HulkMessage::CoordinatedState(CoordinatedStateMessage {
+                state,
+                ..Default::default()
+            }),
+        ] {
+            let message = IncomingMessage::Hsl(message);
+            assert!(is_own_message(&message, PlayerNumber::Two));
+            assert!(!is_own_message(&message, PlayerNumber::Three));
         }
     }
 }

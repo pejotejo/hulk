@@ -1,6 +1,6 @@
 use color_eyre::Result;
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::{HulkMessage, PlayerNumber, StateMessage};
+use hsl_network_messages::{PlayerNumber, StateMessage};
 use linear_algebra::{Isometry2, Point2};
 use ros_z::{
     prelude::*,
@@ -328,11 +328,17 @@ fn decay_with_teammate_message(
 ) {
     let TimeWrapper {
         time,
-        inner: IncomingMessage::Hsl(HulkMessage::State(state)),
+        inner: IncomingMessage::Hsl(message),
     } = message
     else {
         return;
     };
+    let state = *message.state();
+    if last_teammate_messages[state.player_number]
+        .is_some_and(|previous| time <= previous.received_at)
+    {
+        return;
+    }
 
     if let Some(freshness_window) = freshness_window
         && let Some(previous) = last_teammate_messages[state.player_number]
@@ -361,4 +367,58 @@ fn replay_tick_count(message_elapsed: Duration, local_tick_duration: Duration) -
     (message_elapsed.as_secs_f32() / local_tick_duration.as_secs_f32())
         .ceil()
         .max(1.0) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use hsl_network_messages::{CoordinatedStateMessage, HulkMessage};
+    use linear_algebra::{Pose2, point};
+    use ros_z::time::Time;
+
+    use super::*;
+
+    #[test]
+    fn coordinated_state_updates_search_sites_without_rewinding_to_an_old_packet() {
+        let dimensions = FieldDimensions::SPL_2025;
+        let mut heatmap = Heatmap::new(dimensions);
+        let mut teammates = Players::new(None);
+        let pose = Pose2::new(point!(1.0, 2.0), 0.3);
+        let state = StateMessage {
+            player_number: PlayerNumber::Two,
+            pose,
+            ..Default::default()
+        };
+        for (time, message) in [
+            (
+                20,
+                HulkMessage::CoordinatedState(CoordinatedStateMessage {
+                    state,
+                    ..Default::default()
+                }),
+            ),
+            (
+                10,
+                HulkMessage::State(StateMessage {
+                    pose: Pose2::default(),
+                    ..state
+                }),
+            ),
+        ] {
+            decay_with_teammate_message(
+                &mut heatmap,
+                dimensions,
+                TimeWrapper {
+                    time: Time::from_nanos(time),
+                    inner: IncomingMessage::Hsl(message),
+                },
+                &mut teammates,
+                &SearchSuggestorParameters::default(),
+                Some(Duration::from_secs(1)),
+                Duration::from_millis(20),
+            );
+        }
+        let teammate = teammates.two.unwrap();
+        assert_eq!(teammate.received_at, Time::from_nanos(20));
+        assert_eq!(teammate.state.pose, pose);
+    }
 }

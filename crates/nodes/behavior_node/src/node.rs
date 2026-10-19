@@ -10,7 +10,7 @@ use color_eyre::Result;
 use types::fall_detection::FallDetection;
 
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::PlayerNumber;
+use hsl_network_messages::{PassIntent, PassReady, PlayerNumber};
 use kinematics::joints::head::HeadJoints;
 use linear_algebra::{Isometry2, Point2, Pose2, Vector2};
 use ros_z::{
@@ -42,7 +42,9 @@ use types::{
 };
 use voronoi::VoronoiGrid;
 
-use crate::{motion_assembler::assemble_motion_command, tree::create_tree};
+use crate::{
+    kick::strategy::BallAction, motion_assembler::assemble_motion_command, tree::create_tree,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct LastBall {
@@ -53,7 +55,7 @@ pub struct LastBall {
     pub source: BallSource,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Message)]
 pub struct Blackboard {
     pub field_dimensions: FieldDimensions,
     pub head_yaw: f32,
@@ -75,6 +77,16 @@ pub struct Blackboard {
     /// Target selected for this tick, used to choose kick strength.
     pub kick_target: Option<Point2<Ground>>,
     pub last_kick_target: Option<Point2<Field>>,
+    pub ball_action: Option<BallAction>,
+    pub restart_release: Option<crate::kick::restarts::RestartRelease>,
+    pub kickoff_support: Option<crate::kick::restarts::KickoffSupport>,
+    pub ball_action_active: bool,
+    pub timed_player_states: Players<Option<TimeWrapper<PlayerState>>>,
+    pub last_announced_pass: Option<TimeWrapper<PassIntent>>,
+    pub pass_started_at: Option<Time>,
+    pub pass_cooldown_until: Option<Time>,
+    pub ready_to_receive_pass: Option<PassReady>,
+    pub receiving_pass: Option<crate::kick::passing::ReceivingPass>,
     pub last_motion_command: MotionCommand,
     pub last_motion_switch_time: Time,
     pub last_motion_type: Option<MotionType>,
@@ -146,6 +158,23 @@ fn validate_behavior_parameters(
 
     if !parameters.kicking.target_speed.is_finite() || parameters.kicking.target_speed < 0.0 {
         errors.push("kicking.target_speed must be finite and non-negative".to_owned());
+    }
+    if let Err(error) = parameters.kicking.strategy.validate() {
+        errors.push(error);
+    }
+    if let Err(error) = parameters.kicking.approach.validate() {
+        errors.push(error);
+    }
+    for (name, value) in [
+        (
+            "receiving_lane_weight",
+            parameters.voronoi.receiving_lane_weight,
+        ),
+        ("shot_lane_weight", parameters.voronoi.shot_lane_weight),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            errors.push(format!("voronoi.{name} must be finite and non-negative"));
+        }
     }
 
     if errors.is_empty() {
@@ -339,6 +368,16 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_close_enough_to_kick: false,
         kick_target: None,
         last_kick_target: None,
+        ball_action: None,
+        restart_release: None,
+        kickoff_support: None,
+        ball_action_active: false,
+        timed_player_states: Players::default(),
+        last_announced_pass: None,
+        pass_started_at: None,
+        pass_cooldown_until: None,
+        ready_to_receive_pass: None,
+        receiving_pass: None,
         last_motion_command: MotionCommand::default(),
         last_motion_switch_time: Time::zero(),
         last_motion_type: None,
@@ -373,6 +412,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         blackboard.is_injected_motion_command = false;
         blackboard.walk_position = None;
         blackboard.kick_target = None;
+        blackboard.ball_action_active = false;
+        blackboard.ready_to_receive_pass = None;
         blackboard.body_motion = None;
         blackboard.head_motion = None;
         blackboard.voronoi_map = None;
@@ -423,15 +464,14 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.remote_control_enabled = !blackboard.remote_control_enabled;
         }
 
-        let player_states = player_states_cache
+        let timed_player_states = player_states_cache
             .get_latest()
-            .map(|player_states| {
-                player_states
-                    .as_ref()
-                    .clone()
-                    .map(|player_state| player_state.map(|state| state.inner))
-            })
+            .map(|player_states| player_states.as_ref().clone())
             .unwrap_or_default();
+        let player_states = timed_player_states
+            .clone()
+            .map(|state| state.map(|state| state.inner));
+        blackboard.timed_player_states = timed_player_states;
 
         let primary_state = primary_state_cache
             .get_latest()
@@ -502,7 +542,18 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.ball = None;
         }
 
+        if blackboard.world_state.robot.primary_state != types::primary_state::PrimaryState::Playing
+        {
+            blackboard.receiving_pass = None;
+        }
+        crate::kick::restarts::reset_restart_release_if_new_play(&mut blackboard);
+        crate::kick::restarts::update_kickoff_support(&mut blackboard);
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
+        if !blackboard.ball_action_active {
+            blackboard.ball_action = None;
+            blackboard.last_announced_pass = None;
+            blackboard.pass_started_at = None;
+        }
         let motion_command: MotionCommand = assemble_motion_command(&blackboard, status)?;
 
         let previous_motion_command = blackboard.last_motion_command.clone();

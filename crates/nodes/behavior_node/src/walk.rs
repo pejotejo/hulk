@@ -1,14 +1,14 @@
 use coordinate_systems::{Field, Ground};
 use filtering::hysteresis::less_than_with_relative_hysteresis;
+use geometry::{Distance, line_segment::LineSegment};
 use hsl_network_messages::PlayerNumber;
 use linear_algebra::{Isometry2, Orientation2, Point, Point2, Pose2, point};
 use path_planner::path_planner::PathPlanner;
 use types::{
     behavior_tree::Status,
-    field_dimensions::FieldDimensions,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
     motion_type::MotionType,
-    parameters::VoronoiParameters,
+    obstacles::{Obstacle, ObstacleKind},
     path::{Path, direct_path},
     rule_obstacles::RuleObstacle,
 };
@@ -24,6 +24,7 @@ use crate::{
     node::Blackboard,
     selection, sequence, subtree,
     switch_motion_type::{is_last_motion_type, switch_motion_type},
+    voronoi::fresh_teammate_poses,
 };
 
 pub fn plan(
@@ -35,7 +36,7 @@ pub fn plan(
         .unwrap_or_else(|| direct_path(Point::origin(), target_in_ground))
 }
 
-fn try_plan(
+pub(crate) fn try_plan(
     blackboard: &mut Blackboard,
     target_in_ground: Point2<Ground>,
     ground_to_field: Isometry2<Ground, Field>,
@@ -53,6 +54,17 @@ fn try_plan(
         parameters.rotation_penalty_factor,
     );
     planner.with_obstacles(&blackboard.world_state.obstacles, parameters.robot_radius);
+    let teammate_obstacles: Vec<_> = fresh_teammate_poses(blackboard)
+        .map(|(_, pose)| ground_to_field.inverse() * pose.position())
+        .filter(|position| {
+            !blackboard.world_state.obstacles.iter().any(|obstacle| {
+                obstacle.kind == ObstacleKind::Robot
+                    && (obstacle.position - position).norm() <= parameters.robot_radius
+            })
+        })
+        .map(|position| Obstacle::robot(position, parameters.robot_radius, parameters.robot_radius))
+        .collect();
+    planner.with_obstacles(&teammate_obstacles, parameters.robot_radius);
     planner.with_rule_obstacles(
         ground_to_field.inverse(),
         &blackboard.world_state.rule_obstacles,
@@ -111,7 +123,7 @@ pub fn walk_to(
     )
 }
 
-fn walk_to_with_path(
+pub(crate) fn walk_to_with_path(
     blackboard: &mut Blackboard,
     target_pose: Pose2<Ground>,
     maximal_walk_speed: f32,
@@ -167,31 +179,14 @@ fn walk_to_with_path(
 }
 
 pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
-    if let (Some(ball), Some(ground_to_field)) = (
-        &blackboard.last_ball,
-        &blackboard.world_state.robot.ground_to_field,
-    ) {
-        let field_to_ground = ground_to_field.inverse();
-        let ball_in_ground = field_to_ground * ball.position;
-        let goal_position = field_to_ground * point!(blackboard.field_dimensions.length / 2.0, 0.0);
-        let orientation = Orientation2::from_vector(goal_position - ball_in_ground);
-        let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
-        let kicking_speed = blackboard.parameters.walking.speed.kicking;
-
-        let target_position = ball_in_ground
-            - (goal_position - ball_in_ground).normalize()
-                * blackboard.parameters.kicking.approach_ball_standoff;
-        walk_to(
-            blackboard,
-            Pose2::from_parts(target_position, orientation),
-            kicking_speed,
-            OrientationMode::AlignWithPath,
-            walk_and_stand.normal_distance_to_be_aligned,
-            walk_and_stand.hysteresis,
-        )
-    } else {
-        Status::Failure
-    }
+    let target = blackboard
+        .world_state
+        .robot
+        .ground_to_field
+        .zip(blackboard.kick_target)
+        .map(|(ground_to_field, target)| ground_to_field * target)
+        .unwrap_or_else(|| point!(blackboard.field_dimensions.length / 2.0, 0.0));
+    crate::kick::execution::walk_to_ball_action(blackboard, target)
 }
 
 pub fn walk_to_ball_subtree() -> Node<Blackboard> {
@@ -284,15 +279,7 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
     if let (Some(ground_to_field), Some(map)) = (
         blackboard.world_state.robot.ground_to_field,
         &blackboard.voronoi_map,
-    ) && let Some((target_position, is_reentry)) = target_player_position(
-        map,
-        blackboard.world_state.robot.player_number,
-        blackboard.ball.as_ref().map(|ball| ball.position),
-        &blackboard.field_dimensions,
-        &blackboard.parameters.voronoi,
-    )
-    .map(|position| (position, false))
-    .or_else(|| {
+    ) && let Some(target_position) = target_player_position(blackboard, map).or_else(|| {
         // A robot beyond the grid has no support region. Re-enter the field
         // so it can participate in the next ownership election.
         let position = ground_to_field.as_pose().position();
@@ -331,20 +318,16 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
                     .norm_squared()
                     .total_cmp(&(b - position).norm_squared())
             })
-            .map(|(point, _)| (point, true))
+            .map(|(point, _)| point)
     }) {
-        let planned_path = if is_reentry {
-            let Some(path) = try_plan(
-                blackboard,
-                ground_to_field.inverse() * target_position,
-                ground_to_field,
-            ) else {
-                // Recovery must not take a direct shortcut through a rule area.
-                return Status::Failure;
-            };
-            Some(path)
-        } else {
-            None
+        let Some(path) = try_plan(
+            blackboard,
+            ground_to_field.inverse() * target_position,
+            ground_to_field,
+        ) else {
+            // A supporter must not take a direct shortcut through teammates or
+            // a rule area when the planned route is unavailable.
+            return Status::Failure;
         };
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;
@@ -376,20 +359,34 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
             orientation_mode,
             walk_and_stand.normal_distance_to_be_aligned,
             walk_and_stand.hysteresis,
-            planned_path,
+            Some(path),
         )
     } else {
         Status::Failure
     }
 }
 
-fn target_player_position(
-    map: &VoronoiGrid,
-    player: PlayerNumber,
-    ball_position: Option<Point2<Field>>,
-    field_dimensions: &FieldDimensions,
-    parameters: &VoronoiParameters,
-) -> Option<Point2<Field>> {
+fn target_player_position(blackboard: &Blackboard, map: &VoronoiGrid) -> Option<Point2<Field>> {
+    let player = blackboard.world_state.robot.player_number;
+    let field_dimensions = &blackboard.field_dimensions;
+    let parameters = &blackboard.parameters.voronoi;
+    let ball_position = blackboard.ball.as_ref().map(|ball| ball.position);
+    let ground_to_field = blackboard.world_state.robot.ground_to_field?;
+    let robot_radius = blackboard.parameters.walking.path_planning.robot_radius;
+    let obstacles: Vec<_> = blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .map(|obstacle| {
+            (
+                ground_to_field * obstacle.position,
+                obstacle
+                    .radius_at_foot_height
+                    .max(obstacle.radius_at_hip_height),
+            )
+        })
+        .chain(fresh_teammate_poses(blackboard).map(|(_, pose)| (pose.position(), robot_radius)))
+        .collect();
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
     let mut count = 0;
@@ -417,13 +414,8 @@ fn target_player_position(
     let inv_count = 1.0 / count as f32;
     let centroid: Point2<Field> = point![sum_x * inv_count, sum_y * inv_count];
 
-    let Some(ball_position) = ball_position else {
-        return Some(centroid);
-    };
-
     let half_length = field_dimensions.length / 2.0 + parameters.padding;
-    let ball_x = ball_position.x();
-    let ball_y = ball_position.y();
+    let ball_x = ball_position.map_or(0.0, |position| position.x());
     let side_factor = (ball_x / half_length).clamp(-1.0, 1.0);
 
     let resolution = map.resolution();
@@ -437,15 +429,40 @@ fn target_player_position(
     let mut best_target = None;
 
     for point in candidates {
+        // Ownership cells account for obstacle centers. A walking destination
+        // also needs room for this robot's footprint, including unseen teammates.
+        if point.x().abs() > field_dimensions.length / 2.0 - robot_radius
+            || point.y().abs() > field_dimensions.width / 2.0 - robot_radius
+            || obstacles.iter().any(|(position, radius)| {
+                (point - position).norm_squared() <= (radius + robot_radius).powi(2)
+            })
+            || !has_rule_clearance(blackboard, point, robot_radius)
+        {
+            continue;
+        }
+
+        let ball_term = if let Some(ball_position) = ball_position {
+            let ball_distance = (point - ball_position).norm();
+            let ball_workspace =
+                2.0 * robot_radius + blackboard.parameters.kicking.approach_ball_standoff;
+            if ball_distance < ball_workspace {
+                continue;
+            }
+            let support_distance_error = ball_distance - support_distance;
+            // A Gaussian alone becomes negligible throughout a distant player's
+            // region. Keep a pull toward useful support range even there,
+            // rather than letting its old territorial centroid hold it upfield.
+            let distant_support_penalty = support_distance_error.max(0.0) / support_sigma;
+            parameters.ball_weight
+                * ((-(support_distance_error * support_distance_error) * inv_two_support_sigma_sq)
+                    .exp()
+                    - distant_support_penalty)
+        } else {
+            0.0
+        };
+
         let forward_norm = point.x() / half_length;
         let forward_term = parameters.forward_weight * side_factor * forward_norm;
-
-        let dx_ball = point.x() - ball_x;
-        let dy_ball = point.y() - ball_y;
-        let ball_distance = (dx_ball * dx_ball + dy_ball * dy_ball).sqrt();
-        let support_distance_error = ball_distance - support_distance;
-        let ball_term = parameters.ball_weight
-            * (-(support_distance_error * support_distance_error) * inv_two_support_sigma_sq).exp();
 
         let dx_centroid = point.x() - centroid.x();
         let dy_centroid = point.y() - centroid.y();
@@ -453,11 +470,88 @@ fn target_player_position(
             * (dx_centroid * dx_centroid + dy_centroid * dy_centroid).sqrt()
             / centroid_sigma;
 
-        let score = forward_term + ball_term - centroid_penalty;
+        let lane_score = ball_position.map_or(0.0, |ball_position| {
+            let receiving_lane = LineSegment::new(ball_position, point);
+            let receiving_clearance = obstacles
+                .iter()
+                .filter(|(position, _)| {
+                    (0.1..0.9).contains(&receiving_lane.projection_factor(*position))
+                })
+                .map(|(position, radius)| {
+                    ((receiving_lane.distance_to(*position)
+                        - radius
+                        - field_dimensions.ball_radius)
+                        / robot_radius.max(resolution))
+                    .clamp(0.0, 1.0)
+                })
+                .fold(1.0_f32, f32::min);
+            let goal_center = point!(field_dimensions.length / 2.0, 0.0);
+            let shot_vector = goal_center - ball_position;
+            let shot_blocking = if shot_vector.norm_squared() > f32::EPSILON {
+                let shot_lane = LineSegment::new(ball_position, goal_center);
+                let along_lane = shot_lane.projection_factor(point);
+                if (0.0..1.0).contains(&along_lane) {
+                    (1.0 - shot_lane.distance_to(point) / (2.0 * robot_radius).max(resolution))
+                        .clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            parameters.receiving_lane_weight * receiving_clearance
+                - parameters.shot_lane_weight * shot_blocking
+        });
+        let score = forward_term + ball_term - centroid_penalty + lane_score;
         if best_target.is_none_or(|(best_score, _)| score > best_score) {
             best_target = Some((score, point));
         }
     }
 
     best_target.map(|(_, point)| point)
+}
+
+fn has_rule_clearance(blackboard: &Blackboard, point: Point2<Field>, margin: f32) -> bool {
+    has_rule_path_clearance(blackboard, LineSegment(point, point), margin)
+}
+
+/// Check the original rule regions, before any planner destination projection.
+pub(crate) fn has_rule_path_clearance(
+    blackboard: &Blackboard,
+    path: LineSegment<Field>,
+    margin: f32,
+) -> bool {
+    blackboard
+        .world_state
+        .rule_obstacles
+        .iter()
+        .all(|obstacle| match obstacle {
+            RuleObstacle::Circle(circle) => {
+                let distance_squared = if path.length_squared() <= f32::EPSILON {
+                    (path.0 - circle.center).norm_squared()
+                } else {
+                    path.squared_distance_to(circle.center)
+                };
+                distance_squared > (circle.radius + margin).powi(2)
+            }
+            RuleObstacle::Rectangle(rectangle) => {
+                let min = point![rectangle.min.x() - margin, rectangle.min.y() - margin];
+                let max = point![rectangle.max.x() + margin, rectangle.max.y() + margin];
+                let outside = |point: Point2<Field>| {
+                    !(min.x()..=max.x()).contains(&point.x())
+                        || !(min.y()..=max.y()).contains(&point.y())
+                };
+                let corners = [min, point![min.x(), max.y()], max, point![max.x(), min.y()]];
+                outside(path.0)
+                    && outside(path.1)
+                    && (path.length_squared() <= f32::EPSILON
+                        || (0..4).all(|i| {
+                            !path.intersects_line_segment(LineSegment(
+                                corners[i],
+                                corners[(i + 1) % 4],
+                            ))
+                        }))
+            }
+        })
 }

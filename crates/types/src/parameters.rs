@@ -30,6 +30,12 @@ pub struct VoronoiParameters {
     pub ball_support_sigma: f32,
     pub centroid_anchor_weight: f32,
     pub centroid_anchor_sigma: f32,
+    #[serde(default)]
+    pub teammate_pose_max_age: Duration,
+    #[serde(default)]
+    pub receiving_lane_weight: f32,
+    #[serde(default)]
+    pub shot_lane_weight: f32,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Message)]
@@ -56,6 +62,9 @@ pub struct BehaviorControlParameters {
 pub struct BallBehaviorParameters {
     pub last_ball_timeout: Duration,
     pub team_ball_timeout: Duration,
+    /// Bounded lookahead for walking toward a moving ball, not kick observations.
+    #[serde(default)]
+    pub pursuit_lookahead: Duration,
     pub interception: InterceptBallParameters,
     pub closest_to_ball: ClosestToBallParameters,
 }
@@ -394,6 +403,10 @@ impl Default for WalkSpeedParameters {
 
 #[derive(Clone, Debug, Deserialize, Serialize, ros_z::Message)]
 pub struct KickingParameters {
+    #[serde(default)]
+    pub strategy: KickStrategyParameters,
+    #[serde(default)]
+    pub approach: KickApproachParameters,
     pub soft: bool,
     pub quick: bool,
     /// Desired outgoing ball speed in m/s.
@@ -414,6 +427,8 @@ pub struct KickingParameters {
 impl Default for KickingParameters {
     fn default() -> Self {
         Self {
+            strategy: KickStrategyParameters::default(),
+            approach: KickApproachParameters::default(),
             soft: false,
             quick: false,
             target_speed: 3.4,
@@ -424,6 +439,171 @@ impl Default for KickingParameters {
             approach_ball_standoff: 0.0,
             minimum_interception_forward_distance: 0.0,
         }
+    }
+}
+
+/// Tactical reach and clearance in metres; angles in radians.
+#[derive(Clone, Debug, Deserialize, Serialize, ros_z::Message)]
+#[serde(default)]
+pub struct KickStrategyParameters {
+    pub maximum_shot_distance: f32,
+    pub maximum_dribble_distance: f32,
+    pub obstacle_clearance: f32,
+    pub minimum_shot_angle: f32,
+    pub shot_angle_hysteresis: f32,
+    pub pressure_distance: f32,
+    pub clear_goal_distance: f32,
+    pub clear_distance_hysteresis: f32,
+    pub dribble_target_speed: f32,
+    pub cutback_target_speed: f32,
+    pub minimum_forward_progress: f32,
+    pub passing: PassingParameters,
+}
+
+impl Default for KickStrategyParameters {
+    fn default() -> Self {
+        Self {
+            maximum_shot_distance: 6.0,
+            maximum_dribble_distance: 2.0,
+            obstacle_clearance: 0.08,
+            minimum_shot_angle: 0.06,
+            shot_angle_hysteresis: 0.05,
+            pressure_distance: 0.8,
+            clear_goal_distance: 1.8,
+            clear_distance_hysteresis: 0.3,
+            dribble_target_speed: 1.2,
+            cutback_target_speed: 1.6,
+            minimum_forward_progress: 0.2,
+            passing: PassingParameters::default(),
+        }
+    }
+}
+
+impl KickStrategyParameters {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("maximum_shot_distance", self.maximum_shot_distance),
+            ("maximum_dribble_distance", self.maximum_dribble_distance),
+            ("obstacle_clearance", self.obstacle_clearance),
+            ("minimum_shot_angle", self.minimum_shot_angle),
+            ("shot_angle_hysteresis", self.shot_angle_hysteresis),
+            ("pressure_distance", self.pressure_distance),
+            ("clear_goal_distance", self.clear_goal_distance),
+            ("clear_distance_hysteresis", self.clear_distance_hysteresis),
+            ("dribble_target_speed", self.dribble_target_speed),
+            ("cutback_target_speed", self.cutback_target_speed),
+            ("minimum_forward_progress", self.minimum_forward_progress),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "kicking.strategy.{name} must be finite and non-negative"
+                ));
+            }
+        }
+        self.passing.validate()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ros_z::Message)]
+#[serde(default)]
+pub struct PassingParameters {
+    pub maximum_distance: f32,
+    pub minimum_progress: f32,
+    pub receiver_standoff: f32,
+    pub target_half_width: f32,
+    pub selection_hysteresis: f32,
+    pub maximum_receiver_age: Duration,
+    pub target_speed: f32,
+    pub preparation_timeout: Duration,
+    pub cooldown: Duration,
+    pub maximum_ready_age: Duration,
+    pub maximum_reception_speed: f32,
+    pub receiver_orientation_tolerance: f32,
+}
+
+impl Default for PassingParameters {
+    fn default() -> Self {
+        Self {
+            maximum_distance: 4.0,
+            minimum_progress: 0.7,
+            receiver_standoff: 0.5,
+            target_half_width: 0.35,
+            selection_hysteresis: 0.4,
+            maximum_receiver_age: Duration::from_secs(3),
+            target_speed: 1.5,
+            preparation_timeout: Duration::from_secs(6),
+            cooldown: Duration::from_secs(2),
+            maximum_ready_age: Duration::from_millis(700),
+            maximum_reception_speed: 0.5,
+            receiver_orientation_tolerance: 0.5,
+        }
+    }
+}
+
+impl PassingParameters {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("maximum_distance", self.maximum_distance),
+            ("minimum_progress", self.minimum_progress),
+            ("receiver_standoff", self.receiver_standoff),
+            ("target_half_width", self.target_half_width),
+            ("selection_hysteresis", self.selection_hysteresis),
+            ("target_speed", self.target_speed),
+            ("maximum_reception_speed", self.maximum_reception_speed),
+            (
+                "receiver_orientation_tolerance",
+                self.receiver_orientation_tolerance,
+            ),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "kicking.strategy.passing.{name} must be finite and non-negative"
+                ));
+            }
+        }
+        if self.maximum_distance > 0.0
+            && (self.preparation_timeout.is_zero()
+                || self.maximum_receiver_age.is_zero()
+                || self.maximum_ready_age.is_zero())
+        {
+            return Err("enabled passing requires nonzero timeout and freshness limits".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ros_z::Message)]
+#[serde(default)]
+pub struct KickApproachParameters {
+    pub maximum_heading: f32,
+    pub maximum_lateral_distance: f32,
+    pub maximum_ball_escape_speed: f32,
+}
+
+impl Default for KickApproachParameters {
+    fn default() -> Self {
+        Self {
+            maximum_heading: 0.8,
+            maximum_lateral_distance: 0.4,
+            maximum_ball_escape_speed: 1.2,
+        }
+    }
+}
+
+impl KickApproachParameters {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("maximum_heading", self.maximum_heading),
+            ("maximum_lateral_distance", self.maximum_lateral_distance),
+            ("maximum_ball_escape_speed", self.maximum_ball_escape_speed),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "kicking.approach.{name} must be finite and non-negative"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

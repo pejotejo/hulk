@@ -131,6 +131,7 @@ fn blackboard(player: PlayerNumber, ball: Point2<Field>) -> Blackboard {
         body_motion: None,
         head_motion: None,
         voronoi_map: None,
+        ..Default::default()
     }
 }
 

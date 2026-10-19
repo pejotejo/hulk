@@ -25,7 +25,9 @@ use crate::behavior_tree_simulator::{
     SimulatorCurrentInvariantViolations, SimulatorFieldDimensions, SimulatorRobot,
     SimulatorRobotFrames, SimulatorRobotParameters, SimulatorScenarioResult, SimulatorWorldStates,
 };
-use crate::invariant_checks::BEHAVIOR_TICK_ERROR_CHECK_NAME;
+use crate::{
+    communication::SimulatorReceivedHslMessages, invariant_checks::BEHAVIOR_TICK_ERROR_CHECK_NAME,
+};
 
 #[derive(Component)]
 pub struct SimulatorRobotBehavior {
@@ -61,6 +63,8 @@ impl SimulatorRobotBehavior {
         self.blackboard.is_injected_motion_command = false;
         self.blackboard.walk_position = None;
         self.blackboard.kick_target = None;
+        self.blackboard.ball_action_active = false;
+        self.blackboard.ready_to_receive_pass = None;
         self.blackboard.body_motion = None;
         self.blackboard.head_motion = None;
         self.blackboard.voronoi_map = None;
@@ -88,18 +92,31 @@ impl SimulatorRobotBehavior {
             self.blackboard.ball = None;
         }
 
+        if self.blackboard.world_state.robot.primary_state
+            != types::primary_state::PrimaryState::Playing
+        {
+            self.blackboard.receiving_pass = None;
+        }
+        behavior_node::kick::restarts::reset_restart_release_if_new_play(&mut self.blackboard);
+        behavior_node::kick::restarts::update_kickoff_support(&mut self.blackboard);
         let (status, trace) = self.tree.tick_with_trace(&mut self.blackboard);
+        if !self.blackboard.ball_action_active {
+            self.blackboard.ball_action = None;
+            self.blackboard.last_announced_pass = None;
+            self.blackboard.pass_started_at = None;
+        }
         let motion_command = assemble_motion_command(&self.blackboard, status)?;
         self.blackboard.last_motion_command = motion_command.clone();
 
         let motion_type = match motion_command.clone() {
             MotionCommand::Kick { .. } => Some(types::motion_type::MotionType::Kick),
-            MotionCommand::Walk { .. } => Some(types::motion_type::MotionType::Walk),
+            MotionCommand::Walk { .. } | MotionCommand::WalkWithVelocity { .. } => {
+                Some(types::motion_type::MotionType::Walk)
+            }
             MotionCommand::Stand { .. } => Some(types::motion_type::MotionType::Stand),
             MotionCommand::StandUp => Some(types::motion_type::MotionType::StandUp),
             MotionCommand::Prepare => Some(types::motion_type::MotionType::Prepare),
             MotionCommand::Damping => Some(types::motion_type::MotionType::Damping),
-            _ => None,
         };
 
         if motion_type != self.blackboard.last_motion_type {
@@ -196,6 +213,7 @@ fn create_behavior_blackboard(parameters: BehaviorParameters) -> BehaviorBlackbo
         body_motion: None,
         head_motion: None,
         voronoi_map: None,
+        ..Default::default()
     }
 }
 
@@ -203,6 +221,7 @@ pub fn tick_behavior_trees(
     clock: Res<SimulatorClock>,
     field_dimensions: Res<SimulatorFieldDimensions>,
     world_states: Res<SimulatorWorldStates>,
+    received_hsl_messages: Res<SimulatorReceivedHslMessages>,
     mut robot_frames: ResMut<SimulatorRobotFrames>,
     mut current_violations: ResMut<SimulatorCurrentInvariantViolations>,
     mut scenario_result: ResMut<SimulatorScenarioResult>,
@@ -221,6 +240,21 @@ pub fn tick_behavior_trees(
             continue;
         };
 
+        // Preserve receipt times rather than making cached peer poses fresh on
+        // every behavior tick. The world-state builder already applies expiry.
+        behavior.blackboard.timed_player_states = Default::default();
+        if let Some(messages) = received_hsl_messages.messages_by_receiver.get(&robot_id) {
+            for message in messages.values() {
+                let player = message.message.state().player_number;
+                if let Some(state) = world_state.player_states[player] {
+                    behavior.blackboard.timed_player_states[player] =
+                        Some(types::time_wrapper::TimeWrapper {
+                            time: ros_z::time::Time::from_wallclock(message.received_at),
+                            inner: state,
+                        });
+                }
+            }
+        }
         let tick_output = match behavior.tick_behavior_tree(SimulatorBehaviorTickInput {
             visual_kick_ball_position: visual_kick_ball_position_from_world_state(&world_state),
             world_state: world_state.clone(),
@@ -390,6 +424,8 @@ mod tests {
 
         let mut blackboard = kick_blackboard(point![0.5, 1.0]);
         blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.5, 1.0],
+            ball_in_field: point![0.5, 1.0],
             ball_in_ground_velocity: vector![0.0, -1.0],
             ..Default::default()
         });
@@ -426,6 +462,7 @@ mod tests {
             velocity: vector![0.0, 0.0],
             age: ros_z::time::Time::zero(),
             field_side: Side::Left,
+            source: types::world_state::BallSource::Own,
         });
         blackboard
             .parameters
@@ -454,6 +491,7 @@ mod tests {
                 WorldState::default(),
             )])))
             .insert_resource(SimulatorRobotFrames::default())
+            .insert_resource(SimulatorReceivedHslMessages::default())
             .insert_resource(SimulatorCurrentInvariantViolations::default())
             .insert_resource(SimulatorScenarioResult::default())
             .add_systems(Update, tick_behavior_trees);

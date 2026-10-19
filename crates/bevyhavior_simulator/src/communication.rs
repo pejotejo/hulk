@@ -109,7 +109,21 @@ pub fn apply_incoming_hsl_messages(
             continue;
         };
 
-        let HulkMessage::State(state_message) = message;
+        if received_hsl_messages
+            .messages_by_receiver
+            .get(&incoming_message.receiver)
+            .and_then(|messages| messages.get(&incoming_message.sender))
+            .is_some_and(|previous| previous.received_at >= incoming_message.received_at)
+        {
+            continue;
+        }
+        let (state_message, pass, pass_ready, unavailable) = match message {
+            HulkMessage::State(state) => (state, None, None, false),
+            HulkMessage::CoordinatedState(message) => {
+                (message.state, message.pass, message.pass_ready, false)
+            }
+            HulkMessage::UnavailableState(state) => (state, None, None, true),
+        };
         let player_state = PlayerState {
             pose: state_message.pose,
             ball_position: state_message.ball_position.map(|ball| {
@@ -118,6 +132,9 @@ pub fn apply_incoming_hsl_messages(
                     ros_z::time::Time::from_wallclock(incoming_message.received_at),
                 )
             }),
+            pass,
+            pass_ready,
+            unavailable,
         };
         received_hsl_messages
             .player_states_by_receiver
@@ -463,5 +480,122 @@ mod tests {
                 [PlayerNumber::Three]
                 .is_some()
         );
+    }
+
+    #[test]
+    fn coordinated_intents_propagate_and_legacy_cancellation_cannot_be_reversed_by_old_packets() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(SimulatorIncomingMessages::default())
+            .insert_resource(SimulatorReceivedHslMessages::default())
+            .add_systems(Update, apply_incoming_hsl_messages);
+        let state = *hsl_state_message(PlayerNumber::Three, 1.0, 0.0).state();
+        let intent = hsl_network_messages::PassIntent {
+            receiver: PlayerNumber::Four,
+            target: point!(2.0, 1.0),
+        };
+        let coordinated =
+            HulkMessage::CoordinatedState(hsl_network_messages::CoordinatedStateMessage {
+                state,
+                pass: Some(intent),
+                pass_ready: None,
+            });
+        for (time, message, expected_pass) in [
+            (2, coordinated, Some(intent)),
+            (3, HulkMessage::State(state), None),
+            (2, coordinated, None),
+        ] {
+            app.world_mut()
+                .resource_mut::<SimulatorIncomingMessages>()
+                .messages
+                .push(SimulatorIncomingMessage {
+                    receiver: robot_id(PlayerNumber::Four),
+                    sender: robot_id(PlayerNumber::Three),
+                    message: IncomingMessage::Hsl(message),
+                    received_at: SystemTime::UNIX_EPOCH + Duration::from_secs(time),
+                });
+            app.update();
+            let received = app.world().resource::<SimulatorReceivedHslMessages>();
+            assert_eq!(
+                received.player_states_by_receiver[&robot_id(PlayerNumber::Four)]
+                    [PlayerNumber::Three]
+                    .unwrap()
+                    .pass,
+                expected_pass
+            );
+        }
+    }
+
+    #[test]
+    fn unavailable_teammate_keeps_its_pose_and_recovers_without_accepting_old_status() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(SimulatorIncomingMessages::default())
+            .insert_resource(SimulatorReceivedHslMessages::default())
+            .add_systems(Update, apply_incoming_hsl_messages);
+        let active = *hsl_state_message(PlayerNumber::Three, 1.0, 0.0).state();
+        let unavailable_state = *hsl_state_message(PlayerNumber::Three, 1.5, -0.5).state();
+        let intent = hsl_network_messages::PassIntent {
+            receiver: PlayerNumber::Four,
+            target: point!(2.0, 1.0),
+        };
+        let coordinated =
+            HulkMessage::CoordinatedState(hsl_network_messages::CoordinatedStateMessage {
+                state: active,
+                pass: Some(intent),
+                pass_ready: Some(hsl_network_messages::PassReady {
+                    sender: PlayerNumber::Four,
+                    target: point!(0.0, 1.0),
+                }),
+            });
+        let unavailable = HulkMessage::UnavailableState(unavailable_state);
+        for (time, message, expected_time, expected_unavailable, expected_coordination) in [
+            (2, coordinated, 2, false, true),
+            (3, unavailable, 3, true, false),
+            (2, coordinated, 3, true, false),
+            (4, coordinated, 4, false, true),
+            (3, unavailable, 4, false, true),
+            (4, unavailable, 4, false, true),
+            (5, unavailable, 5, true, false),
+            (6, HulkMessage::State(active), 6, false, false),
+            (5, unavailable, 6, false, false),
+        ] {
+            app.world_mut()
+                .resource_mut::<SimulatorIncomingMessages>()
+                .messages
+                .push(SimulatorIncomingMessage {
+                    receiver: robot_id(PlayerNumber::Four),
+                    sender: robot_id(PlayerNumber::Three),
+                    message: IncomingMessage::Hsl(message),
+                    received_at: SystemTime::UNIX_EPOCH + Duration::from_secs(time),
+                });
+            app.update();
+            let received = app.world().resource::<SimulatorReceivedHslMessages>();
+            let state = received.player_states_by_receiver[&robot_id(PlayerNumber::Four)]
+                [PlayerNumber::Three]
+                .unwrap();
+            let latest = &received.messages_by_receiver[&robot_id(PlayerNumber::Four)]
+                [&robot_id(PlayerNumber::Three)];
+            let received_at = SystemTime::UNIX_EPOCH + Duration::from_secs(expected_time);
+            let expected_state = if expected_unavailable {
+                unavailable_state
+            } else {
+                active
+            };
+            assert_eq!(state.unavailable, expected_unavailable);
+            assert_eq!(state.pose, expected_state.pose);
+            assert_eq!(state.pass.is_some(), expected_coordination);
+            assert_eq!(state.pass_ready.is_some(), expected_coordination);
+            assert_eq!(latest.received_at, received_at);
+            let ball = state.ball_position.unwrap();
+            assert_eq!(
+                ball.position,
+                expected_state.ball_position.unwrap().position
+            );
+            assert_eq!(
+                ball.last_seen,
+                ros_z::time::Time::from_wallclock(received_at) - Duration::from_millis(500)
+            );
+        }
     }
 }

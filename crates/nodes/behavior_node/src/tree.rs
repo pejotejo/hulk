@@ -7,14 +7,22 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::{
-        has_ball_position, hulks_is_kicking_team, is_ball_free, is_ball_interception_candidate,
-        is_close_to_ball, is_closest_to_ball, is_controller_connected, is_fallen, is_goalkeeper,
-        is_kickoff, is_last_hulk_standing, is_primary_state, is_ready_for_stand_up,
-        is_remote_control_enabled, is_remote_kick_mode, is_simple, should_do_fall_protection,
+        has_ball_position, hulks_is_kicking_team, is_ball_free, is_closest_to_ball,
+        is_controller_connected, is_fallen, is_goalkeeper, is_kickoff, is_last_hulk_standing,
+        is_primary_state, is_ready_for_stand_up, is_remote_control_enabled, is_remote_kick_mode,
+        is_simple, should_do_fall_protection,
     },
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
-    kick::{intercept, kick, kick_subtree, set_kick_target_beyond_ball, use_kick},
+    kick::{
+        kick, kick_subtree,
+        passing::{is_pass_ball_arriving, is_pass_receiver, prepare_to_receive_pass},
+        restarts::{
+            has_current_restart_ball, is_waiting_for_kickoff_movement, should_yield_after_restart,
+            yield_after_restart,
+        },
+        set_kick_target_beyond_ball, use_kick,
+    },
     negation,
     node::Blackboard,
     penalty_shootout::{is_penalty_shootout, penalty_shootout_subtree},
@@ -24,10 +32,7 @@ use crate::{
     subtree,
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
-    walk::{
-        walk_alternatives_subtree, walk_to_ball_subtree, walk_to_kickoff_pose,
-        walk_to_voronoi_position,
-    },
+    walk::{walk_alternatives_subtree, walk_to_kickoff_pose, walk_to_voronoi_position},
 };
 
 pub fn create_tree() -> Node<Blackboard> {
@@ -103,6 +108,20 @@ fn playing_subtree() -> Node<Blackboard> {
             subtree!(penalty_shootout_subtree)
         ),
         sequence!(
+            condition!(should_yield_after_restart),
+            selection!(
+                sequence!(
+                    condition!(has_current_restart_ball),
+                    subtree!(look_at_ball_subtree),
+                    action!(yield_after_restart),
+                ),
+                sequence!(
+                    subtree!(search_for_lost_ball_subtree),
+                    switch_motion_type(MotionType::Walk, action!(leuchtturm), action!(stand)),
+                ),
+            ),
+        ),
+        sequence!(
             selection!(condition!(is_simple), condition!(is_last_hulk_standing)),
             selection!(
                 sequence!(
@@ -113,6 +132,29 @@ fn playing_subtree() -> Node<Blackboard> {
             )
         ),
         sequence!(condition!(is_goalkeeper), subtree!(goalkeeper_subtree)),
+        sequence!(
+            condition!(is_waiting_for_kickoff_movement),
+            selection!(
+                sequence!(
+                    condition!(has_ball_position),
+                    action!(calculate_voronoi_grid),
+                    condition!(is_closest_to_ball),
+                    subtree!(striker_subtree),
+                ),
+                sequence!(subtree!(look_at_ball_subtree), action!(stand)),
+            ),
+        ),
+        sequence!(
+            selection!(
+                negation!(condition!(is_in_sub_state)),
+                condition!(hulks_is_kicking_team)
+            ),
+            condition!(is_pass_receiver),
+            selection!(
+                sequence!(condition!(is_pass_ball_arriving), subtree!(striker_subtree)),
+                action!(prepare_to_receive_pass)
+            )
+        ),
         sequence!(
             negation!(condition!(has_ball_position)),
             subtree!(search_subtree)
@@ -150,15 +192,6 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
         subtree!(look_at_ball_subtree),
         selection!(
             sequence!(condition!(is_in_sub_state), subtree!(sub_state_subtree),),
-            sequence!(
-                negation!(condition!(is_close_to_ball)),
-                subtree!(walk_to_ball_subtree)
-            ),
-            sequence!(
-                condition!(is_ball_interception_candidate),
-                subtree!(kick_subtree),
-                action!(intercept),
-            ),
             subtree!(kick_subtree)
         )
     )

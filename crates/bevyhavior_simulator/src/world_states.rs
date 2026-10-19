@@ -410,6 +410,7 @@ mod tests {
                                 },
                                 ros_z::time::Time::from_wallclock(received_at),
                             )),
+                            ..Default::default()
                         }),
                         ..Default::default()
                     },

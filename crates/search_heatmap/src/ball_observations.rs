@@ -1,7 +1,7 @@
 use std::{f32::consts::LN_2, time::Duration, time::SystemTime};
 
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::{HulkMessage, StateMessage};
+use hsl_network_messages::HulkMessage;
 use linear_algebra::{Isometry2, Point2, Vector2};
 use ros_z::time::Time;
 use types::{
@@ -79,15 +79,11 @@ impl Heatmap {
         message: HulkMessage,
         team_ball_weight: f32,
     ) {
-        let ball = match message {
-            HulkMessage::State(StateMessage { ball_position, .. }) => {
-                ball_position.map(|ball| BallPosition {
-                    position: ball.position,
-                    velocity: Vector2::zeros(),
-                    last_seen: Time::from_wallclock(time) - ball.age,
-                })
-            }
-        };
+        let ball = message.state().ball_position.map(|ball| BallPosition {
+            position: ball.position,
+            velocity: Vector2::zeros(),
+            last_seen: Time::from_wallclock(time) - ball.age,
+        });
         if let Some(ball_position) = ball {
             let heatmap_point = self.field_to_heatmap(field_dimensions, ball_position.position);
             self.map[heatmap_point] = team_ball_weight;
@@ -123,5 +119,55 @@ impl Heatmap {
                     * gaussian;
             *value += multiplier * rise_fraction;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hsl_network_messages::{CoordinatedStateMessage, StateMessage};
+    use linear_algebra::point;
+
+    use super::*;
+
+    #[test]
+    fn both_state_envelopes_contribute_the_same_team_ball() {
+        let dimensions = FieldDimensions::SPL_2025;
+        let state = StateMessage {
+            ball_position: Some(hsl_network_messages::BallPosition {
+                age: Duration::ZERO,
+                position: point!(1.0, 0.5),
+            }),
+            ..Default::default()
+        };
+        let mut legacy = Heatmap::new(dimensions);
+        let mut coordinated = Heatmap::new(dimensions);
+        let parameters = SearchSuggestorParameters {
+            team_ball_weight: 0.7,
+            ..Default::default()
+        };
+        for (heatmap, message) in [
+            (&mut legacy, HulkMessage::State(state)),
+            (
+                &mut coordinated,
+                HulkMessage::CoordinatedState(CoordinatedStateMessage {
+                    state,
+                    ..Default::default()
+                }),
+            ),
+        ] {
+            heatmap.update_with_team_ball(
+                dimensions,
+                TimeWrapper {
+                    time: Time::from_nanos(1_000_000_000),
+                    inner: IncomingMessage::Hsl(message),
+                },
+                &parameters,
+            );
+        }
+        assert_eq!(legacy.map, coordinated.map);
+        assert_eq!(
+            legacy.map[legacy.field_to_heatmap(dimensions, point!(1.0, 0.5))],
+            0.7
+        );
     }
 }
