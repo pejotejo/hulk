@@ -64,7 +64,7 @@
   kicking: {
     strategy: {
       // Initial tuning; verify maximum range on the robot before deployment.
-      maximum_shot_distance: 6.0,
+      maximum_shot_distance: 12.0,
       // Provisional travel bound including uncertainty; calibrate for target_speed and surface.
       maximum_dribble_distance: 3.0,
       obstacle_clearance: 0.05,
@@ -74,7 +74,7 @@
       clear_goal_distance: 1.5,
       clear_distance_hysteresis: 0.2,
       passing: {
-        // Provisional soft-kick reach; calibrate at target_speed before deployment.
+        // Provisional regular-kick reach; calibrate at target_speed before deployment.
         maximum_distance: 3.0,
         minimum_progress: 0.5,
         receiver_standoff: 0.5,

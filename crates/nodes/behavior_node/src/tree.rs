@@ -19,7 +19,7 @@ use crate::{
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
         execution::execute_ball_action,
-        intercept, kick, kick_subtree,
+        kick,
         kickoff::kickoff_subtree,
         passing::{is_pass_ball_arriving, is_pass_receiver, prepare_to_receive_pass},
         reception::receive_rolling_ball,
@@ -181,12 +181,6 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                 negation!(condition!(is_in_sub_state)),
                 selection!(
                     action!(receive_rolling_ball),
-                    sequence!(
-                        condition!(is_close_to_ball),
-                        condition!(is_ball_interception_candidate),
-                        subtree!(kick_subtree),
-                        action!(intercept),
-                    ),
                     sequence!(action!(select_ball_action), action!(execute_ball_action)),
                     action!(stand),
                 )

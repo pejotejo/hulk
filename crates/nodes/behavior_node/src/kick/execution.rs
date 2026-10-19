@@ -19,7 +19,7 @@ use super::{
     strategy::BallAction,
 };
 
-/// Resolve a corridor or fall back to goal center after validating ball and localization.
+/// Resolve a corridor, using goal center only when its shot corridor is still clear.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let Some(target) = resolve_target(blackboard) else {
         blackboard.ball_action = None;
@@ -55,10 +55,17 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         strong = previous;
     }
     let target_speed = kicking.target_speed;
-    let soft = controlled || kicking.soft;
-    let quick = !controlled && kicking.quick;
+    let receiving = super::reception::is_receiving_ball(blackboard);
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
-    let can_switch = is_allowed_to_switch(blackboard);
+    let quick = (!controlled && kicking.quick)
+        || receiving
+        || (was_kicking
+            && matches!(
+                blackboard.last_motion_command,
+                MotionCommand::Kick { quick: true, .. }
+            ));
+    let can_switch = is_allowed_to_switch(blackboard)
+        || (receiving && blackboard.last_motion_type == Some(MotionType::Walk));
     if (is_close_to_ball(blackboard) || (was_kicking && !can_switch)) && (was_kicking || can_switch)
     {
         if !pass_ready {
@@ -72,7 +79,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
                 .map_or(Vector2::zeros(), |ball| ball.ball_in_ground_velocity),
             kick_direction: orientation,
             target_speed,
-            soft,
+            soft: false,
             quick,
             strong,
         });
@@ -104,7 +111,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     )
 }
 
-fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
+pub(super) fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
     let action = blackboard.ball_action?;
     let transform = blackboard.world_state.robot.ground_to_field?;
     let ball = transform * kick_ball_position_in_ground(blackboard, &transform)?;
@@ -125,9 +132,10 @@ fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
     if let Some(target) = resolve_action_target(blackboard, action, transform, ball) {
         return Some(target);
     }
+    let target = resolve_action_target(blackboard, BallAction::ShootAtGoalCenter, transform, ball)?;
     blackboard.ball_action = Some(BallAction::ShootAtGoalCenter);
     blackboard.last_announced_pass = None;
-    Some(point![field.length / 2.0, 0.0])
+    Some(target)
 }
 
 fn resolve_action_target(
@@ -139,7 +147,20 @@ fn resolve_action_target(
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
     let openings = match action {
-        BallAction::ShootAtGoalCenter => return Some(point![field.length / 2.0, 0.0]),
+        BallAction::ShootAtGoalCenter => {
+            let target = point![field.length / 2.0, 0.0];
+            return ((target - ball).norm() <= parameters.maximum_shot_distance
+                && goal_openings(
+                    ball,
+                    transform,
+                    &blackboard.world_state.obstacles,
+                    field,
+                    parameters.obstacle_clearance,
+                )
+                .iter()
+                .any(|opening| opening.0.y() < 0.0 && opening.1.y() > 0.0))
+            .then_some(target);
+        }
         BallAction::Shoot { opening: selected } => {
             let dx = field.length / 2.0 - ball.x();
             if parameters.maximum_shot_distance <= dx {
@@ -187,7 +208,7 @@ fn resolve_action_target(
             let distance = if action == BallAction::Dribble {
                 parameters.maximum_dribble_distance
             } else {
-                parameters.maximum_shot_distance
+                parameters.maximum_shot_distance.min(field.length / 2.0)
             };
             travel_openings(
                 ball,
@@ -294,6 +315,8 @@ mod tests {
         };
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.kicking.target_speed = 3.4;
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        blackboard.parameters.kicking.soft = true;
         blackboard.parameters.kicking.allow_strong_kicks = true;
         blackboard
             .parameters

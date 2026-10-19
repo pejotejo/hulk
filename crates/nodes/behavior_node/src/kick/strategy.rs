@@ -27,7 +27,7 @@ pub enum BallAction {
     },
     Dribble,
     Clear,
-    /// Last resort; does not require an open corridor or a reachable goal.
+    /// Last resort, requiring an unobstructed corridor within shooting range.
     ShootAtGoalCenter,
 }
 
@@ -253,7 +253,7 @@ mod tests {
             maximum_receiver_age: Duration::from_millis(500),
         };
         blackboard.parameters.kicking.kick_activation_distance = 3.0;
-        blackboard.parameters.kicking.target_speed = 1.0;
+        blackboard.parameters.kicking.target_speed = 3.4;
         blackboard.world_state.player_states.two = Some(TimeWrapper {
             time: blackboard.world_state.now,
             inner: PlayerState {
@@ -263,6 +263,30 @@ mod tests {
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.0, 0.0], 0.2, 0.25)];
         blackboard
+    }
+
+    #[test]
+    fn shoots_from_large_field_midfield_only_with_a_clear_goal_corridor() {
+        let mut blackboard = blackboard();
+        blackboard.field_dimensions.length = 22.0;
+        blackboard.field_dimensions.width = 14.0;
+        blackboard.field_dimensions.goal_inner_width = 2.6;
+        blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        select_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.ball_action,
+            Some(BallAction::Shoot { .. })
+        ));
+
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![5.5, 0.0], 1.5, 1.5)];
+        select_ball_action(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+
+        blackboard.world_state.obstacles.clear();
+        blackboard.ball.as_mut().unwrap().position = point![-2.0, 0.0];
+        select_ball_action(&mut blackboard);
+        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
     }
 
     #[test]
@@ -299,10 +323,10 @@ mod tests {
         execute_ball_action(&mut blackboard);
         let Some(BodyMotion::Kick {
             kick_direction,
-            soft: true,
+            soft: false,
             strong: false,
             quick: false,
-            target_speed: 1.0,
+            target_speed: 3.4,
             ..
         }) = blackboard.body_motion
         else {
@@ -338,12 +362,9 @@ mod tests {
             0.4,
         ));
         execute_ball_action(&mut blackboard);
-        assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
-        ));
-        assert!((transform * blackboard.kick_target.unwrap() - point![4.5, 0.0]).norm() < 1e-5);
-        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.kick_target, None);
+        assert_eq!(blackboard.ball_action, None);
         assert!(blackboard.last_announced_pass.is_none());
     }
 
@@ -411,16 +432,9 @@ mod tests {
                 receiver: PlayerNumber::Two,
             });
             execute_ball_action(&mut blackboard);
-            assert!(
-                matches!(blackboard.body_motion, Some(BodyMotion::Kick { .. })),
-                "{name}"
-            );
-            assert_eq!(blackboard.kick_target, Some(point![4.5, 0.0]), "{name}");
-            assert_eq!(
-                blackboard.ball_action,
-                Some(BallAction::ShootAtGoalCenter),
-                "{name}"
-            );
+            assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand), "{name}");
+            assert_eq!(blackboard.kick_target, None, "{name}");
+            assert_eq!(blackboard.ball_action, None, "{name}");
         }
     }
 
@@ -867,7 +881,7 @@ mod tests {
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick {
-                soft: true,
+                soft: false,
                 strong: false,
                 ..
             })
@@ -1094,12 +1108,9 @@ mod tests {
         assert_eq!(ball_velocity, velocity);
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         execute_ball_action(&mut blackboard);
-        assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
-        ));
-        assert!((transform * blackboard.kick_target.unwrap() - point![4.5, 0.0]).norm() < 1e-5);
-        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.kick_target, None);
+        assert_eq!(blackboard.ball_action, None);
 
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
@@ -1142,18 +1153,15 @@ mod tests {
             blackboard.body_motion,
             Some(BodyMotion::Kick {
                 strong: false,
-                soft: true,
+                soft: false,
                 ..
             })
         ));
         assert!(blackboard.kick_target.unwrap().x() > 0.51);
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![0.6, 0.0], 0.3, 0.3)];
         tree.tick_with_trace(&mut blackboard);
-        assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
-        ));
-        assert_eq!(blackboard.ball_action, Some(BallAction::ShootAtGoalCenter));
-        assert_eq!(blackboard.kick_target, Some(point![4.5, 0.0]));
+        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(blackboard.ball_action, None);
+        assert_eq!(blackboard.kick_target, None);
     }
 }
