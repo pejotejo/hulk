@@ -71,6 +71,28 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
     {
         return None;
     }
+    if keeper.inner.pass.is_some_and(|pass| {
+        pass.receiver == world.robot.player_number
+            && world.now.duration_since(keeper.time) < hsl_network_messages::PassIntent::TIMEOUT
+            && pass.target.inner.iter().all(|value| value.is_finite())
+            && pass.target.x().abs() < field.length / 2.0
+            && pass.target.y().abs() < field.width / 2.0
+            && (pass.target - keeper_position).norm()
+                <= blackboard
+                    .parameters
+                    .kicking
+                    .strategy
+                    .passing
+                    .maximum_distance
+                    + blackboard
+                        .parameters
+                        .kicking
+                        .strategy
+                        .passing
+                        .receiver_standoff
+    }) {
+        return None;
+    }
     let interception = blackboard.parameters.ball.interception;
     let to_keeper = keeper_position - ball.position;
     let to_robot = transform.as_pose().position() - ball.position;
@@ -297,9 +319,10 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
                 .is_some_and(|since| now.duration_since(since) < parameters.exit_duration)
     } else {
         raw_is_closest
-            && blackboard
-                .closest_to_ball_entered_area_since
-                .is_some_and(|since| now.duration_since(since) >= parameters.enter_duration)
+            && (is_ball_interception_candidate(blackboard)
+                || blackboard
+                    .closest_to_ball_entered_area_since
+                    .is_some_and(|since| now.duration_since(since) >= parameters.enter_duration))
     };
 
     blackboard.last_closest_to_ball = is_closest;
@@ -428,6 +451,47 @@ mod tests {
     use super::*;
     use crate::node::LastBall;
     use types::{field_dimensions::Side, world_state::BallSource};
+
+    #[test]
+    fn incoming_ball_claims_its_region_without_waiting_for_entry_dwell() {
+        let player = hsl_network_messages::PlayerNumber::Two;
+        let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
+        map.multi_source_dijkstra(&[(linear_algebra::Pose2::new(point![0.0, 0.0], 0.0), player)]);
+        let mut board = Blackboard {
+            voronoi_map: Some(map),
+            ball: Some(LastBall {
+                position: point![2.0, 0.6],
+                velocity: Default::default(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        board.world_state.robot.player_number = player;
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.ball.closest_to_ball.enter_duration = Duration::from_millis(300);
+        board.parameters.ball.closest_to_ball.exit_duration = Duration::from_millis(150);
+        board.parameters.ball.interception.maximum_ball_distance = 4.0;
+        board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        board
+            .parameters
+            .ball
+            .interception
+            .minimum_ball_velocity_towards_robot = 0.7;
+        board
+            .parameters
+            .ball
+            .interception
+            .minimum_ball_velocity_towards_own_half = 0.7;
+        assert!(!is_closest_to_ball(&mut board));
+        board.ball.as_mut().unwrap().velocity = vector![-2.0, 0.0];
+        assert!(is_closest_to_ball(&mut board));
+        board.voronoi_map = None;
+        assert!(is_closest_to_ball(&mut board));
+        board.world_state.now = board.world_state.now + Duration::from_millis(150);
+        assert!(!is_closest_to_ball(&mut board));
+    }
 
     #[test]
     fn keeps_striker_while_finishing_kick_then_releases_or_loses_ball() {

@@ -91,6 +91,7 @@
     kick_activation_hysteresis: 0.3,
     strong_kick_min_target_distance: 3.0,
     approach_ball_standoff: 0.3,
+    receiving_opponent_distance: 2.0,
     minimum_interception_forward_distance: 0.3,
   },
   goalkeeper: {
