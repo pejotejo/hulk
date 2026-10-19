@@ -497,7 +497,8 @@ pub fn walk_to_goalkeeper_penalty_position(blackboard: &mut Blackboard) -> Statu
 
 fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
     if let Some(ball) = &blackboard.ball {
-        let target_y = if ball.position.y() >= 0.0 {
+        // Keep one central lane so pose roundoff cannot flip the clearance side.
+        let target_y = if ball.position.y() >= -blackboard.field_dimensions.ball_radius {
             blackboard.field_dimensions.width / 4.0
         } else {
             -blackboard.field_dimensions.width / 4.0
@@ -798,6 +799,12 @@ mod tests {
             ),
             "settled ball under pressure should still get a strong clearance"
         );
+        for y in [-1e-7, 1e-7, -2.0 * board.field_dimensions.ball_radius] {
+            board.ball.as_mut().unwrap().position = point![-6.0, y];
+            super::select_goalkeeper_kick_away_target(&mut board);
+            let target = transform * board.kick_target.unwrap();
+            assert_eq!(target.y() > 0.0, y >= -board.field_dimensions.ball_radius);
+        }
     }
 
     #[test]
