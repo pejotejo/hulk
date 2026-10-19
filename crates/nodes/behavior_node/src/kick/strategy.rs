@@ -12,7 +12,7 @@ use types::behavior_tree::Status;
 use crate::{conditions::opponent_near_ball, node::Blackboard};
 
 use super::{
-    geometry::{goal_openings, pass_openings, travel_openings},
+    geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings, travel_openings},
     kick_ball_position_in_ground, pass_receiver_position,
 };
 
@@ -58,8 +58,8 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         || !field.width.is_finite()
         || field.length <= 0.0
         || field.width <= 0.0
-        || ball.x().abs() > goal_x
-        || ball.y().abs() > field.width / 2.0
+        || ball.x().abs() > goal_x + BALL_FIELD_BOUNDARY_TOLERANCE
+        || ball.y().abs() > field.width / 2.0 + BALL_FIELD_BOUNDARY_TOLERANCE
     {
         return None;
     }

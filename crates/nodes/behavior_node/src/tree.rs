@@ -132,7 +132,13 @@ fn playing_subtree() -> Node<Blackboard> {
             subtree!(striker_subtree),
         ),
         sequence!(
-            negation!(condition!(is_in_sub_state)),
+            selection!(
+                negation!(condition!(is_in_sub_state)),
+                sequence!(
+                    condition!(hulks_is_kicking_team),
+                    negation!(condition!(is_sub_state, SubState::PenaltyKick)),
+                ),
+            ),
             condition!(is_pass_receiver),
             subtree!(look_at_ball_subtree),
             selection!(
