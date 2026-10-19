@@ -422,7 +422,7 @@ mod tests {
     fn pass_refines_receiver_region_and_revalidates_before_kicking() {
         let mut blackboard = passing_blackboard();
         let transform =
-            linear_algebra::Isometry2::from_parts(linear_algebra::vector![0.3, -0.2], 0.6);
+            linear_algebra::Isometry2::from_parts(linear_algebra::vector![-0.3, -0.2], 0.6);
         blackboard.world_state.robot.ground_to_field = Some(transform);
         blackboard.world_state.obstacles = [
             Obstacle::robot(transform.inverse() * point![2.0, 0.0], 0.2, 0.25),
@@ -1169,7 +1169,7 @@ mod tests {
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::Walk { .. } | BodyMotion::WalkWithVelocity { .. })
         ));
         let transform = blackboard.world_state.robot.ground_to_field.unwrap();
         let target = transform * blackboard.kick_target.unwrap();
@@ -1230,6 +1230,27 @@ mod tests {
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         select_ball_action(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+    }
+
+    #[test]
+    fn execution_turns_before_approaching_a_stationary_ball_behind_the_body() {
+        let mut blackboard = blackboard();
+        blackboard.ball.as_mut().unwrap().position = point![-0.55, 0.2];
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![-0.55, 0.2],
+            ball_in_field: point![-0.55, 0.2],
+            ..Default::default()
+        });
+        blackboard.parameters.kicking.kick_activation_distance = 1.0;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.walking_velocity_limits.angular_velocity_limit = 2.0;
+        select_ball_action(&mut blackboard);
+        assert_eq!(execute_ball_action(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                if velocity == linear_algebra::Vector2::zeros() && angular_velocity > 0.0
+        ));
     }
 
     #[test]

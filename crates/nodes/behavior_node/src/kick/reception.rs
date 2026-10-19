@@ -6,6 +6,7 @@ use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, OrientationMode},
     motion_type::MotionType,
+    path::traits::PathProgress,
     walking_velocity_limits::WalkingVelocityLimits,
 };
 
@@ -125,11 +126,18 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
     super::strategy::select_ball_action(blackboard);
-    let kick_orientation = super::execution::resolve_target(blackboard).and_then(|target| {
-        (transform.inverse() * target - position)
-            .try_normalize(f32::EPSILON)
-            .map(Orientation2::from_vector)
-    });
+    let kick_orientation = super::execution::resolve_target(blackboard)
+        .filter(|_| {
+            position.x() > 0.0
+                && position.coords().norm()
+                    <= blackboard.parameters.kicking.kick_activation_distance
+                        + blackboard.parameters.kicking.kick_activation_hysteresis
+        })
+        .and_then(|target| {
+            (transform.inverse() * target - position)
+                .try_normalize(f32::EPSILON)
+                .map(Orientation2::from_vector)
+        });
     let orientation = kick_orientation.unwrap_or_else(|| Orientation2::from_vector(-velocity));
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let limits = blackboard.walking_velocity_limits;
@@ -168,6 +176,17 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         return Status::Success;
     }
     let path = plan_interception(blackboard, target, transform);
+    let forward = path.forward(Point2::origin());
+    if forward.x() < 0.0 {
+        // Turning and translation are independent; do not back into a rolling ball.
+        blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+            velocity: Vector2::zeros(),
+            angular_velocity: limits.scale_angular_axis(Orientation2::from_vector(forward).angle()),
+        });
+        return Status::Success;
+    }
+    let kick_orientation =
+        kick_orientation.filter(|direction| direction.as_unit_vector().dot(&forward) >= 0.0);
     blackboard.body_motion = Some(BodyMotion::Walk {
         path,
         orientation_mode: match kick_orientation {
@@ -175,12 +194,9 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
                 direction,
                 tolerance: walking.orientation_tolerance,
             },
-            None => OrientationMode::LookAt {
-                target: position,
-                tolerance: walking.orientation_tolerance,
-            },
+            None => OrientationMode::AlignWithPath,
         },
-        target_orientation: orientation,
+        target_orientation: kick_orientation.unwrap_or_else(|| Orientation2::from_vector(forward)),
         distance_to_be_aligned: walking.normal_distance_to_be_aligned,
         speed: walk_speed,
     });
@@ -295,14 +311,19 @@ mod tests {
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         let Some(BodyMotion::Walk {
             target_orientation,
-            orientation_mode: OrientationMode::LookAt { target, .. },
+            orientation_mode: OrientationMode::AlignWithPath,
+            ref path,
             ..
         }) = blackboard.body_motion
         else {
-            panic!("expected ball-facing interception")
+            panic!("expected path-facing interception")
         };
-        assert!(target_orientation.angle().abs() < 1e-6);
-        assert_eq!(target, point![2.0, 0.3]);
+        assert!(
+            (target_orientation.angle()
+                - Orientation2::from_vector(path.forward(Point2::origin())).angle())
+            .abs()
+                < 1e-6
+        );
 
         blackboard.ball.as_mut().unwrap().position = point![0.5, 0.0];
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
@@ -459,6 +480,37 @@ mod tests {
     }
 
     #[test]
+    fn turns_before_approaching_a_goalward_ball_behind_the_body() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![-1.5, 0.4],
+                velocity: vector![-0.4, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            walking_velocity_limits: WalkingVelocityLimits {
+                forward_velocity_limits: [-0.8, 1.8],
+                lateral_velocity_limit: 1.0,
+                angular_velocity_limit: 2.0,
+            },
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.walking.speed.kicking = 1.8;
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                if velocity == Vector2::zeros() && angular_velocity > 0.0
+        ));
+    }
+
+    #[test]
     fn rejects_receding_balls_without_a_useful_forward_block() {
         for (position, velocity) in [
             (point![2.0, 0.0], vector![2.0, 0.0]),
@@ -529,7 +581,7 @@ mod tests {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
             ball: Some(LastBall {
-                position: point![2.0, -1.0],
+                position: point![0.8, -0.6],
                 velocity: vector![0.0, 1.0],
                 age: Default::default(),
                 field_side: Side::Left,
@@ -546,6 +598,7 @@ mod tests {
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
         blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
         blackboard.parameters.walking.speed.kicking = 1.0;
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         let Some(BodyMotion::Walk {
@@ -561,7 +614,7 @@ mod tests {
         let types::path::PathSegment::LineSegment(segment) = path.last_segment() else {
             panic!("expected final contact approach")
         };
-        assert!(segment.1.x() < 2.0);
+        assert!(segment.1.x() < 0.8);
     }
 
     #[test]
