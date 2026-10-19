@@ -38,13 +38,6 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return false;
     };
-    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
-        && position.x() > 0.0
-        && position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance
-        && position.coords().dot(&velocity) < 0.0
-    {
-        return true;
-    }
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
         .max(2.0 * blackboard.field_dimensions.ball_radius);
@@ -152,7 +145,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     let Some(target) = blocking_target(
         position,
         velocity,
-        goal,
+        (!super::passing::is_pass_receiver(blackboard)).then_some(goal),
         standoff,
         limits,
         walk_speed,
@@ -221,13 +214,15 @@ fn should_block_ball(
 fn blocking_target(
     position: Point2<Ground>,
     velocity: Vector2<Ground>,
-    own_goal: Point2<Ground>,
+    own_goal: Option<Point2<Ground>>,
     standoff: f32,
     limits: WalkingVelocityLimits,
     walk_speed: f32,
     orientation: Orientation2<Ground>,
 ) -> Option<Point2<Ground>> {
-    if !should_block_ball(position, velocity, own_goal) {
+    if !(position.coords().dot(&velocity) < 0.0
+        || own_goal.is_some_and(|goal| should_block_ball(position, velocity, goal)))
+    {
         return None;
     }
     // Arrive behind the contact point facing the outgoing kick, avoiding a late turn.
@@ -240,8 +235,9 @@ fn blocking_target(
         }
     }
     // A fast ball can be unreachable. Still occupy its goal lane instead of chasing it.
-    let to_goal = own_goal - position;
-    if velocity.dot(&to_goal) > 0.0 {
+    if let Some(to_goal) = own_goal.map(|goal| goal - position)
+        && velocity.dot(&to_goal) > 0.0
+    {
         let fraction = (-position.coords()).dot(&to_goal) / to_goal.norm_squared();
         if fraction > 0.0 {
             return Some(position + to_goal * fraction.min(0.9));
@@ -297,7 +293,7 @@ mod tests {
     use crate::node::LastBall;
 
     #[test]
-    fn field_player_receives_near_approaching_ball_with_kick_policy() {
+    fn field_player_walks_into_contact_corridor_before_kicking() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
@@ -323,20 +319,24 @@ mod tests {
             .parameters
             .kicking
             .strong_kick_min_target_distance = 0.1;
-        assert!(is_ready_to_receive_kick(&blackboard));
-        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        blackboard.walking_velocity_limits = WalkingVelocityLimits {
+            forward_velocity_limits: [-0.8, 1.8],
+            lateral_velocity_limit: 1.0,
+            angular_velocity_limit: 2.0,
+        };
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick {
-                ball_position,
-                ball_velocity,
-                quick: false,
-                strong: false,
-                soft: false,
-                target_speed: 3.4,
-                ..
-            }) if ball_position == point![0.8, -0.7] && ball_velocity == vector![0.0, 1.0]
+            Some(BodyMotion::Walk { .. })
+        ));
+        blackboard.ball.as_mut().unwrap().position = point![0.3, -0.2];
+        assert!(is_ready_to_receive_kick(&blackboard));
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { .. })
         ));
         for (position, velocity) in [
             (point![1.4, 0.0], vector![-0.5, 0.0]),
@@ -486,7 +486,7 @@ mod tests {
         let target = blocking_target(
             position,
             velocity,
-            point![-4.5, 0.0],
+            Some(point![-4.5, 0.0]),
             0.2,
             limits,
             1.0,
@@ -511,7 +511,7 @@ mod tests {
         let target = blocking_target(
             position,
             vector![-3.0, 0.0],
-            goal,
+            Some(goal),
             0.2,
             limits,
             1.0,
@@ -523,6 +523,19 @@ mod tests {
         assert!((0.0..1.0).contains(&fraction));
         assert!((target - (position + lane * fraction)).norm() < 1e-5);
         assert!(target.y() < position.y());
+
+        let reception = blocking_target(
+            position,
+            vector![-3.0, 0.0],
+            None,
+            0.2,
+            limits,
+            1.0,
+            Orientation2::identity(),
+        )
+        .unwrap();
+        assert_eq!(reception.y(), position.y());
+        assert!((reception.x() + 0.2).abs() < 1e-5);
     }
 
     #[test]
@@ -536,7 +549,7 @@ mod tests {
         let target = blocking_target(
             position,
             vector![-0.4, 0.0],
-            point![-4.5, 0.0],
+            Some(point![-4.5, 0.0]),
             0.2,
             limits,
             1.8,
@@ -590,7 +603,7 @@ mod tests {
                 blocking_target(
                     position,
                     velocity,
-                    point![-4.5, 0.0],
+                    Some(point![-4.5, 0.0]),
                     0.2,
                     WalkingVelocityLimits::default(),
                     1.0,

@@ -12,9 +12,9 @@ use types::{
 use crate::{
     actions::stand,
     conditions::{goalkeeper_clearance_direction, hulks_is_kicking_team},
-    kick::reception::receive_rolling_ball,
+    kick::reception::{is_receiving_ball, receive_rolling_ball},
     node::Blackboard,
-    substates::{is_in_sub_state, is_sub_state, restart_pass_is_open, restart_pass_receiver},
+    substates::{is_sub_state, restart_pass_is_open, restart_pass_receiver},
     switch_motion_type::is_allowed_to_switch,
     walk::walk_to,
 };
@@ -63,6 +63,11 @@ fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)>
     let own_position = transform.as_pose().position();
     let parameters = &blackboard.parameters.kicking.strategy.passing;
     parameters.validate().ok()?;
+    let following_rolling_pass = is_receiving_ball(blackboard)
+        && blackboard
+            .ball
+            .as_ref()
+            .is_some_and(|ball| (own_position - ball.position).dot(&ball.velocity) > 0.0);
     if parameters.maximum_distance <= 0.0
         || !own_position.x().is_finite()
         || !own_position.y().is_finite()
@@ -88,7 +93,13 @@ fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)>
                 || pass.target.x().abs() >= blackboard.field_dimensions.length / 2.0
                 || pass.target.y().abs() >= blackboard.field_dimensions.width / 2.0
                 || (pass.target - own_position).norm()
-                    > parameters.receiver_standoff + 2.0 * parameters.target_half_width
+                    > if following_rolling_pass {
+                        parameters.maximum_distance
+                    } else {
+                        parameters.receiver_standoff + 2.0 * parameters.target_half_width
+                    }
+                || (pass.target - state.inner.pose.position()).norm()
+                    > parameters.maximum_distance + parameters.receiver_standoff
                 || !state.inner.pose.position().x().is_finite()
                 || !state.inner.pose.position().y().is_finite()
             {
@@ -116,8 +127,10 @@ pub fn is_pass_ball_arriving(blackboard: &mut Blackboard) -> bool {
             .position();
         blackboard.ball.as_ref().is_some_and(|ball| {
             let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
-            (projected - pass.target).norm()
+            ((projected - pass.target).norm()
                 <= parameters.receiver_standoff + parameters.target_half_width
+                || (is_receiving_ball(blackboard)
+                    && (own_position - ball.position).dot(&ball.velocity) > 0.0))
                 && (projected - own_position).norm() < (projected - sender).norm()
         })
     });
@@ -145,13 +158,11 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
 
 pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     if !hulks_is_kicking_team(blackboard)
-        || !is_in_sub_state(blackboard)
-        || is_sub_state(blackboard, SubState::PenaltyKick)
+        || !(is_sub_state(blackboard, SubState::CornerKick)
+            || is_sub_state(blackboard, SubState::ThrowIn))
     {
         return Status::Failure;
     }
-    let can_stage = is_sub_state(blackboard, SubState::CornerKick)
-        || is_sub_state(blackboard, SubState::ThrowIn);
     let (Some(ball), Some(transform)) = (
         blackboard.ball.as_ref(),
         blackboard.world_state.robot.ground_to_field,
@@ -160,48 +171,35 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     };
     let ball = ball.position;
     let position = transform.as_pose().position();
-    let distance = (ball - position).norm();
-    let parameters = &blackboard.parameters.kicking.strategy.passing;
-    if parameters.validate().is_err() || parameters.maximum_distance <= 0.0 || !distance.is_finite()
-    {
+    if restart_pass_is_open(blackboard, position) {
+        // Until a pass is announced, open-lane supporters keep their weighted Voronoi position.
         return Status::Failure;
     }
-    if can_stage {
-        if !restart_pass_is_open(blackboard, position) {
-            let Some((receiver, target)) = restart_pass_receiver(blackboard) else {
-                return Status::Failure;
-            };
-            if receiver != blackboard.world_state.robot.player_number {
-                return Status::Failure;
-            }
-            blackboard.ball_action = None;
-            blackboard.kick_target = None;
-            if blackboard.last_motion_type != Some(MotionType::Walk)
-                && !is_allowed_to_switch(blackboard)
-            {
-                return stand(blackboard);
-            }
-            let walking = blackboard.parameters.walking.walk_and_stand;
-            let target = transform.inverse() * target;
-            let ball = transform.inverse() * ball;
-            return walk_to(
-                blackboard,
-                linear_algebra::Pose2::from_parts(target, Orientation2::from_vector(ball - target)),
-                blackboard.parameters.walking.speed.kicking,
-                types::motion_command::OrientationMode::LookAt {
-                    target: ball,
-                    tolerance: walking.orientation_tolerance,
-                },
-                walking.normal_distance_to_be_aligned,
-                walking.hysteresis,
-            );
-        }
-    } else if distance >= parameters.maximum_distance + parameters.receiver_standoff {
+    let Some((receiver, target)) = restart_pass_receiver(blackboard) else {
+        return Status::Failure;
+    };
+    if receiver != blackboard.world_state.robot.player_number {
         return Status::Failure;
     }
     blackboard.ball_action = None;
     blackboard.kick_target = None;
-    hold_and_face_ball(blackboard, ball)
+    if blackboard.last_motion_type != Some(MotionType::Walk) && !is_allowed_to_switch(blackboard) {
+        return stand(blackboard);
+    }
+    let walking = blackboard.parameters.walking.walk_and_stand;
+    let target = transform.inverse() * target;
+    let ball = transform.inverse() * ball;
+    walk_to(
+        blackboard,
+        linear_algebra::Pose2::from_parts(target, Orientation2::from_vector(ball - target)),
+        blackboard.parameters.walking.speed.kicking,
+        types::motion_command::OrientationMode::LookAt {
+            target: ball,
+            tolerance: walking.orientation_tolerance,
+        },
+        walking.normal_distance_to_be_aligned,
+        walking.hysteresis,
+    )
 }
 
 pub fn yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> Status {
@@ -326,4 +324,105 @@ fn hold_and_face_ball(blackboard: &mut Blackboard, ball: Point2<Field>) -> Statu
         angular_velocity: blackboard.walking_velocity_limits.scale_angular_axis(angle),
     });
     Status::Success
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use linear_algebra::{Isometry2, point};
+    use types::{
+        field_dimensions::{FieldDimensions, Side},
+        time_wrapper::TimeWrapper,
+        walking_velocity_limits::WalkingVelocityLimits,
+        world_state::{BallSource, PlayerState},
+    };
+
+    use crate::{kick::reception::is_ready_to_receive_kick, node::LastBall};
+
+    #[test]
+    fn receiver_follows_measured_pass_after_leaving_announced_target() {
+        let mut receiver = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![2.8, -0.7],
+                velocity: vector![-0.2, 1.0],
+                age: Default::default(),
+                field_side: Side::Right,
+                source: BallSource::Own,
+            }),
+            walking_velocity_limits: WalkingVelocityLimits {
+                forward_velocity_limits: [-0.8, 1.8],
+                lateral_velocity_limit: 1.0,
+                angular_velocity_limit: 2.0,
+            },
+            ..Default::default()
+        };
+        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![2.0, 0.0], 0.0));
+        receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
+        receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        receiver.parameters.kicking.kick_activation_distance = 1.3;
+        receiver.parameters.kicking.approach_ball_standoff = 0.3;
+        receiver.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        receiver.parameters.walking.path_planning.robot_radius = 0.4;
+        let passing = &mut receiver.parameters.kicking.strategy.passing;
+        passing.maximum_distance = 4.0;
+        passing.receiver_standoff = 0.5;
+        passing.target_half_width = 0.2;
+        receiver.world_state.player_states.three = Some(TimeWrapper {
+            time: receiver.world_state.now,
+            inner: PlayerState {
+                pose: point![0.0, -1.0].into(),
+                pass: Some(PassIntent {
+                    receiver: PlayerNumber::Two,
+                    target: point![1.5, -1.0],
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert!(is_pass_receiver(&mut receiver));
+        assert!(is_pass_ball_arriving(&mut receiver));
+        assert!(!is_ready_to_receive_kick(&receiver));
+        assert_eq!(prepare_to_receive_pass(&mut receiver), Status::Success);
+        assert!(matches!(
+            receiver.body_motion,
+            Some(BodyMotion::Walk { .. })
+        ));
+
+        // The advertised region is no longer nearby; measured contact still releases the kick.
+        receiver.ball.as_mut().unwrap().position = point![2.3, -0.2];
+        assert!(is_pass_receiver(&mut receiver));
+        assert!(is_pass_ball_arriving(&mut receiver));
+        assert!(is_ready_to_receive_kick(&receiver));
+
+        // Intent cannot pull a receiver toward an unrelated distant or stale pass.
+        receiver
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pass
+            .as_mut()
+            .unwrap()
+            .target = point![-4.0, -1.0];
+        assert!(!is_pass_receiver(&mut receiver));
+        receiver
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pass
+            .as_mut()
+            .unwrap()
+            .target = point![1.5, -1.0];
+        receiver.world_state.now = receiver.world_state.now + PassIntent::TIMEOUT;
+        assert!(!is_pass_receiver(&mut receiver));
+    }
 }
