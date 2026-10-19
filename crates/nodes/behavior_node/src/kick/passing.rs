@@ -1,13 +1,17 @@
 use std::time::Duration;
 
 use coordinate_systems::Field;
+use geometry::line_segment::LineSegment;
 use hsl_network_messages::{PassIntent, PlayerNumber, SubState};
-use linear_algebra::{Orientation2, Point2, Vector2};
-use types::{behavior_tree::Status, motion_command::BodyMotion, motion_type::MotionType};
+use linear_algebra::{Orientation2, Point2, Vector2, vector};
+use path_planner::path_planner::PathPlanner;
+use types::{
+    behavior_tree::Status, motion_command::BodyMotion, motion_type::MotionType, obstacles::Obstacle,
+};
 
 use crate::{
     actions::stand,
-    conditions::hulks_is_kicking_team,
+    conditions::{goalkeeper_clearance_direction, hulks_is_kicking_team},
     kick::reception::receive_rolling_ball,
     node::Blackboard,
     substates::{is_in_sub_state, is_sub_state},
@@ -163,6 +167,106 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     blackboard.ball_action = None;
     blackboard.kick_target = None;
     hold_and_face_ball(blackboard, ball)
+}
+
+pub fn yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> Status {
+    let transform = blackboard.world_state.robot.ground_to_field.unwrap();
+    let ball = blackboard.ball.as_ref().unwrap();
+    let position = ball.position;
+    let Some(direction) = goalkeeper_clearance_direction(blackboard) else {
+        return Status::Failure;
+    };
+    let lateral = vector![-direction.y(), direction.x()];
+    let own_position = transform.as_pose().position();
+    let offset = (own_position - position).dot(&lateral);
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
+    let clearance = radius
+        + blackboard.field_dimensions.ball_radius
+        + blackboard.parameters.kicking.strategy.obstacle_clearance;
+    blackboard.ball_action = None;
+    blackboard.kick_target = None;
+    blackboard.last_closest_to_ball = false;
+    blackboard.closest_to_ball_entered_area_since = None;
+    blackboard.closest_to_ball_left_area_since = None;
+    if offset.abs() >= clearance {
+        return hold_and_face_ball(blackboard, position);
+    }
+
+    let mut planner = PathPlanner::default();
+    planner.with_obstacles(&blackboard.world_state.obstacles, radius);
+    planner.with_rule_obstacles(
+        transform.inverse(),
+        &blackboard.world_state.rule_obstacles,
+        radius,
+    );
+    planner.with_ball(
+        transform.inverse() * position,
+        blackboard.field_dimensions.ball_radius,
+        radius,
+    );
+    planner.with_goal_support_structures(transform.inverse(), &blackboard.field_dimensions);
+    for (number, teammate) in blackboard.world_state.player_states.iter() {
+        if number != blackboard.world_state.robot.player_number
+            && let Some(teammate) = teammate
+            && teammate.time <= blackboard.world_state.now
+            && blackboard.world_state.now.duration_since(teammate.time)
+                <= blackboard
+                    .parameters
+                    .kicking
+                    .strategy
+                    .passing
+                    .maximum_receiver_age
+        {
+            planner.with_obstacles(
+                &[Obstacle::robot(
+                    transform.inverse() * teammate.inner.pose.position(),
+                    radius,
+                    radius,
+                )],
+                radius,
+            );
+        }
+    }
+    let preferred_side = if offset < 0.0 { -1.0 } else { 1.0 };
+    for side in [preferred_side, -preferred_side] {
+        // Never cross the rolling ball's line to reach the other side.
+        if offset * side < -f32::EPSILON {
+            continue;
+        }
+        let target = own_position + lateral * (side * (clearance + radius) - offset);
+        let target = transform.inverse() * target;
+        let step = LineSegment(Point2::origin(), target);
+        let field_target = transform * target;
+        if field_target.x().abs() >= blackboard.field_dimensions.length / 2.0 - radius
+            || field_target.y().abs() >= blackboard.field_dimensions.width / 2.0 - radius
+            || planner
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.shape.intersects_line_segment(step))
+        {
+            continue;
+        }
+        let ball = transform.inverse() * position;
+        let limits = blackboard.walking_velocity_limits;
+        let velocity = target.coords().normalize() * blackboard.parameters.walking.speed.kicking;
+        let forward_limit = if velocity.x() < 0.0 {
+            -limits.forward_velocity_limits[0]
+        } else {
+            limits.forward_velocity_limits[1]
+        };
+        // Scale uniformly to stay on the obstacle-checked segment at any body orientation.
+        let scale = (velocity.x().abs() / forward_limit.max(f32::EPSILON))
+            .max(velocity.y().abs() / limits.lateral_velocity_limit.max(f32::EPSILON))
+            .max(1.0);
+        blackboard.path_obstacles_output = planner.obstacles;
+        blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+            velocity: velocity / scale,
+            angular_velocity: limits
+                .scale_angular_axis(Orientation2::from_vector(ball.coords()).angle()),
+        });
+        return Status::Success;
+    }
+    hold_and_face_ball(blackboard, position)
 }
 
 fn hold_and_face_ball(blackboard: &mut Blackboard, ball: Point2<Field>) -> Status {
