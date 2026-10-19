@@ -123,12 +123,12 @@ pub fn pass_openings(
     let mut lower = -half_width;
     let mut upper = half_width;
     let margin = field.ball_radius + clearance;
-    // Clip the region to field bounds and required forward progress, preserving its line.
+    // Clip the region to field bounds; receiver eligibility owns the progress policy.
     for (coordinate, axis, minimum, maximum) in [
         (
             center.x(),
             lateral.x(),
-            (-field.length / 2.0 + margin).max(ball.x() + parameters.minimum_progress),
+            -field.length / 2.0 + margin,
             field.length / 2.0 - margin,
         ),
         (
@@ -204,9 +204,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pass_regions_respect_field_bounds_range_and_progress() {
+    fn pass_regions_respect_field_bounds_and_range_in_any_direction() {
         let field = FieldDimensions::SPL_2025;
-        let mut parameters = PassingParameters {
+        let parameters = PassingParameters {
             maximum_distance: 3.0,
             minimum_progress: 0.5,
             receiver_standoff: 0.5,
@@ -229,25 +229,25 @@ mod tests {
             assert_eq!(openings.len(), 1);
             assert!(openings[0].length() < 2.0 * parameters.target_half_width);
             for target in [openings[0].0, openings[0].center(), openings[0].1] {
-                assert!(target.x() - ball.x() >= parameters.minimum_progress);
                 assert!((target - ball).norm() <= parameters.maximum_distance + 1e-6);
                 assert!(target.x().abs() <= field.length / 2.0 - 0.1 + 1e-6);
                 assert!(target.y().abs() <= field.width / 2.0 - 0.1 + 1e-6);
             }
         }
-        parameters.minimum_progress = 5.0;
-        assert!(
-            pass_openings(
-                point![0.0, 0.0],
-                point![2.0, 0.0],
-                Default::default(),
-                &[],
-                &field,
-                &parameters,
-                0.05
-            )
-            .is_empty()
-        );
+        for receiver in [point![-2.0, 0.0], point![0.0, -2.0]] {
+            assert!(
+                !pass_openings(
+                    point![0.0, 0.0],
+                    receiver,
+                    Default::default(),
+                    &[],
+                    &field,
+                    &parameters,
+                    0.05
+                )
+                .is_empty()
+            );
+        }
     }
 
     #[test]

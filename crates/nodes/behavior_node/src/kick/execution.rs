@@ -1,6 +1,6 @@
 use coordinate_systems::{Field, Ground};
 use geometry::{line::Line2, line_segment::LineSegment};
-use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point, vector};
+use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, point, vector};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
@@ -14,21 +14,29 @@ use crate::{
 
 use super::{
     geometry::{goal_openings, pass_openings, travel_openings},
-    kick_ball_position_in_ground, pass_receiver_position,
+    kick_ball_in_ground, kick_ball_position_in_ground, pass_receiver_position,
     passing::pass_is_announced,
     strategy::BallAction,
 };
 
-/// Resolve a corridor, using goal center only when its shot corridor is still clear.
+/// Revalidate the selected corridor, choosing another safe action if it has disappeared.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
-    let Some(target) = resolve_target(blackboard) else {
+    let target = resolve_target(blackboard).or_else(|| {
+        if super::kickoff::needs_kickoff_updates(blackboard) {
+            return None;
+        }
+        blackboard.last_announced_pass = None;
+        super::strategy::select_ball_action(blackboard);
+        resolve_target(blackboard)
+    });
+    let Some(target) = target else {
         blackboard.ball_action = None;
         blackboard.kick_target = None;
         blackboard.last_announced_pass = None;
         return stand(blackboard);
     };
     let ground_to_field = blackboard.world_state.robot.ground_to_field.unwrap();
-    let ball = kick_ball_position_in_ground(blackboard, &ground_to_field).unwrap();
+    let (ball, ball_velocity) = kick_ball_in_ground(blackboard, &ground_to_field).unwrap();
     let pass_ready = match blackboard.ball_action {
         Some(BallAction::Pass { receiver }) => pass_is_announced(blackboard, receiver, target),
         _ => true,
@@ -46,7 +54,9 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let mut strong = !controlled
         && kicking.allow_strong_kicks
         && (target - ball).norm() >= kicking.strong_kick_min_target_distance;
-    if !controlled
+    let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
+    if was_kicking
+        && !controlled
         && let MotionCommand::Kick {
             strong: previous, ..
         } = blackboard.last_motion_command
@@ -56,7 +66,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     }
     let target_speed = kicking.target_speed;
     let receiving = super::reception::is_receiving_ball(blackboard);
-    let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
+    let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
     let quick = (!controlled && kicking.quick)
         || receiving
         || (was_kicking
@@ -65,18 +75,19 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
                 MotionCommand::Kick { quick: true, .. }
             ));
     let can_switch = is_allowed_to_switch(blackboard)
-        || (receiving && blackboard.last_motion_type == Some(MotionType::Walk));
-    if (is_close_to_ball(blackboard) || (was_kicking && !can_switch)) && (was_kicking || can_switch)
+        || (receiving && ready_to_receive && blackboard.last_motion_type == Some(MotionType::Walk));
+    let close_to_ball = is_close_to_ball(blackboard);
+    if (((!receiving || was_kicking) && close_to_ball)
+        || (receiving && ready_to_receive)
+        || (was_kicking && !can_switch))
+        && (was_kicking || can_switch)
     {
         if !pass_ready {
             return stand(blackboard);
         }
         blackboard.body_motion = Some(BodyMotion::Kick {
             ball_position: ball,
-            ball_velocity: blackboard
-                .world_state
-                .ball
-                .map_or(Vector2::zeros(), |ball| ball.ball_in_ground_velocity),
+            ball_velocity,
             kick_direction: orientation,
             target_speed,
             soft: false,
@@ -91,12 +102,9 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     }
 
     // Only get within kick range. The kick policy handles final alignment.
-    let velocity = blackboard
-        .ball
-        .as_ref()
-        .map_or(Vector2::zeros(), |ball| ball.velocity);
     let projected = ground_to_field.inverse()
-        * blackboard.projected_ball_position(ground_to_field * ball, velocity);
+        * blackboard
+            .projected_ball_position(ground_to_field * ball, ground_to_field * ball_velocity);
     let Some(toward_ball) = projected.coords().try_normalize(f32::EPSILON) else {
         return stand(blackboard);
     };
@@ -124,18 +132,12 @@ pub(super) fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field
         || !field.width.is_finite()
         || field.length <= 0.0
         || field.width <= 0.0
-        || ball.x().abs() >= field.length / 2.0
-        || ball.y().abs() >= field.width / 2.0
+        || ball.x().abs() > field.length / 2.0
+        || ball.y().abs() > field.width / 2.0
     {
         return None;
     }
-    if let Some(target) = resolve_action_target(blackboard, action, transform, ball) {
-        return Some(target);
-    }
-    let target = resolve_action_target(blackboard, BallAction::ShootAtGoalCenter, transform, ball)?;
-    blackboard.ball_action = Some(BallAction::ShootAtGoalCenter);
-    blackboard.last_announced_pass = None;
-    Some(target)
+    resolve_action_target(blackboard, action, transform, ball)
 }
 
 fn resolve_action_target(
@@ -294,6 +296,7 @@ fn goalward_target(
 mod tests {
     use super::*;
     use crate::node::LastBall;
+    use linear_algebra::Vector2;
     use types::{
         field_dimensions::{FieldDimensions, Side},
         world_state::BallSource,

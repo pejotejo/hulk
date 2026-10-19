@@ -1,14 +1,70 @@
+use std::time::Duration;
+
 use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
 use linear_algebra::{point, vector};
 use types::{
     controller_input::Button, fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
-    filtered_game_state::FilteredGameState, primary_state::PrimaryState,
+    filtered_game_state::FilteredGameState, motion_type::MotionType, obstacles::ObstacleKind,
+    primary_state::PrimaryState,
 };
 use voronoi::Ownership;
 
-use crate::{kick::kick_ball_position_in_ground, node::Blackboard};
+use crate::{
+    kick::kick_ball_position_in_ground,
+    node::{Blackboard, ball_timeout},
+};
+
+pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool {
+    let (Some(ball), Some(transform)) = (
+        blackboard.ball.as_ref(),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return false;
+    };
+    blackboard.world_state.obstacles.iter().any(|obstacle| {
+        if !matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) {
+            return false;
+        }
+        let position = transform * obstacle.position;
+        (position - ball.position).norm() - obstacle.radius_at_foot_height <= distance
+            && !blackboard
+                .world_state
+                .player_states
+                .iter()
+                .any(|(_, teammate)| {
+                    teammate.as_ref().is_some_and(|teammate| {
+                        teammate.time <= blackboard.world_state.now
+                            && blackboard.world_state.now.duration_since(teammate.time)
+                                <= blackboard
+                                    .parameters
+                                    .kicking
+                                    .strategy
+                                    .passing
+                                    .maximum_receiver_age
+                            && (position - teammate.inner.pose.position()).norm()
+                                <= blackboard.parameters.walking.path_planning.robot_radius
+                                    + obstacle.radius_at_foot_height
+                    })
+                })
+    })
+}
+
+pub fn is_finishing_striker_kick(blackboard: &mut Blackboard) -> bool {
+    let now = blackboard.world_state.now;
+    blackboard.last_closest_to_ball
+        && blackboard.last_motion_type == Some(MotionType::Kick)
+        && blackboard.last_motion_switch_time <= now
+        && now.duration_since(blackboard.last_motion_switch_time) < Duration::from_millis(1500)
+        && blackboard.ball.as_ref().is_some_and(|ball| {
+            ball.age <= now
+                && now.duration_since(ball.age) < ball_timeout(&blackboard.parameters, ball.source)
+        })
+}
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
     if let (Some(ball), Some(ground_to_field)) = (
@@ -96,8 +152,8 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     let own_player_number = blackboard.player_number;
 
-    let raw_is_closest =
-        if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
+    let raw_is_closest = is_finishing_striker_kick(blackboard)
+        || if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
             let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
             let ownership_at_ball = voronoi_map.ownership_at(projected);
             match ownership_at_ball {
@@ -254,4 +310,38 @@ pub fn is_last_hulk_standing(blackboard: &mut Blackboard) -> bool {
 
 pub fn is_simple(blackboard: &mut Blackboard) -> bool {
     blackboard.parameters.control.is_simple
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::LastBall;
+    use types::{field_dimensions::Side, world_state::BallSource};
+
+    #[test]
+    fn keeps_striker_while_finishing_kick_then_releases_or_loses_ball() {
+        let mut board = Blackboard {
+            last_closest_to_ball: true,
+            last_motion_type: Some(MotionType::Kick),
+            ball: Some(LastBall {
+                position: point![0.5, 0.0],
+                velocity: Default::default(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
+        board.world_state.now = board.world_state.now + Duration::from_secs(1);
+        assert!(is_closest_to_ball(&mut board));
+        board.world_state.now = board.world_state.now + Duration::from_millis(500);
+        assert!(!is_closest_to_ball(&mut board));
+        board.world_state.now = Default::default();
+        board.last_closest_to_ball = true;
+        board.ball = None;
+        assert!(!is_finishing_striker_kick(&mut board));
+        board.last_motion_type = Some(MotionType::Walk);
+        assert!(!is_finishing_striker_kick(&mut board));
+    }
 }
