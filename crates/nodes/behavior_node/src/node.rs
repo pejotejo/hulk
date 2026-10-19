@@ -9,7 +9,7 @@ use color_eyre::Result;
 use types::fall_detection::FallDetection;
 
 use coordinate_systems::{Field, Ground};
-use hsl_network_messages::{PassIntent, PlayerNumber, Team};
+use hsl_network_messages::{PassIntent, PlayerNumber, SubState, Team};
 use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point};
 use ros_z::{
     prelude::*,
@@ -81,6 +81,7 @@ pub struct Blackboard {
     pub last_sent_hsl_message_time: Option<Time>,
     pub last_announced_pass: Option<TimeWrapper<PassIntent>>,
     pub kickoff_receiver_wait_started: Option<Time>,
+    pub restart_pass_wait_started: Option<Time>,
     pub kickoff_prepared: bool,
     pub kickoff_started: Option<Time>,
     pub last_closest_to_ball: bool,
@@ -97,6 +98,24 @@ pub struct Blackboard {
 const PROJECTION_CUTOFF_DISTANCE: f32 = 0.75;
 
 impl Blackboard {
+    pub fn update_restart_pass(&mut self) {
+        if self.world_state.robot.primary_state != PrimaryState::Playing
+            || !self
+                .world_state
+                .filtered_game_controller_state
+                .as_ref()
+                .is_some_and(|game| {
+                    game.kicking_team == Some(Team::Hulks)
+                        && matches!(
+                            game.sub_state,
+                            Some(SubState::CornerKick | SubState::ThrowIn)
+                        )
+                })
+        {
+            self.restart_pass_wait_started = None;
+        }
+    }
+
     pub fn update_kickoff(&mut self) {
         let game = self.world_state.filtered_game_controller_state.as_ref();
         if game
@@ -400,6 +419,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_sent_hsl_message_time: None,
         last_announced_pass: None,
         kickoff_receiver_wait_started: None,
+        restart_pass_wait_started: None,
         kickoff_prepared: false,
         kickoff_started: None,
         last_closest_to_ball: false,
@@ -524,6 +544,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         }
 
         blackboard.update_kickoff();
+        blackboard.update_restart_pass();
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
         if blackboard.kick_target.is_none() {
             blackboard.ball_action = None;

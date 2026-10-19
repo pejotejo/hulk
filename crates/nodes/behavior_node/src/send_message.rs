@@ -1,7 +1,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use hsl_network_messages::{
-    GameControllerReturnMessage, GamePhase, Half, HulkMessage, PassIntent, StateMessage,
+    GameControllerReturnMessage, GamePhase, Half, HulkMessage, PassIntent, StateMessage, SubState,
+    Team,
 };
 use ros_z::time::Time;
 use types::{
@@ -85,7 +86,14 @@ impl Blackboard {
         let game_controller_state = self.world_state.filtered_game_controller_state.as_ref()?;
         let mut send_interval =
             state_message_send_interval(game_controller_state, &self.parameters.network)?;
-        if matches!(self.ball_action, Some(BallAction::Pass { .. })) || preparing_kickoff {
+        let preparing_restart = game_controller_state.kicking_team == Some(Team::Hulks)
+            && game_controller_state
+                .sub_state
+                .is_some_and(|state| state != SubState::PenaltyKick);
+        if matches!(self.ball_action, Some(BallAction::Pass { .. }))
+            || preparing_kickoff
+            || preparing_restart
+        {
             // Keep pass preparation inside receiver freshness without spending the reserved budget.
             let preparation_interval = (self
                 .parameters
@@ -193,5 +201,89 @@ fn is_cooldown_elapsed(now: Time, last: Option<Time>, cooldown: Duration) -> boo
     match last {
         None => true,
         Some(last_time) => now.duration_since(last_time) > cooldown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use types::filtered_game_state::FilteredGameState;
+
+    #[test]
+    fn restart_receivers_update_before_expiry_without_spending_reserved_messages() {
+        let mut board = Blackboard::default();
+        board.world_state.robot.primary_state = PrimaryState::Playing;
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(3);
+        board.parameters.network.half_duration = Duration::from_secs(600);
+        board
+            .parameters
+            .network
+            .remaining_amount_of_messages_to_stop_sending = 20;
+        board.last_sent_hsl_message_time = Some(board.world_state.now);
+        board.world_state.now = board.world_state.now + Duration::from_millis(1600);
+        board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
+            game_state: FilteredGameState::Playing {
+                ball_is_free: false,
+                kick_off: false,
+            },
+            remaining_time_in_half: Duration::from_secs(600),
+            remaining_number_of_messages: 100,
+            kicking_team: Some(Team::Hulks),
+            sub_state: Some(SubState::CornerKick),
+            ..Default::default()
+        });
+        assert!(
+            state_message_send_interval(
+                board
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_ref()
+                    .unwrap(),
+                &board.parameters.network,
+            )
+            .unwrap()
+                > board
+                    .parameters
+                    .kicking
+                    .strategy
+                    .passing
+                    .maximum_receiver_age
+        );
+        for state in [SubState::CornerKick, SubState::ThrowIn, SubState::GoalKick] {
+            let mut receiver = board.clone();
+            receiver
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .sub_state = Some(state);
+            assert!(receiver.try_sending_state_message().is_some(), "{state:?}");
+            assert!(receiver.ball_action.is_none());
+            assert!(receiver.last_announced_pass.is_none());
+        }
+        for case in 0..4 {
+            let mut ordinary = board.clone();
+            let game = ordinary
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap();
+            match case {
+                0 => game.sub_state = None,
+                1 => game.kicking_team = Some(Team::Opponent),
+                2 => game.sub_state = Some(SubState::PenaltyKick),
+                _ => game.remaining_number_of_messages = 20,
+            }
+            assert!(
+                ordinary.try_sending_state_message().is_none(),
+                "case {case}"
+            );
+        }
     }
 }

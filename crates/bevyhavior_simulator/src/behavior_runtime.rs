@@ -92,6 +92,7 @@ impl SimulatorRobotBehavior {
         }
 
         self.blackboard.update_kickoff();
+        self.blackboard.update_restart_pass();
         let (status, trace) = self.tree.tick_with_trace(&mut self.blackboard);
         if self.blackboard.kick_target.is_none() {
             self.blackboard.ball_action = None;
@@ -206,6 +207,7 @@ fn create_behavior_blackboard(
         last_sent_hsl_message_time: None,
         last_announced_pass: None,
         kickoff_receiver_wait_started: None,
+        restart_pass_wait_started: None,
         kickoff_prepared: false,
         kickoff_started: None,
         last_closest_to_ball: false,
