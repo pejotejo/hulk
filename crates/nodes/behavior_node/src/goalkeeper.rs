@@ -35,6 +35,10 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
         subtree!(look_at_ball_subtree),
         selection!(
             sequence!(
+                condition!(is_ball_behind_own_goal_line),
+                subtree!(goalkeeper_center_position_subtree),
+            ),
+            sequence!(
                 condition!(is_in_sub_state),
                 subtree!(goalkeeper_sub_state_subtree)
             ),
@@ -193,6 +197,13 @@ fn goalkeeper_default_position_subtree() -> Node<Blackboard> {
         action!(walk_to_goalkeeper_default_position),
         subtree!(walk_alternatives_subtree),
     )
+}
+
+fn is_ball_behind_own_goal_line(blackboard: &mut Blackboard) -> bool {
+    blackboard
+        .ball
+        .as_ref()
+        .is_some_and(|ball| ball.position.x() < -blackboard.field_dimensions.length / 2.0)
 }
 
 fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
@@ -568,6 +579,47 @@ mod tests {
 
     use super::{goalkeeper_subtree, shot_y_at_defense_line};
     use crate::node::{Blackboard, LastBall};
+
+    #[test]
+    fn does_not_chase_a_ball_into_the_goal_net() {
+        let transform = Isometry2::from_parts(vector![-6.7, 0.4], 0.0);
+        let ball = LastBall {
+            position: point![-7.2, 0.7],
+            velocity: vector![0.0, 0.0],
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        };
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions {
+                length: 14.0,
+                goal_inner_width: 2.4,
+                ..FieldDimensions::SPL_2025
+            },
+            ball: Some(ball.clone()),
+            last_ball: Some(ball),
+            last_motion_type: Some(types::motion_type::MotionType::Walk),
+            ..Default::default()
+        };
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.parameters.goalkeeper.x_offset = 0.3;
+        board
+            .parameters
+            .goalkeeper
+            .kick_away_ball_maximum_robot_distance = 1.5;
+        board
+            .world_state
+            .obstacles
+            .push(types::obstacles::Obstacle::robot(
+                point![-0.6, 0.4],
+                0.2,
+                0.2,
+            ));
+        let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+        assert_eq!(status, types::behavior_tree::Status::Success);
+        approx::assert_relative_eq!(transform * board.walk_position.unwrap(), point![-6.7, 0.0]);
+        assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+    }
 
     #[test]
     fn opponent_corners_keep_center_until_a_shot_without_changing_open_play() {

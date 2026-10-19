@@ -84,7 +84,7 @@ fn plan_with_ball_obstacle(
         let robot_radius = if defending_own_post {
             // Preserve body/post clearance without the maneuvering margin around other obstacles.
             obstacle.radius_at_hip_height = field_dimensions.goal_post_diameter / 2.0;
-            parameters.robot_radius / 2.0
+            parameters.robot_radius * 0.75
         } else {
             parameters.robot_radius
         };
@@ -537,7 +537,7 @@ mod ball_support_tests {
     use super::*;
 
     #[test]
-    fn defending_keeper_reaches_post_target_without_reducing_other_margins() {
+    fn defending_keeper_keeps_post_clearance_without_reducing_other_margins() {
         use crate::{goalkeeper::set_goalkeeper_active_defense_position, node::LastBall};
         use types::{
             field_dimensions::Side, obstacles::Obstacle, path::traits::EndPoints,
@@ -589,8 +589,9 @@ mod ball_support_tests {
                     );
                     let target = board.walk_position.unwrap();
                     let path = plan(&mut board, target, transform);
-                    approx::assert_relative_eq!(path.end_point(), target, epsilon = 1e-4);
-                    assert!(((transform * path.end_point()) - post).norm() >= 0.25 - 1e-5);
+                    let endpoint = transform * path.end_point();
+                    assert!((endpoint - post).norm() >= 0.35 - 1e-5);
+                    assert!((endpoint - transform * target).norm() < 0.15);
                     approx::assert_relative_eq!(
                         board.path_obstacles_output[1]
                             .shape
