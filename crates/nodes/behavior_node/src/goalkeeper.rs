@@ -2,8 +2,12 @@ use coordinate_systems::Field;
 use hsl_network_messages::SubState;
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{
-    behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType,
-    obstacles::ObstacleKind, world_state::WorldState,
+    behavior_tree::Status,
+    motion_command::{BodyMotion, OrientationMode},
+    motion_type::MotionType,
+    obstacles::ObstacleKind,
+    path::PathSegment,
+    world_state::WorldState,
 };
 
 use crate::{
@@ -63,7 +67,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                 MotionType::Walk,
                 sequence!(
                     action!(set_goalkeeper_shot_block_position),
-                    action!(walk_to_block_position)
+                    action!(walk_to_goalkeeper_shot_block_position)
                 ),
                 Node::Failure,
             ),
@@ -238,8 +242,69 @@ fn set_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status {
     }
 }
 
+fn walk_to_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status {
+    let status = walk_to_block_position(blackboard);
+    let limits = blackboard.walking_velocity_limits;
+    let (
+        Some(BodyMotion::Walk {
+            path,
+            target_orientation,
+            ..
+        }),
+        Some(target),
+        Some(ball),
+        Some(transform),
+    ) = (
+        &blackboard.body_motion,
+        blackboard.walk_position,
+        &blackboard.ball,
+        blackboard.world_state.robot.ground_to_field,
+    )
+    else {
+        return status;
+    };
+    // Follow planned detours normally; only accelerate along an unobstructed segment.
+    let [PathSegment::LineSegment(line)] = path.segments.as_slice() else {
+        return status;
+    };
+    if limits.validate().is_err()
+        || line.0.coords().norm() > 1e-4
+        || (line.1 - target).norm() > 1e-4
+        || blackboard
+            .path_obstacles_output
+            .iter()
+            .any(|obstacle| obstacle.shape.intersects_line_segment(*line))
+    {
+        return status;
+    }
+    let time_to_line = ((transform * target).x() - ball.position.x()) / ball.velocity.x();
+    if !time_to_line.is_finite() || time_to_line <= 0.0 {
+        return status;
+    }
+    let velocity = target.coords() / time_to_line;
+    let forward_limit = if velocity.x() < 0.0 {
+        -limits.forward_velocity_limits[0]
+    } else {
+        limits.forward_velocity_limits[1]
+    };
+    let scale = (velocity.x().abs() / forward_limit.max(f32::EPSILON))
+        .max(velocity.y().abs() / limits.lateral_velocity_limit)
+        .max(1.0);
+    let angular_velocity = (target_orientation.angle() / time_to_line).clamp(
+        -limits.angular_velocity_limit,
+        limits.angular_velocity_limit,
+    );
+    blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+        velocity: velocity / scale,
+        angular_velocity,
+    });
+    status
+}
+
 fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
-    if !is_ball_in_own_penalty_area(blackboard) {
+    if !is_ball_in_own_penalty_area(blackboard)
+        || goalkeeper_shot_block_position(blackboard).is_some()
+    {
         return false;
     }
 
@@ -450,19 +515,21 @@ fn is_interception_velocity_towards_own_half(
 ) -> bool {
     let parameters = &blackboard.parameters.ball.interception;
 
-    ball_velocity.norm() > parameters.minimum_ball_velocity
-        && ball_velocity.x() < -parameters.minimum_ball_velocity_towards_own_half
+    ball_velocity.norm() > parameters.minimum_ball_velocity && ball_velocity.x() < 0.0
 }
 
 #[cfg(test)]
 mod tests {
     use linear_algebra::{Isometry2, Pose2, point, vector};
     use types::{
+        field_dimensions::{FieldDimensions, Side},
+        motion_command::BodyMotion,
         obstacles::Obstacle,
-        world_state::{PlayerState, WorldState},
+        world_state::{BallSource, PlayerState, WorldState},
     };
 
-    use super::{opponent_near_ball, shot_y_at_defense_line};
+    use super::{goalkeeper_subtree, opponent_near_ball, shot_y_at_defense_line};
+    use crate::node::{Blackboard, LastBall};
 
     #[test]
     fn clearance_requires_nearby_opponent_not_known_teammate() {
@@ -485,6 +552,252 @@ mod tests {
         world.player_states.two = None;
         world.obstacles[0].position = point![7.0, 0.0];
         assert!(!opponent_near_ball(&world, ball, 0.4));
+    }
+
+    #[test]
+    fn keeper_leaves_ball_goal_line_for_fast_angled_shot() {
+        for side in [-1.0, 1.0] {
+            let goal_to_ball = vector![0.7_f32, side];
+            let ready_position = point![-4.5, 0.0] + goal_to_ball.normalize() * 0.6;
+            let transform = Isometry2::from_parts(ready_position.coords(), 0.0);
+            let ball = LastBall {
+                position: point![-3.8, side],
+                velocity: vector![-0.5, -1.2 * side],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            };
+            let mut board = Blackboard {
+                field_dimensions: FieldDimensions::SPL_2025,
+                ball: Some(ball.clone()),
+                last_ball: Some(ball),
+                head_yaw: Default::default(),
+                parameters: Default::default(),
+                walking_velocity_limits: Default::default(),
+                world_state: Default::default(),
+                controller_input: Default::default(),
+                remote_control_enabled: Default::default(),
+                path_obstacles_output: Default::default(),
+                time_since_last_switch: Default::default(),
+                direction_difference: Default::default(),
+                voronoi_inputs: Default::default(),
+                visual_kick_ball_position: Default::default(),
+                last_close_enough_to_kick: Default::default(),
+                kick_target: Default::default(),
+                last_kick_target: Default::default(),
+                last_motion_command: Default::default(),
+                last_motion_switch_time: Default::default(),
+                last_motion_type: Default::default(),
+                last_sent_game_controller_return_message_time: Default::default(),
+                last_sent_hsl_message_time: Default::default(),
+                last_closest_to_ball: Default::default(),
+                closest_to_ball_entered_area_since: Default::default(),
+                closest_to_ball_left_area_since: Default::default(),
+                is_injected_motion_command: Default::default(),
+                walk_position: Default::default(),
+                body_motion: Default::default(),
+                head_motion: Default::default(),
+                voronoi_map: Default::default(),
+            };
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.last_motion_type = Some(types::motion_type::MotionType::Walk);
+            board.parameters.goalkeeper.x_offset = 0.3;
+            board.parameters.goalkeeper.distance_to_goalpost = 0.15;
+            board.parameters.goalkeeper.passive_distance = 4.5;
+            board
+                .parameters
+                .goalkeeper
+                .active_defense_maximum_robot_distance = 2.0;
+            board.parameters.ball.interception.minimum_ball_velocity = 1.0;
+            board
+                .parameters
+                .ball
+                .interception
+                .minimum_ball_velocity_towards_own_half = 0.7;
+            board.parameters.ball.interception.maximum_ball_distance = 3.5;
+            board
+                .parameters
+                .ball
+                .interception
+                .maximum_intercept_distance = 1.0;
+            board
+                .parameters
+                .kicking
+                .minimum_interception_forward_distance = 0.3;
+            let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+            assert_eq!(status, types::behavior_tree::Status::Success);
+            let target = transform * board.walk_position.unwrap();
+            approx::assert_relative_eq!(target.x(), -4.2, epsilon = 1e-5);
+            approx::assert_relative_eq!(target.y(), 0.04 * side, epsilon = 1e-5);
+            assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+        }
+    }
+
+    #[test]
+    fn keeper_commands_enough_speed_to_reach_fast_shot() {
+        let transform = Isometry2::from_parts(vector![-6.7, 0.0], 0.0);
+        let ball = LastBall {
+            position: point![-4.5, -0.6],
+            velocity: vector![-2.8, 1.6],
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        };
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions {
+                length: 14.0,
+                goal_inner_width: 2.6,
+                ..FieldDimensions::SPL_2025
+            },
+            ball: Some(ball.clone()),
+            last_ball: Some(ball),
+            head_yaw: Default::default(),
+            parameters: Default::default(),
+            walking_velocity_limits: Default::default(),
+            world_state: Default::default(),
+            controller_input: Default::default(),
+            remote_control_enabled: Default::default(),
+            path_obstacles_output: Default::default(),
+            time_since_last_switch: Default::default(),
+            direction_difference: Default::default(),
+            voronoi_inputs: Default::default(),
+            visual_kick_ball_position: Default::default(),
+            last_close_enough_to_kick: Default::default(),
+            kick_target: Default::default(),
+            last_kick_target: Default::default(),
+            last_motion_command: Default::default(),
+            last_motion_switch_time: Default::default(),
+            last_motion_type: Default::default(),
+            last_sent_game_controller_return_message_time: Default::default(),
+            last_sent_hsl_message_time: Default::default(),
+            last_closest_to_ball: Default::default(),
+            closest_to_ball_entered_area_since: Default::default(),
+            closest_to_ball_left_area_since: Default::default(),
+            is_injected_motion_command: Default::default(),
+            walk_position: Default::default(),
+            body_motion: Default::default(),
+            head_motion: Default::default(),
+            voronoi_map: Default::default(),
+        };
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.last_motion_type = Some(types::motion_type::MotionType::Walk);
+        board.parameters.goalkeeper.x_offset = 0.3;
+        board.parameters.goalkeeper.distance_to_goalpost = 0.15;
+        board.parameters.ball.interception.minimum_ball_velocity = 1.0;
+        board.parameters.ball.interception.maximum_ball_distance = 3.5;
+        board
+            .parameters
+            .ball
+            .interception
+            .maximum_intercept_distance = 1.0;
+        board
+            .parameters
+            .kicking
+            .minimum_interception_forward_distance = 0.3;
+        board.parameters.walking.speed.blocking = 0.8;
+        board.parameters.walking.speed.minimum_speed = 0.2;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
+        board.walking_velocity_limits.lateral_velocity_limit = 1.0;
+        board.walking_velocity_limits.angular_velocity_limit = 2.0;
+        let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+        assert_eq!(status, types::behavior_tree::Status::Success);
+        let target = board.walk_position.unwrap();
+        let time_to_line = 2.2 / 2.8;
+        let commanded_speed = match board.body_motion.as_ref().unwrap() {
+            BodyMotion::Walk { speed, .. } => *speed,
+            BodyMotion::WalkWithVelocity { velocity, .. } => velocity.norm(),
+            motion => panic!("expected goalkeeper walk, got {motion:?}"),
+        };
+        assert!(
+            commanded_speed * time_to_line >= target.coords().norm() - 1e-4,
+            "commanded {commanded_speed}m/s cannot cover {}m before shot in {time_to_line}s",
+            target.coords().norm()
+        );
+        board.walking_velocity_limits.lateral_velocity_limit = 0.25;
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        let Some(BodyMotion::WalkWithVelocity {
+            velocity,
+            angular_velocity,
+        }) = &board.body_motion
+        else {
+            panic!("expected policy-limited deadline walk");
+        };
+        approx::assert_relative_eq!(velocity.y(), 0.25);
+        assert!(angular_velocity.abs() <= board.walking_velocity_limits.angular_velocity_limit);
+
+        board.parameters.walking.path_planning.robot_radius = 0.15;
+        board
+            .world_state
+            .obstacles
+            .push(types::obstacles::Obstacle::robot(
+                point![0.0, 0.35],
+                0.1,
+                0.1,
+            ));
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        assert!(
+            matches!(board.body_motion, Some(BodyMotion::Walk { .. })),
+            "planned detours must retain ordinary path following"
+        );
+
+        board.world_state.obstacles.clear();
+        board
+            .world_state
+            .rule_obstacles
+            .push(types::rule_obstacles::RuleObstacle::Rectangle(
+                geometry::rectangle::Rectangle {
+                    min: point![-6.9, 0.4],
+                    max: point![-6.5, 0.9],
+                },
+            ));
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+            panic!("blocked planner fallback must not use deadline velocity");
+        };
+        let [types::path::PathSegment::LineSegment(line)] = path.segments.as_slice() else {
+            panic!("expected planner failure's direct-path fallback");
+        };
+        assert!(
+            board
+                .path_obstacles_output
+                .iter()
+                .any(|obstacle| obstacle.shape.intersects_line_segment(*line))
+        );
+        board.world_state.rule_obstacles.clear();
+
+        board.world_state.now = ros_z::time::Time::from_nanos(1_000_000_000);
+        board.world_state.obstacles = vec![types::obstacles::Obstacle::robot(
+            point![1.7, 0.0],
+            0.1,
+            0.1,
+        )];
+        board
+            .parameters
+            .goalkeeper
+            .kick_away_ball_maximum_robot_distance = 1.5;
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.strong_kick_min_target_distance = 1.0;
+        board.walking_velocity_limits.lateral_velocity_limit = 1.0;
+        board.ball.as_mut().unwrap().position = point![-6.0, 0.2571429];
+        board.last_ball = board.ball.clone();
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        assert!(
+            matches!(board.body_motion, Some(BodyMotion::WalkWithVelocity { .. })),
+            "nearby opponent must not turn an incoming goal shot into a clearance: {:?}",
+            board.body_motion
+        );
+
+        board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+        board.last_ball = board.ball.clone();
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        assert!(
+            matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick { strong: true, .. })
+            ),
+            "settled ball under pressure should still get a strong clearance"
+        );
     }
 
     #[test]
