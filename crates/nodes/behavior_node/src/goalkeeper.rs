@@ -1,7 +1,10 @@
 use coordinate_systems::Field;
 use hsl_network_messages::SubState;
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
-use types::{behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType};
+use types::{
+    behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType,
+    obstacles::ObstacleKind, world_state::WorldState,
+};
 
 use crate::{
     action,
@@ -246,7 +249,11 @@ fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
     ) {
         let ball_in_ground = ground_to_field.inverse() * ball.position;
 
-        ball_in_ground.x() > 0.0
+        opponent_near_ball(
+            &blackboard.world_state,
+            ball.position,
+            blackboard.parameters.walking.path_planning.robot_radius,
+        ) && ball_in_ground.x() > 0.0
             && ball_in_ground.coords().norm()
                 < blackboard
                     .parameters
@@ -255,6 +262,28 @@ fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
     } else {
         false
     }
+}
+
+fn opponent_near_ball(world: &WorldState, ball: Point2<Field>, robot_radius: f32) -> bool {
+    let Some(transform) = world.robot.ground_to_field else {
+        return false;
+    };
+    world.obstacles.iter().any(|obstacle| {
+        if !matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) {
+            return false;
+        }
+        let position = transform * obstacle.position;
+        (position - ball).norm() - obstacle.radius_at_foot_height <= 6.0
+            && !world.player_states.iter().any(|(_, teammate)| {
+                teammate.as_ref().is_some_and(|teammate| {
+                    (position - teammate.pose.position()).norm()
+                        <= robot_radius + obstacle.radius_at_foot_height
+                })
+            })
+    })
 }
 
 fn is_ball_in_own_penalty_area(blackboard: &mut Blackboard) -> bool {
@@ -427,9 +456,36 @@ fn is_interception_velocity_towards_own_half(
 
 #[cfg(test)]
 mod tests {
-    use linear_algebra::{point, vector};
+    use linear_algebra::{Isometry2, Pose2, point, vector};
+    use types::{
+        obstacles::Obstacle,
+        world_state::{PlayerState, WorldState},
+    };
 
-    use super::shot_y_at_defense_line;
+    use super::{opponent_near_ball, shot_y_at_defense_line};
+
+    #[test]
+    fn clearance_requires_nearby_opponent_not_known_teammate() {
+        let mut world = WorldState::default();
+        world.robot.ground_to_field = Some(Isometry2::from_parts(vector![-4.2, 0.0], 0.0));
+        let ball = point![-3.5, 0.0];
+        assert!(!opponent_near_ball(&world, ball, 0.4));
+
+        world
+            .obstacles
+            .push(Obstacle::robot(point![1.0, 0.0], 0.2, 0.3));
+        assert!(opponent_near_ball(&world, ball, 0.4));
+
+        world.player_states.two = Some(PlayerState {
+            pose: Pose2::new(point![-3.2, 0.0], 0.0),
+            ..Default::default()
+        });
+        assert!(!opponent_near_ball(&world, ball, 0.4));
+
+        world.player_states.two = None;
+        world.obstacles[0].position = point![7.0, 0.0];
+        assert!(!opponent_near_ball(&world, ball, 0.4));
+    }
 
     #[test]
     fn blocks_distant_shots_at_the_defense_line() {
