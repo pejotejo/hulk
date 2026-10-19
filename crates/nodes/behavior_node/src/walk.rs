@@ -19,7 +19,11 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::hulks_is_kicking_team,
-    kick::{kick, select_kick_target, use_last_kick_settings},
+    kick::{
+        kick,
+        kickoff::{kickoff_receiver, kickoff_receiver_position},
+        select_kick_target, use_last_kick_settings,
+    },
     node::Blackboard,
     selection, sequence, subtree,
     switch_motion_type::{is_last_motion_type, switch_motion_type},
@@ -229,12 +233,17 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
 
         let mut target_position = standard_pose.position;
 
-        if hulks_is_kicking_team(blackboard) && player_number == PlayerNumber::Three {
-            target_position = striker_position;
+        let mut target_orientation = Orientation2::new(standard_pose.rotation);
+        if hulks_is_kicking_team(blackboard) {
+            if player_number == PlayerNumber::Three {
+                target_position = striker_position;
+            } else if player_number == kickoff_receiver(blackboard) {
+                target_position = kickoff_receiver_position(blackboard);
+                target_orientation = Orientation2::from_vector(-target_position.coords());
+            }
         }
 
-        let kickoff_pose_in_field =
-            Pose2::from_parts(target_position, Orientation2::new(standard_pose.rotation));
+        let kickoff_pose_in_field = Pose2::from_parts(target_position, target_orientation);
 
         let kickoff_pose_in_ground = field_to_ground * kickoff_pose_in_field;
 

@@ -5,7 +5,7 @@ use hsl_network_messages::{PassIntent, PlayerNumber};
 use linear_algebra::{Orientation2, Point2, Vector2};
 use types::{behavior_tree::Status, motion_command::BodyMotion};
 
-use crate::{actions::stand, node::Blackboard};
+use crate::{actions::stand, kick::reception::receive_rolling_ball, node::Blackboard};
 
 // shortcut: readiness is unconfirmed; tune this delay after measuring delivery and turning.
 const PREPARATION_TIME: Duration = Duration::from_millis(150);
@@ -114,6 +114,9 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     let Some((_, sender)) = incoming_pass(blackboard) else {
         return Status::Failure;
     };
+    if receive_rolling_ball(blackboard) == Status::Success {
+        return Status::Success;
+    }
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
         blackboard.projected_ball_position(ball.position, ball.velocity)

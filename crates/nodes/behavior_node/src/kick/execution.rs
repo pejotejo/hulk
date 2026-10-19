@@ -169,15 +169,20 @@ fn resolve_action_target(
             .collect()
         }
         BallAction::Pass { .. } if !blackboard.has_team_message_budget() => return None,
-        BallAction::Pass { receiver } => pass_openings(
-            ball,
-            pass_receiver_position(blackboard, ball, receiver)?,
-            transform,
-            &blackboard.world_state.obstacles,
-            field,
-            &parameters.passing,
-            parameters.obstacle_clearance,
-        ),
+        BallAction::Pass { receiver } => {
+            if let Some(target) = super::kickoff::kickoff_pass_target(blackboard, receiver) {
+                return Some(target);
+            }
+            pass_openings(
+                ball,
+                pass_receiver_position(blackboard, ball, receiver)?,
+                transform,
+                &blackboard.world_state.obstacles,
+                field,
+                &parameters.passing,
+                parameters.obstacle_clearance,
+            )
+        }
         BallAction::Dribble | BallAction::Clear => {
             let distance = if action == BallAction::Dribble {
                 parameters.maximum_dribble_distance
@@ -261,5 +266,56 @@ fn goalward_target(
         opening.0
     } else {
         opening.1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::LastBall;
+    use types::{
+        field_dimensions::{FieldDimensions, Side},
+        world_state::BallSource,
+    };
+
+    #[test]
+    fn long_shots_use_strong_kicks_at_requested_speed() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ball_action: Some(BallAction::ShootAtGoalCenter),
+            ball: Some(LastBall {
+                position: point![0.5, 0.0],
+                velocity: Vector2::zeros(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.kicking.target_speed = 3.4;
+        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard
+            .parameters
+            .kicking
+            .strong_kick_min_target_distance = 3.0;
+        blackboard.parameters.kicking.kick_activation_distance = 3.0;
+        assert_eq!(execute_ball_action(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                soft: false,
+                target_speed: 3.4,
+                ..
+            })
+        ));
+
+        blackboard.parameters.kicking.allow_strong_kicks = false;
+        assert_eq!(execute_ball_action(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { strong: false, .. })
+        ));
     }
 }

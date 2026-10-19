@@ -103,6 +103,8 @@ pub struct KickOffPose {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
 pub struct KickoffParameters {
+    #[serde(default)]
+    pub pass_to_left: bool,
     pub striker_position: Point2<Field>,
     pub standard_positions: Players<KickOffPose>,
 }

@@ -235,6 +235,7 @@ mod tests {
         blackboard.world_state.filtered_game_controller_state = Some(
             types::filtered_game_controller_state::FilteredGameControllerState {
                 remaining_number_of_messages: 100,
+                remaining_time_in_half: Duration::from_millis(4800),
                 ..Default::default()
             },
         );
@@ -242,10 +243,6 @@ mod tests {
             .parameters
             .network
             .remaining_amount_of_messages_to_stop_sending = 20;
-        blackboard
-            .parameters
-            .network
-            .hsl_state_message_send_interval = Duration::from_millis(300);
         blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
         blackboard.parameters.kicking.strategy.passing = PassingParameters {
             maximum_distance: 3.0,
@@ -1135,7 +1132,9 @@ mod tests {
                 kick_direction: Default::default(),
                 strong: true,
             },
-            types::motion_command::HeadMotion::ZeroAngles,
+            types::motion_command::HeadMotion::Center {
+                image_region_target: Default::default(),
+            },
         );
         tree.tick_with_trace(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
