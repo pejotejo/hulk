@@ -316,18 +316,44 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
         blackboard.player_number,
     ) {
         let field_to_ground = ground_to_field.inverse();
+        let own_kickoff = hulks_is_kicking_team(blackboard);
+        let kicker = crate::kick::kickoff::kickoff_kicker(blackboard);
+        let own_field_player =
+            own_kickoff && player_number != blackboard.parameters.goalkeeper.player_number;
         let kickoff = &blackboard.parameters.kickoff;
-        let standard_pose = kickoff.standard_positions[player_number];
+        let standard_player = if own_field_player {
+            match player_number {
+                PlayerNumber::Three => PlayerNumber::Two,
+                PlayerNumber::Four => PlayerNumber::Five,
+                PlayerNumber::Five => PlayerNumber::Four,
+                other => other,
+            }
+        } else {
+            player_number
+        };
+        let standard_pose = kickoff.standard_positions[standard_player];
         let striker_position = kickoff.striker_position;
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let walk_to_kickoff_speed = blackboard.parameters.walking.speed.walk_to_kickoff;
 
         let mut target_position = standard_pose.position;
+        if own_field_player && player_number == PlayerNumber::Two {
+            target_position = point![target_position.x(), target_position.y().abs()];
+        }
+        if own_field_player && matches!(player_number, PlayerNumber::Four | PlayerNumber::Five) {
+            target_position = point![
+                target_position.x(),
+                target_position.y().signum()
+                    * target_position
+                        .y()
+                        .abs()
+                        .max(kickoff_receiver_position(blackboard).y().abs())
+            ];
+        }
 
         let mut target_orientation = Orientation2::new(standard_pose.rotation);
-        let own_kickoff = hulks_is_kicking_team(blackboard);
-        if own_kickoff && player_number != blackboard.parameters.goalkeeper.player_number {
-            if player_number == PlayerNumber::Three {
+        if own_field_player {
+            if player_number == kicker {
                 target_position = striker_position;
             } else if Some(player_number) == kickoff_receiver(blackboard) {
                 target_position = kickoff_receiver_position(blackboard);
@@ -337,27 +363,10 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
                         + (point![blackboard.field_dimensions.length / 2.0, 0.0] - target_position)
                             .normalize(),
                 );
-                let position = ground_to_field.as_pose().position();
-                let radius = blackboard.parameters.walking.path_planning.robot_radius;
-                if blackboard.world_state.robot.primary_state
-                    == types::primary_state::PrimaryState::Ready
-                    && position.y() * target_position.y().signum() < 2.0 * radius + 0.05
-                {
-                    // Enter the pass-side lane behind the striker before walking forward.
-                    let staging_x = (striker_position.x() - 2.0 * radius - 0.05).min(
-                        -blackboard.field_dimensions.center_circle_diameter / 2.0 - radius - 0.05,
-                    );
-                    target_position =
-                        if position.x() > staging_x + walk_and_stand.target_reached_thresholds.x {
-                            point![staging_x, position.y()]
-                        } else {
-                            point![position.x(), target_position.y()]
-                        };
-                }
             }
         }
         if player_number != blackboard.parameters.goalkeeper.player_number
-            && !(own_kickoff && player_number == PlayerNumber::Three)
+            && !(own_kickoff && player_number == kicker)
         {
             target_position = kickoff_support_position(blackboard, target_position);
         }

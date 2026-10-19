@@ -1,8 +1,11 @@
-use hsl_network_messages::SubState;
-use linear_algebra::{Rotation2, point};
+use std::time::Duration;
+
+use coordinate_systems::Field;
+use hsl_network_messages::{PlayerNumber, SubState, Team};
+use linear_algebra::{Point2, Rotation2, point};
 use types::{
     behavior_tree::Status, field_dimensions::Side,
-    filtered_game_controller_state::FilteredGameControllerState,
+    filtered_game_controller_state::FilteredGameControllerState, obstacles::ObstacleKind,
 };
 
 use crate::{
@@ -10,7 +13,11 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::hulks_is_kicking_team,
-    kick::{execution::execute_ball_action, strategy::select_ball_action},
+    kick::{
+        execution::execute_ball_action,
+        geometry::pass_openings,
+        strategy::{BallAction, select_ball_action},
+    },
     node::Blackboard,
     penalty_shootout::penalty_kick_striker_subtree,
     selection, sequence, subtree,
@@ -26,7 +33,13 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
                     condition!(is_sub_state, SubState::PenaltyKick),
                     subtree!(penalty_kick_striker_subtree),
                 ),
-                sequence!(action!(select_ball_action), action!(execute_ball_action)),
+                sequence!(
+                    action!(select_ball_action),
+                    selection!(
+                        action!(wait_for_restart_receiver),
+                        action!(execute_ball_action)
+                    )
+                ),
                 action!(crate::actions::stand),
             )
         ),
@@ -53,6 +66,179 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
             action!(walk_to_block_position)
         )
     )
+}
+
+fn restart_players(blackboard: &Blackboard) -> Vec<(PlayerNumber, Point2<Field>)> {
+    let world = &blackboard.world_state;
+    let (Some(game), Some(transform)) = (
+        &world.filtered_game_controller_state,
+        world.robot.ground_to_field,
+    ) else {
+        return Vec::new();
+    };
+    game.penalties
+        .iter()
+        .filter_map(|(player, penalty)| {
+            if penalty.is_some() || player == blackboard.parameters.goalkeeper.player_number {
+                return None;
+            }
+            let position = if player == world.robot.player_number {
+                transform.as_pose().position()
+            } else {
+                let state = world.player_states[player].as_ref()?;
+                if state.time > world.now
+                    || world.now.duration_since(state.time)
+                        >= blackboard
+                            .parameters
+                            .kicking
+                            .strategy
+                            .passing
+                            .maximum_receiver_age
+                {
+                    return None;
+                }
+                state.inner.pose.position()
+            };
+            position
+                .inner
+                .iter()
+                .all(|coordinate| coordinate.is_finite())
+                .then_some((player, position))
+        })
+        .collect()
+}
+
+pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Field>) -> bool {
+    let (Some(ball), Some(transform)) = (
+        &blackboard.ball,
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return false;
+    };
+    if receiver.x().abs() >= blackboard.field_dimensions.length / 2.0
+        || receiver.y().abs() >= blackboard.field_dimensions.width / 2.0
+    {
+        return false;
+    }
+    let players = restart_players(blackboard);
+    let Some((taker_number, taker)) = players.iter().min_by(|(_, a), (_, b)| {
+        (*a - ball.position)
+            .norm_squared()
+            .total_cmp(&(*b - ball.position).norm_squared())
+    }) else {
+        return false;
+    };
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
+    // The launching robot's body is absent from its own obstacle view as well.
+    let obstacles: Vec<_> = blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .filter(|obstacle| {
+            *taker_number == blackboard.world_state.robot.player_number
+                || !matches!(
+                    obstacle.kind,
+                    ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+                )
+                || (transform * obstacle.position - *taker).norm()
+                    > radius + obstacle.radius_at_foot_height
+        })
+        .cloned()
+        .collect();
+    let parameters = &blackboard.parameters.kicking.strategy;
+    !pass_openings(
+        ball.position,
+        receiver,
+        transform,
+        &obstacles,
+        &blackboard.field_dimensions,
+        &parameters.passing,
+        parameters.obstacle_clearance,
+    )
+    .is_empty()
+}
+
+pub(crate) fn restart_pass_receiver(
+    blackboard: &Blackboard,
+) -> Option<(PlayerNumber, Point2<Field>)> {
+    let world = &blackboard.world_state;
+    let game = world.filtered_game_controller_state.as_ref()?;
+    if game.kicking_team != Some(Team::Hulks)
+        || !matches!(
+            game.sub_state,
+            Some(SubState::CornerKick | SubState::ThrowIn)
+        )
+    {
+        return None;
+    }
+    let ball = blackboard.ball.as_ref()?.position;
+    let parameters = &blackboard.parameters.kicking.strategy;
+    parameters.validate().ok()?;
+    let players = restart_players(blackboard);
+    let taker = players
+        .iter()
+        .min_by(|(_, a), (_, b)| {
+            (*a - ball)
+                .norm_squared()
+                .total_cmp(&(*b - ball).norm_squared())
+        })?
+        .0;
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
+    let distance = blackboard
+        .parameters
+        .voronoi
+        .ball_support_distance
+        .max(parameters.passing.receiver_standoff + 2.0 * radius);
+    let field = &blackboard.field_dimensions;
+    let margin = radius + 0.05;
+    let x_sign = if game.sub_state == Some(SubState::CornerKick) && ball.x() > 0.0
+        || ball.x() + distance >= field.length / 2.0 - margin
+    {
+        -1.0
+    } else {
+        1.0
+    };
+    let y_sign = if ball.y() >= 0.0 { -1.0 } else { 1.0 };
+    for (forward, inward) in [(1.0, 1.0), (2.0, 1.0), (1.0, 2.0)] {
+        let target = point![
+            (ball.x() + x_sign * distance * forward)
+                .clamp(-field.length / 2.0 + margin, field.length / 2.0 - margin),
+            (ball.y() + y_sign * distance * inward)
+                .clamp(-field.width / 2.0 + margin, field.width / 2.0 - margin)
+        ];
+        if !restart_pass_is_open(blackboard, target) {
+            continue;
+        }
+        let receiver = players
+            .iter()
+            .filter(|(player, _)| *player != taker)
+            .min_by(|(_, a), (_, b)| {
+                (*a - target)
+                    .norm_squared()
+                    .total_cmp(&(*b - target).norm_squared())
+            })?
+            .0;
+        return Some((receiver, target));
+    }
+    None
+}
+
+fn wait_for_restart_receiver(blackboard: &mut Blackboard) -> Status {
+    if blackboard.ball_action != Some(BallAction::Dribble)
+        || blackboard.last_motion_type == Some(types::motion_type::MotionType::Kick)
+        || !blackboard.has_team_message_budget()
+        || restart_pass_receiver(blackboard).is_none()
+    {
+        return Status::Failure;
+    }
+    let now = blackboard.world_state.now;
+    let since = *blackboard.restart_pass_wait_started.get_or_insert(now);
+    if now.duration_since(since) >= Duration::from_secs(5) {
+        return Status::Failure;
+    }
+    blackboard.ball_action = None;
+    blackboard.kick_target = None;
+    crate::actions::stand(blackboard)
 }
 
 pub fn is_in_sub_state(blackboard: &mut Blackboard) -> bool {
@@ -606,6 +792,133 @@ mod tests {
             execute_ball_action(&mut board);
             assert_eq!(board.body_motion, Some(BodyMotion::Stand));
             assert_eq!(board.kick_target, None);
+        }
+    }
+
+    #[test]
+    fn natural_corner_and_blocked_throw_in_stage_one_receiver_before_dribbling() {
+        let tree = crate::tree::create_tree();
+        for (state, ball, blocked) in [
+            (SubState::CornerKick, point![7.0, 4.5], false),
+            (SubState::CornerKick, point![7.0, 4.5], true),
+            (SubState::ThrowIn, point![-1.5, 4.5], true),
+        ] {
+            let mut taker = restart(state, ball);
+            taker.field_dimensions.length = 14.0;
+            taker.field_dimensions.width = 9.0;
+            taker.field_dimensions.ball_radius = 0.105;
+            taker.parameters.walking.path_planning.robot_radius = 0.4;
+            taker.parameters.walking.speed.kicking = 1.8;
+            taker.parameters.walking.speed.velocity_fade_distance = 3.0;
+            taker
+                .parameters
+                .walking
+                .walk_and_stand
+                .target_reached_thresholds = nalgebra::vector![0.05, 0.1];
+            taker.parameters.voronoi.ball_support_distance = 1.5;
+            taker.world_state.robot.player_number = PlayerNumber::Three;
+            let taker_position = ball + linear_algebra::vector![0.22, 0.3];
+            let toward_ball = ball - taker_position;
+            let taker_pose = Pose2::new(taker_position, toward_ball.y().atan2(toward_ball.x()));
+            taker.world_state.robot.ground_to_field = Some(taker_pose.as_transform());
+            let receiver_position = point![-3.0, -0.5];
+            taker.world_state.player_states.two = Some(TimeWrapper {
+                time: taker.world_state.now,
+                inner: PlayerState {
+                    pose: Pose2::new(receiver_position, 0.0),
+                    ..Default::default()
+                },
+            });
+            let obstacle = (ball + receiver_position.coords()) / 2.0;
+            if blocked {
+                taker.world_state.obstacles.push(Obstacle::robot(
+                    taker_pose.as_transform().inverse() * obstacle,
+                    0.3,
+                    0.3,
+                ));
+            }
+            tree.tick_with_trace(&mut taker);
+            assert_eq!(
+                taker.body_motion,
+                Some(BodyMotion::Stand),
+                "{state:?}, blocked {blocked}"
+            );
+            assert!(taker.restart_pass_wait_started.is_some());
+            let (number, target) = restart_pass_receiver(&taker).unwrap();
+            assert_eq!(number, PlayerNumber::Two);
+            assert!(target.x().abs() + 0.4 < 7.0);
+            assert!(target.y().abs() + 0.4 < 4.5);
+
+            let mut receiver = taker.clone();
+            receiver.world_state.robot.player_number = PlayerNumber::Two;
+            receiver.world_state.robot.ground_to_field =
+                Some(Pose2::new(receiver_position, 0.0).as_transform());
+            receiver.world_state.player_states.three = Some(TimeWrapper {
+                time: receiver.world_state.now,
+                inner: PlayerState {
+                    pose: taker_pose,
+                    ..Default::default()
+                },
+            });
+            let transform = receiver.world_state.robot.ground_to_field.unwrap();
+            receiver.world_state.obstacles = vec![Obstacle::robot(
+                transform.inverse() * taker_position,
+                0.4,
+                0.4,
+            )];
+            if blocked {
+                receiver.world_state.obstacles.push(Obstacle::robot(
+                    transform.inverse() * obstacle,
+                    0.3,
+                    0.3,
+                ));
+            }
+            tree.tick_with_trace(&mut receiver);
+            assert!(
+                matches!(receiver.body_motion, Some(BodyMotion::Walk { .. })),
+                "{state:?}, blocked {blocked}"
+            );
+            let held_pose =
+                Pose2::new(target, (ball.y() - target.y()).atan2(ball.x() - target.x()));
+            receiver.world_state.robot.ground_to_field = Some(held_pose.as_transform());
+            receiver.world_state.obstacles = vec![Obstacle::robot(
+                held_pose.as_transform().inverse() * taker_position,
+                0.4,
+                0.4,
+            )];
+            tree.tick_with_trace(&mut receiver);
+            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
+
+            let mut expired = taker.clone();
+            expired.world_state.now = expired.world_state.now + Duration::from_secs(5);
+            expired.world_state.player_states.two.as_mut().unwrap().time = expired.world_state.now;
+            tree.tick_with_trace(&mut expired);
+            assert_eq!(expired.ball_action, Some(BallAction::Dribble));
+            expired
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .sub_state = None;
+            expired.update_restart_pass();
+            assert!(expired.restart_pass_wait_started.is_none());
+
+            taker
+                .world_state
+                .player_states
+                .two
+                .as_mut()
+                .unwrap()
+                .inner
+                .pose = held_pose;
+            tree.tick_with_trace(&mut taker);
+            assert_eq!(
+                taker.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Two
+                })
+            );
+            assert_eq!(taker.body_motion, Some(BodyMotion::Stand));
         }
     }
 }

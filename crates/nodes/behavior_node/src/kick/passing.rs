@@ -14,7 +14,9 @@ use crate::{
     conditions::{goalkeeper_clearance_direction, hulks_is_kicking_team},
     kick::reception::receive_rolling_ball,
     node::Blackboard,
-    substates::{is_in_sub_state, is_sub_state},
+    substates::{is_in_sub_state, is_sub_state, restart_pass_is_open, restart_pass_receiver},
+    switch_motion_type::is_allowed_to_switch,
+    walk::walk_to,
 };
 
 // shortcut: readiness is unconfirmed; tune this delay after measuring delivery and turning.
@@ -148,6 +150,8 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     {
         return Status::Failure;
     }
+    let can_stage = is_sub_state(blackboard, SubState::CornerKick)
+        || is_sub_state(blackboard, SubState::ThrowIn);
     let (Some(ball), Some(transform)) = (
         blackboard.ball.as_ref(),
         blackboard.world_state.robot.ground_to_field,
@@ -155,13 +159,44 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     };
     let ball = ball.position;
-    let distance = (ball - transform.as_pose().position()).norm();
+    let position = transform.as_pose().position();
+    let distance = (ball - position).norm();
     let parameters = &blackboard.parameters.kicking.strategy.passing;
-    if parameters.validate().is_err()
-        || parameters.maximum_distance <= 0.0
-        || !distance.is_finite()
-        || distance >= parameters.maximum_distance + parameters.receiver_standoff
+    if parameters.validate().is_err() || parameters.maximum_distance <= 0.0 || !distance.is_finite()
     {
+        return Status::Failure;
+    }
+    if can_stage {
+        if !restart_pass_is_open(blackboard, position) {
+            let Some((receiver, target)) = restart_pass_receiver(blackboard) else {
+                return Status::Failure;
+            };
+            if receiver != blackboard.world_state.robot.player_number {
+                return Status::Failure;
+            }
+            blackboard.ball_action = None;
+            blackboard.kick_target = None;
+            if blackboard.last_motion_type != Some(MotionType::Walk)
+                && !is_allowed_to_switch(blackboard)
+            {
+                return stand(blackboard);
+            }
+            let walking = blackboard.parameters.walking.walk_and_stand;
+            let target = transform.inverse() * target;
+            let ball = transform.inverse() * ball;
+            return walk_to(
+                blackboard,
+                linear_algebra::Pose2::from_parts(target, Orientation2::from_vector(ball - target)),
+                blackboard.parameters.walking.speed.kicking,
+                types::motion_command::OrientationMode::LookAt {
+                    target: ball,
+                    tolerance: walking.orientation_tolerance,
+                },
+                walking.normal_distance_to_be_aligned,
+                walking.hysteresis,
+            );
+        }
+    } else if distance >= parameters.maximum_distance + parameters.receiver_standoff {
         return Status::Failure;
     }
     blackboard.ball_action = None;
