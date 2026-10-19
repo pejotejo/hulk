@@ -3,6 +3,7 @@ use hsl_network_messages::SubState;
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{
     behavior_tree::Status,
+    field_dimensions::FieldDimensions,
     motion_command::{BodyMotion, OrientationMode},
     motion_type::MotionType,
     path::PathSegment,
@@ -474,16 +475,26 @@ pub fn walk_to_goalkeeper_penalty_position(blackboard: &mut Blackboard) -> Statu
 
 fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
     if let Some(ball) = &blackboard.ball {
-        let target_y = if ball.position.y() >= 0.0 {
-            blackboard.field_dimensions.width / 4.0
-        } else {
-            -blackboard.field_dimensions.width / 4.0
-        };
-
-        apply_kick_target(blackboard, point!(0.0, target_y))
+        let target = goalkeeper_clearance_target(ball.position, &blackboard.field_dimensions);
+        apply_kick_target(blackboard, target)
     } else {
         Status::Failure
     }
+}
+
+pub(crate) fn goalkeeper_clearance_target(
+    ball: Point2<Field>,
+    field: &FieldDimensions,
+) -> Point2<Field> {
+    // Keep one central lane so pose roundoff cannot flip the clearance side.
+    point![
+        0.0,
+        if ball.y() >= -field.ball_radius {
+            field.width / 4.0
+        } else {
+            -field.width / 4.0
+        }
+    ]
 }
 
 fn is_interception_velocity_towards_own_half(

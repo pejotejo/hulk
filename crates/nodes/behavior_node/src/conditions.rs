@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use coordinate_systems::{Field, Ground};
 use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
-use linear_algebra::{point, vector};
+use linear_algebra::{Vector2, point, vector};
 use types::{
     controller_input::Button, fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
@@ -12,9 +13,119 @@ use types::{
 use voronoi::Ownership;
 
 use crate::{
-    kick::kick_ball_position_in_ground,
+    goalkeeper::goalkeeper_clearance_target,
+    kick::{kick_ball_position_in_ground, passing::is_pass_receiver},
     node::{Blackboard, ball_timeout},
+    substates::is_in_sub_state,
 };
+
+pub fn should_yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> bool {
+    let world = &blackboard.world_state;
+    let keeper_number = blackboard.parameters.goalkeeper.player_number;
+    if world.robot.player_number == keeper_number
+        || blackboard.last_motion_type == Some(MotionType::Kick)
+        || is_in_sub_state(blackboard)
+        || is_pass_receiver(blackboard)
+    {
+        return false;
+    }
+    goalkeeper_clearance_direction(blackboard).is_some()
+}
+
+pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<Vector2<Field>> {
+    let world = &blackboard.world_state;
+    let keeper_number = blackboard.parameters.goalkeeper.player_number;
+    let ball = blackboard.ball.as_ref()?;
+    let transform = world.robot.ground_to_field?;
+    let keeper = world.player_states[keeper_number].as_ref()?;
+    let field = &blackboard.field_dimensions;
+    let keeper_position = keeper.inner.pose.position();
+    if ball.age > world.now
+        || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+        || keeper.time > world.now
+        || world.now.duration_since(keeper.time)
+            > blackboard
+                .parameters
+                .kicking
+                .strategy
+                .passing
+                .maximum_receiver_age
+        || world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| game.penalties[keeper_number].is_some())
+        || !ball
+            .position
+            .inner
+            .iter()
+            .chain(ball.velocity.inner.iter())
+            .chain(keeper_position.inner.iter())
+            .chain(transform.translation().inner.iter())
+            .all(|value| value.is_finite())
+        || ball.position.x() < -field.length / 2.0
+        || ball.position.x() >= 0.0
+        || ball.position.y().abs() >= field.width / 2.0
+        || keeper_position.x() < -field.length / 2.0
+        || keeper_position.x() >= -field.length / 2.0 + field.penalty_area_length
+        || keeper_position.y().abs() >= field.penalty_area_width / 2.0
+    {
+        return None;
+    }
+    let interception = blackboard.parameters.ball.interception;
+    let to_keeper = keeper_position - ball.position;
+    let to_robot = transform.as_pose().position() - ball.position;
+    let corridor = blackboard.parameters.walking.path_planning.robot_radius
+        + field.ball_radius
+        + blackboard.parameters.kicking.strategy.obstacle_clearance;
+    let moving = ball.velocity.norm() > interception.minimum_ball_velocity;
+    if moving && ball.velocity.x() <= ball.velocity.y().abs() {
+        return None;
+    }
+    if moving && ball.velocity.x() > interception.minimum_ball_velocity_towards_own_half {
+        let direction = ball.velocity.normalize();
+        // shortcut: infer origin from keeper proximity, replace when clearance intent is shared.
+        return (to_keeper.dot(&direction) < 0.0
+            && (to_keeper - direction * to_keeper.dot(&direction)).norm() <= corridor
+            && to_robot.dot(&direction) > 0.0)
+            .then_some(direction);
+    }
+    let ball_at_keeper = keeper.inner.pose.as_transform::<Ground>().inverse() * ball.position;
+    let keeper_distance = to_keeper.norm_squared();
+    if ball.position.x() >= -field.length / 2.0 + field.penalty_area_length
+        || ball.position.y().abs() >= field.penalty_area_width / 2.0
+        || ball_at_keeper.x() <= 0.0
+        || ball_at_keeper.coords().norm()
+            >= blackboard
+                .parameters
+                .goalkeeper
+                .kick_away_ball_maximum_robot_distance
+        || to_robot.norm_squared() < keeper_distance
+        || !opponent_near_ball(blackboard, 6.0)
+        || world.player_states.iter().any(|(number, state)| {
+            number != keeper_number
+                && world
+                    .filtered_game_controller_state
+                    .as_ref()
+                    .is_none_or(|game| game.penalties[number].is_none())
+                && state.as_ref().is_some_and(|state| {
+                    state.time <= world.now
+                        && world.now.duration_since(state.time)
+                            <= blackboard
+                                .parameters
+                                .kicking
+                                .strategy
+                                .passing
+                                .maximum_receiver_age
+                        && (state.inner.pose.position() - ball.position).norm_squared()
+                            < keeper_distance
+                })
+        })
+    {
+        return None;
+    }
+    let direction = (goalkeeper_clearance_target(ball.position, field) - ball.position).normalize();
+    (to_robot.dot(&direction) > 0.0).then_some(direction)
+}
 
 pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool {
     let (Some(ball), Some(transform)) = (
