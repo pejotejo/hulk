@@ -1,6 +1,6 @@
 use coordinate_systems::Field;
 use hsl_network_messages::SubState;
-use linear_algebra::{Orientation2, Pose2, Vector2, point};
+use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use types::{behavior_tree::Status, motion_command::OrientationMode, motion_type::MotionType};
 
 use crate::{
@@ -9,7 +9,10 @@ use crate::{
     condition,
     conditions::{hulks_is_kicking_team, is_closest_to_ball},
     head::look_at_ball_subtree,
-    kick::{apply_kick_target, disable_strong_kick, intercept, kick, kick_alternatives_subtree},
+    kick::{
+        apply_kick_target, disable_strong_kick, intercept, kick, kick_alternatives_subtree,
+        kick_strength_subtree,
+    },
     negation,
     node::Blackboard,
     selection, sequence,
@@ -36,7 +39,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                     sequence!(
                         action!(kick),
                         action!(select_goalkeeper_kick_away_target),
-                        action!(disable_strong_kick),
+                        subtree!(kick_strength_subtree),
                     ),
                     subtree!(kick_alternatives_subtree),
                 )
@@ -52,6 +55,14 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                     ),
                     subtree!(kick_alternatives_subtree),
                 )
+            ),
+            switch_motion_type(
+                MotionType::Walk,
+                sequence!(
+                    action!(set_goalkeeper_shot_block_position),
+                    action!(walk_to_block_position)
+                ),
+                Node::Failure,
             ),
             sequence!(
                 condition!(is_ball_close_enough_to_goal_to_become_striker),
@@ -127,44 +138,24 @@ fn goalkeeper_default_position_subtree() -> Node<Blackboard> {
 }
 
 fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
-    if !is_ball_near_own_goal(blackboard) {
+    if goalkeeper_shot_block_position(blackboard).is_none() {
         return false;
     }
 
-    let Some(ball_velocity) = ball_interception_velocity_in_field(blackboard) else {
-        return false;
-    };
-
-    if !is_interception_velocity_towards_own_half(blackboard, ball_velocity) {
-        return false;
-    }
-
-    if let Some(ball) = &blackboard.ball {
-        let field_dimensions = blackboard.field_dimensions;
-        let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field else {
-            return false;
-        };
-
-        let own_goal_x = -field_dimensions.length / 2.0;
-        let interception_line_x = own_goal_x + blackboard.parameters.goalkeeper.x_offset;
-        let time_to_interception_line =
-            (interception_line_x - ball.position.x()) / ball_velocity.x();
-
-        if time_to_interception_line <= 0.0 {
-            return false;
-        }
-
-        let y_at_interception_line =
-            ball.position.y() + ball_velocity.y() * time_to_interception_line;
-        let goal_half_width = field_dimensions.goal_inner_width / 2.0
-            + field_dimensions.goal_post_diameter / 2.0
-            + field_dimensions.ball_radius;
-
-        if y_at_interception_line.abs() >= goal_half_width {
-            return false;
-        }
-
+    if let (Some(ball), Some(ground_to_field)) = (
+        &blackboard.ball,
+        blackboard.world_state.robot.ground_to_field,
+    ) {
         let ball_in_ground = ground_to_field.inverse() * ball.position;
+        if ball_in_ground.coords().norm()
+            > blackboard
+                .parameters
+                .ball
+                .interception
+                .maximum_ball_distance
+        {
+            return false;
+        }
         let velocity = ground_to_field.inverse() * ball.velocity;
         let time_to_closest_approach =
             -ball_in_ground.coords().dot(&velocity) / velocity.norm_squared();
@@ -186,6 +177,61 @@ fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
                     .maximum_intercept_distance
     } else {
         false
+    }
+}
+
+fn shot_y_at_defense_line(
+    ball: Point2<Field>,
+    velocity: Vector2<Field>,
+    goal_x: f32,
+    defense_x: f32,
+    goal_half_width: f32,
+) -> Option<f32> {
+    if ![ball.x(), ball.y(), velocity.x(), velocity.y()]
+        .into_iter()
+        .all(f32::is_finite)
+        || velocity.x() >= 0.0
+        || ball.x() <= defense_x
+    {
+        return None;
+    }
+    let goal_y = ball.y() + velocity.y() * (goal_x - ball.x()) / velocity.x();
+    if goal_y.abs() >= goal_half_width {
+        return None;
+    }
+    Some(ball.y() + velocity.y() * (defense_x - ball.x()) / velocity.x())
+}
+
+fn goalkeeper_shot_block_position(blackboard: &Blackboard) -> Option<Point2<Field>> {
+    let ball = blackboard.ball.as_ref()?;
+    if !is_interception_velocity_towards_own_half(blackboard, ball.velocity) {
+        return None;
+    }
+    let dimensions = blackboard.field_dimensions;
+    let parameters = &blackboard.parameters.goalkeeper;
+    let goal_x = -dimensions.length / 2.0;
+    let defense_x = goal_x + parameters.x_offset;
+    let goal_half_width = dimensions.goal_inner_width / 2.0;
+    let target_y = shot_y_at_defense_line(
+        ball.position,
+        ball.velocity,
+        goal_x,
+        defense_x,
+        goal_half_width + dimensions.goal_post_diameter / 2.0 + dimensions.ball_radius,
+    )?;
+    let maximum_y = (goal_half_width - parameters.distance_to_goalpost).max(0.0);
+    Some(point!(defense_x, target_y.clamp(-maximum_y, maximum_y)))
+}
+
+fn set_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status {
+    if let (Some(position), Some(ground_to_field)) = (
+        goalkeeper_shot_block_position(blackboard),
+        blackboard.world_state.robot.ground_to_field,
+    ) {
+        blackboard.walk_position = Some(ground_to_field.inverse() * position);
+        Status::Success
+    } else {
+        Status::Failure
     }
 }
 
@@ -284,10 +330,19 @@ pub fn walk_to_goalkeeper_default_position(blackboard: &mut Blackboard) -> Statu
     if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field {
         let field_dimensions = blackboard.field_dimensions;
         let own_goal_line_x = -field_dimensions.length / 2.0;
-        let default_position_in_field = point!(
-            own_goal_line_x + blackboard.parameters.goalkeeper.x_offset,
-            0.0
-        );
+        let parameters = &blackboard.parameters.goalkeeper;
+        let maximum_y =
+            (field_dimensions.goal_inner_width / 2.0 - parameters.distance_to_goalpost).max(0.0);
+        let target_y = blackboard.ball.as_ref().map_or(0.0, |ball| {
+            let distance_from_goal = ball.position.x() - own_goal_line_x;
+            if distance_from_goal > parameters.x_offset {
+                (ball.position.y() * parameters.x_offset / distance_from_goal)
+                    .clamp(-maximum_y, maximum_y)
+            } else {
+                0.0
+            }
+        });
+        let default_position_in_field = point!(own_goal_line_x + parameters.x_offset, target_y);
         let default_pose_in_field =
             Pose2::from_parts(default_position_in_field, Orientation2::new(0.0));
         let default_pose_in_ground = ground_to_field.inverse() * default_pose_in_field;
@@ -360,11 +415,6 @@ fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
     }
 }
 
-fn ball_interception_velocity_in_field(blackboard: &Blackboard) -> Option<Vector2<Field>> {
-    let ball = blackboard.ball.as_ref()?;
-    Some(ball.velocity)
-}
-
 fn is_interception_velocity_towards_own_half(
     blackboard: &Blackboard,
     ball_velocity: Vector2<Field>,
@@ -373,4 +423,31 @@ fn is_interception_velocity_towards_own_half(
 
     ball_velocity.norm() > parameters.minimum_ball_velocity
         && ball_velocity.x() < -parameters.minimum_ball_velocity_towards_own_half
+}
+
+#[cfg(test)]
+mod tests {
+    use linear_algebra::{point, vector};
+
+    use super::shot_y_at_defense_line;
+
+    #[test]
+    fn blocks_distant_shots_at_the_defense_line() {
+        let target = shot_y_at_defense_line(point!(0.0, 1.5), vector!(-3.0, -0.8), -4.5, -4.0, 0.8);
+        approx::assert_relative_eq!(target.unwrap(), 1.5 - 0.8 * 4.0 / 3.0);
+    }
+
+    #[test]
+    fn ignores_shots_wide_away_or_already_past_defense_line() {
+        for (ball, velocity) in [
+            (point!(0.0, 1.5), vector!(-3.0, 0.0)),
+            (point!(0.0, 0.0), vector!(3.0, 0.0)),
+            (point!(0.0, 0.0), vector!(0.0, 0.0)),
+            (point!(0.0, 0.0), vector!(f32::NEG_INFINITY, 0.0)),
+            (point!(f32::NAN, 0.0), vector!(-3.0, 0.0)),
+            (point!(-4.2, 0.0), vector!(-3.0, 0.0)),
+        ] {
+            assert!(shot_y_at_defense_line(ball, velocity, -4.5, -4.0, 0.8).is_none());
+        }
+    }
 }
