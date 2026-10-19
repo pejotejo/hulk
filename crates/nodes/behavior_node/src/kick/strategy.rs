@@ -14,6 +14,7 @@ use crate::{conditions::opponent_near_ball, node::Blackboard};
 use super::{
     geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings, travel_openings},
     kick_ball_position_in_ground, pass_receiver_position,
+    passing::is_executing_announced_pass,
 };
 
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
@@ -105,7 +106,11 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         .as_ref()
         .filter(|game| game.kicking_team == Some(Team::Hulks))
         .and_then(|game| game.sub_state);
-    if restart.is_some_and(|state| state != SubState::PenaltyKick) && pass.is_some() {
+    let keeping_pass = matches!(pass, Some(BallAction::Pass { receiver })
+        if is_executing_announced_pass(blackboard, receiver));
+    if pass.is_some()
+        && (restart.is_some_and(|state| state != SubState::PenaltyKick) || keeping_pass)
+    {
         return pass;
     }
     let can_shoot = !matches!(
@@ -206,6 +211,9 @@ fn choose_pass(
         .is_empty()
         {
             continue;
+        }
+        if is_executing_announced_pass(blackboard, receiver) {
+            return Some(BallAction::Pass { receiver });
         }
         let progress = position.x() - ball.x();
         if best.is_none_or(|(_, best_progress)| progress > best_progress) {

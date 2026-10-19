@@ -38,6 +38,17 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
         return false;
     };
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
+    let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
+        .max(2.0 * blackboard.field_dimensions.ball_radius);
+    let contact = point![standoff, 0.0];
+    let contact_time = (contact - position).dot(&velocity) / velocity.norm_squared();
+    if position.x() > 0.0
+        && position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance
+        && (0.0..=0.25).contains(&contact_time)
+        && (position + velocity * contact_time - contact).norm() <= half_width
+    {
+        return true;
+    }
     let closing_speed = -velocity.x();
     // Allow 250 ms for turn/swing preparation, within the policy's 2 m input limit.
     let handoff_distance = if closing_speed > 1.0 {
@@ -58,8 +69,6 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     } else {
         position.y()
     };
-    let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
-        .max(2.0 * blackboard.field_dimensions.ball_radius);
     lateral_position.abs() <= half_width
 }
 
@@ -115,11 +124,25 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     }
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
+    super::strategy::select_ball_action(blackboard);
+    let kick_orientation = super::execution::resolve_target(blackboard).and_then(|target| {
+        (transform.inverse() * target - position)
+            .try_normalize(f32::EPSILON)
+            .map(Orientation2::from_vector)
+    });
+    let orientation = kick_orientation.unwrap_or_else(|| Orientation2::from_vector(-velocity));
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let limits = blackboard.walking_velocity_limits;
     let walk_speed = blackboard.parameters.walking.speed.kicking;
-    let Some(target) = blocking_target(position, velocity, goal, standoff, limits, walk_speed)
-    else {
+    let Some(target) = blocking_target(
+        position,
+        velocity,
+        goal,
+        standoff,
+        limits,
+        walk_speed,
+        orientation,
+    ) else {
         return Status::Failure;
     };
     let target_in_field = transform * target;
@@ -136,19 +159,28 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         // Keep Walk active while holding the lane so an arriving ball needs no Stand dwell.
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: Vector2::zeros(),
-            angular_velocity: limits
-                .scale_angular_axis(Orientation2::from_vector(position.coords()).angle()),
+            angular_velocity: limits.scale_angular_axis(
+                kick_orientation
+                    .unwrap_or_else(|| Orientation2::from_vector(position.coords()))
+                    .angle(),
+            ),
         });
         return Status::Success;
     }
     let path = plan_interception(blackboard, target, transform);
     blackboard.body_motion = Some(BodyMotion::Walk {
         path,
-        orientation_mode: OrientationMode::LookAt {
-            target: position,
-            tolerance: walking.orientation_tolerance,
+        orientation_mode: match kick_orientation {
+            Some(direction) => OrientationMode::LookTowards {
+                direction,
+                tolerance: walking.orientation_tolerance,
+            },
+            None => OrientationMode::LookAt {
+                target: position,
+                tolerance: walking.orientation_tolerance,
+            },
         },
-        target_orientation: Orientation2::from_vector(-velocity),
+        target_orientation: orientation,
         distance_to_be_aligned: walking.normal_distance_to_be_aligned,
         speed: walk_speed,
     });
@@ -170,15 +202,16 @@ fn blocking_target(
     standoff: f32,
     limits: WalkingVelocityLimits,
     walk_speed: f32,
+    orientation: Orientation2<Ground>,
 ) -> Option<Point2<Ground>> {
     if !should_block_ball(position, velocity, own_goal) {
         return None;
     }
-    let direction = velocity.try_normalize(f32::EPSILON)?;
-    let orientation = Orientation2::from_vector(-direction);
+    // Arrive behind the contact point facing the outgoing kick, avoiding a late turn.
+    let contact_offset = -orientation.as_unit_vector() * standoff;
     for step in 1..=(MAXIMUM_INTERCEPTION_TIME / INTERCEPTION_TIME_STEP) as u32 {
         let time = step as f32 * INTERCEPTION_TIME_STEP;
-        let target = position + velocity * time + direction * standoff;
+        let target = position + velocity * time + contact_offset;
         if travel_time(target, orientation, limits, walk_speed) <= time {
             return Some(target);
         }
@@ -193,7 +226,7 @@ fn blocking_target(
     }
     let time = (-position.coords().dot(&velocity) / velocity.norm_squared())
         .clamp(0.0, MAXIMUM_INTERCEPTION_TIME);
-    (time > 0.0).then(|| position + velocity * time + direction * standoff)
+    (time > 0.0).then(|| position + velocity * time + contact_offset)
 }
 
 fn travel_time(
@@ -360,8 +393,16 @@ mod tests {
         let position = point![2.0, 0.7];
         let velocity = vector![-1.0, -0.3];
         let direction = velocity.normalize();
-        let target =
-            blocking_target(position, velocity, point![-4.5, 0.0], 0.2, limits, 1.0).unwrap();
+        let target = blocking_target(
+            position,
+            velocity,
+            point![-4.5, 0.0],
+            0.2,
+            limits,
+            1.0,
+            Orientation2::from_vector(-direction),
+        )
+        .unwrap();
         let time = (target.x() - position.x() - direction.x() * 0.2) / velocity.x();
         assert!(time > 0.0 && time < 2.0);
         assert!((target - (position + velocity * time + direction * 0.2)).norm() < 1e-5);
@@ -377,7 +418,16 @@ mod tests {
             lateral_velocity_limit: 0.2,
             angular_velocity_limit: 1.0,
         };
-        let target = blocking_target(position, vector![-3.0, 0.0], goal, 0.2, limits, 1.0).unwrap();
+        let target = blocking_target(
+            position,
+            vector![-3.0, 0.0],
+            goal,
+            0.2,
+            limits,
+            1.0,
+            Orientation2::identity(),
+        )
+        .unwrap();
         let lane = goal - position;
         let fraction = (target - position).dot(&lane) / lane.norm_squared();
         assert!((0.0..1.0).contains(&fraction));
@@ -400,6 +450,7 @@ mod tests {
             0.2,
             limits,
             1.8,
+            Orientation2::identity(),
         )
         .unwrap();
         assert!(target.x() < position.x());
@@ -422,6 +473,7 @@ mod tests {
                     0.2,
                     WalkingVelocityLimits::default(),
                     1.0,
+                    Orientation2::from_vector(-velocity),
                 )
                 .is_none()
             );
@@ -469,6 +521,47 @@ mod tests {
         blackboard.ball.as_mut().unwrap().velocity = vector![-0.5, 0.0];
         assert!(is_ready_to_receive_kick(&blackboard));
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+    }
+
+    #[test]
+    fn approaches_crossing_ball_facing_the_outgoing_shot() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![2.0, -1.0],
+                velocity: vector![0.0, 1.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            walking_velocity_limits: WalkingVelocityLimits {
+                forward_velocity_limits: [-0.5, 0.8],
+                lateral_velocity_limit: 0.5,
+                angular_velocity_limit: 2.0,
+            },
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.walking.speed.kicking = 1.0;
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
+        let Some(BodyMotion::Walk {
+            orientation_mode: OrientationMode::LookTowards { direction, .. },
+            path,
+            ..
+        }) = blackboard.body_motion
+        else {
+            panic!("expected outgoing-shot alignment")
+        };
+        assert!(direction.as_unit_vector().x() > 0.9);
+        assert!(direction.as_unit_vector().y() > 0.0);
+        let types::path::PathSegment::LineSegment(segment) = path.last_segment() else {
+            panic!("expected final contact approach")
+        };
+        assert!(segment.1.x() < 2.0);
     }
 
     #[test]
@@ -533,5 +626,38 @@ mod tests {
         assert!(!is_ready_to_receive_kick(&blackboard));
         blackboard.ball.as_mut().unwrap().position = point![1.7, 0.6];
         assert!(!is_ready_to_receive_kick(&blackboard));
+    }
+
+    #[test]
+    fn prepares_for_side_arrival_before_it_crosses_the_feet() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![0.3, -0.6],
+                velocity: vector![0.0, 2.5],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        blackboard.parameters.walking.path_planning.robot_radius = 0.4;
+        assert!(is_ready_to_receive_kick(&blackboard));
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, .. })
+        ));
+        for position in [point![0.8, -0.6], point![0.3, 0.6], point![0.3, -0.9]] {
+            blackboard.ball.as_mut().unwrap().position = position;
+            assert!(!is_ready_to_receive_kick(&blackboard));
+        }
     }
 }

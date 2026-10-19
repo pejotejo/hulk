@@ -312,7 +312,29 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
                 target_position = striker_position;
             } else if Some(player_number) == kickoff_receiver(blackboard) {
                 target_position = kickoff_receiver_position(blackboard);
-                target_orientation = Orientation2::from_vector(-target_position.coords());
+                // Receive with an open stance so the next shot needs only a small turn.
+                target_orientation = Orientation2::from_vector(
+                    (-target_position.coords()).normalize()
+                        + (point![blackboard.field_dimensions.length / 2.0, 0.0] - target_position)
+                            .normalize(),
+                );
+                let position = ground_to_field.as_pose().position();
+                let radius = blackboard.parameters.walking.path_planning.robot_radius;
+                if blackboard.world_state.robot.primary_state
+                    == types::primary_state::PrimaryState::Ready
+                    && position.y() * target_position.y().signum() < 2.0 * radius + 0.05
+                {
+                    // Enter the pass-side lane behind the striker before walking forward.
+                    let staging_x = (striker_position.x() - 2.0 * radius - 0.05).min(
+                        -blackboard.field_dimensions.center_circle_diameter / 2.0 - radius - 0.05,
+                    );
+                    target_position =
+                        if position.x() > staging_x + walk_and_stand.target_reached_thresholds.x {
+                            point![staging_x, position.y()]
+                        } else {
+                            point![position.x(), target_position.y()]
+                        };
+                }
             }
         }
         if player_number != blackboard.parameters.goalkeeper.player_number

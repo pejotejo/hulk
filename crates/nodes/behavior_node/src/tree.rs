@@ -18,7 +18,10 @@ use crate::{
         execution::execute_ball_action,
         kick,
         kickoff::kickoff_subtree,
-        passing::{is_pass_ball_arriving, is_pass_receiver, prepare_to_receive_pass},
+        passing::{
+            is_pass_ball_arriving, is_pass_receiver, prepare_for_restart_pass,
+            prepare_to_receive_pass,
+        },
         reception::receive_rolling_ball,
         set_kick_target_beyond_ball,
         strategy::select_ball_action,
@@ -200,7 +203,11 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
 fn supporter_subtree() -> Node<Blackboard> {
     sequence!(
         subtree!(look_at_ball_subtree),
-        selection!(action!(walk_to_voronoi_position), action!(stand)),
+        selection!(
+            action!(prepare_for_restart_pass),
+            action!(walk_to_voronoi_position),
+            action!(stand)
+        ),
     )
 }
 
