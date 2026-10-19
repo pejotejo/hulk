@@ -230,6 +230,18 @@ impl PathPlanner {
                 PathObstacle::from(PathObstacleShape::LineSegment(line_segment))
             }),
         );
+        // The rear frame also blocks routes entered through the goal mouth.
+        let frame_radius = field_dimensions.goal_post_diameter;
+        for x_sign in [-1.0, 1.0] {
+            let rear_x = x_sign * (goal_post_x + field_dimensions.goal_depth);
+            let bottom = field_to_ground * point![rear_x, -goal_post_y];
+            let top = field_to_ground * point![rear_x, goal_post_y];
+            self.obstacles.extend([
+                PathObstacle::from(Circle::new(bottom, frame_radius)),
+                PathObstacle::from(LineSegment(bottom, top)),
+                PathObstacle::from(Circle::new(top, frame_radius)),
+            ]);
+        }
     }
 
     fn generate_start_destination_tangents(&mut self) {
@@ -611,6 +623,35 @@ mod tests {
 
         assert_relative_eq!(path.segments.as_slice(), expected_segments, epsilon = 0.01);
         assert_relative_eq!(path.length(), expected_cost, epsilon = 0.01);
+    }
+
+    #[test]
+    fn goal_rear_frame_blocks_a_path_through_the_net() {
+        let dimensions = FieldDimensions::SPL_2025;
+        let mut planner = PathPlanner::default();
+        planner.with_goal_support_structures(Isometry2::identity(), &dimensions);
+        for side in [-1.0, 1.0] {
+            let path_through_net = LineSegment(
+                point![side * dimensions.length / 2.0, 0.0],
+                point![
+                    side * (dimensions.length / 2.0 + dimensions.goal_depth + 0.2),
+                    0.0
+                ],
+            );
+            assert!(
+                planner
+                    .obstacles
+                    .iter()
+                    .any(|obstacle| { obstacle.shape.intersects_line_segment(path_through_net) })
+            );
+        }
+        let path_on_goal_line = LineSegment(point![-4.5, -0.5], point![-4.5, 0.5]);
+        assert!(
+            planner
+                .obstacles
+                .iter()
+                .all(|obstacle| { !obstacle.shape.intersects_line_segment(path_on_goal_line) })
+        );
     }
 
     #[test]
