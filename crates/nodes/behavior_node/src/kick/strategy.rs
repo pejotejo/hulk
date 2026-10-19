@@ -199,6 +199,18 @@ fn choose_pass(
         let Some(position) = pass_receiver_position(blackboard, ball, receiver) else {
             continue;
         };
+        if world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| {
+                game.kicking_team == Some(Team::Hulks)
+                    && game.sub_state == Some(SubState::CornerKick)
+            })
+            && !is_executing_announced_pass(blackboard, receiver)
+            && !crate::substates::restart_pass_is_open(blackboard, position)
+        {
+            continue;
+        }
         if pass_openings(
             ball,
             position,
@@ -322,6 +334,90 @@ mod tests {
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.0, 0.0], 0.2, 0.25)];
         blackboard
+    }
+
+    #[test]
+    fn announced_receivers_block_then_shoot_around_a_visible_center_keeper() {
+        for sub_state in [None, Some(SubState::CornerKick), Some(SubState::ThrowIn)] {
+            let mut board = passing_blackboard();
+            board.field_dimensions.length = 14.0;
+            board.field_dimensions.width = 9.0;
+            board.field_dimensions.goal_inner_width = 2.4;
+            board.field_dimensions.ball_radius = 0.105;
+            board.parameters.goalkeeper.player_number = PlayerNumber::One;
+            board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+            board.parameters.kicking.kick_activation_distance = 1.3;
+            board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+            board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+            board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+            board.parameters.walking.path_planning.robot_radius = 0.4;
+            board.last_motion_type = Some(types::motion_type::MotionType::Walk);
+            board.world_state.robot.player_number = PlayerNumber::Three;
+            let transform = Pose2::new(point![-0.45, -2.35], 0.45_f32.atan2(0.05)).as_transform();
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.world_state.fall_detection = Some(FallDetection {
+                time: board.world_state.now,
+                valid_until: board.world_state.now + Duration::from_secs(10),
+                posture: Posture::Upright,
+            });
+            board.ball.as_mut().unwrap().position = point![-0.4, -1.9];
+            board.ball.as_mut().unwrap().velocity = linear_algebra::vector![0.0, -1.0];
+            board.world_state.player_states.two.as_mut().unwrap().inner = PlayerState {
+                pose: Pose2::new(point![-0.2, 0.0], 0.0),
+                pass: Some(hsl_network_messages::PassIntent {
+                    receiver: PlayerNumber::Three,
+                    target: point![-0.4, -1.85],
+                }),
+                ..Default::default()
+            };
+            let keeper = point![6.7, 0.0];
+            board.world_state.obstacles =
+                vec![Obstacle::robot(transform.inverse() * keeper, 0.2, 0.25)];
+            let game = board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap();
+            game.kicking_team = Some(Team::Hulks);
+            game.sub_state = sub_state;
+            // The receiver must block even while GameController still holds our restart.
+            create_tree().tick_with_trace(&mut board);
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Walk { .. } | BodyMotion::WalkWithVelocity { .. })
+            ));
+            board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .sub_state = None;
+            board.ball.as_mut().unwrap().velocity = Default::default();
+            board.world_state.now = board.world_state.now + Duration::from_millis(1);
+            board.ball.as_mut().unwrap().age = board.world_state.now;
+            board.kick_target = None;
+            board.body_motion = None;
+            create_tree().tick_with_trace(&mut board);
+            assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+            let target = transform * board.kick_target.unwrap();
+            assert!(target.y().abs() > 0.1);
+            assert!(
+                LineSegment(board.ball.as_ref().unwrap().position, target).distance_to(keeper)
+                    > 0.2
+                        + board.field_dimensions.ball_radius
+                        + board.parameters.kicking.strategy.obstacle_clearance
+            );
+            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+
+            board.world_state.obstacles[0].radius_at_foot_height = 2.0;
+            board.kick_target = None;
+            board.body_motion = None;
+            create_tree().tick_with_trace(&mut board);
+            assert!(!matches!(
+                board.ball_action,
+                Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter)
+            ));
+        }
     }
 
     #[test]
@@ -716,6 +812,9 @@ mod tests {
             linear_algebra::vector![2.0, 0.0],
             std::f32::consts::PI,
         ));
+        // A nearby opponent requires release rather than the unpressured rolling-ball block.
+        receiver.parameters.kicking.receiving_opponent_distance = 2.0;
+        receiver.world_state.obstacles = vec![Obstacle::robot(point![1.6, -1.5], 0.2, 0.2)];
         receiver.ball.as_mut().unwrap().position = point![0.4, 0.0];
         receiver.ball.as_mut().unwrap().velocity = linear_algebra::vector![2.0, 0.0];
         receiver.world_state.ball.as_mut().unwrap().ball_in_ground = point![1.6, 0.0];

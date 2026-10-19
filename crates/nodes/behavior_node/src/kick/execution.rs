@@ -22,6 +22,16 @@ use super::{
 
 /// Revalidate the selected corridor, choosing another safe action if it has disappeared.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
+    if crate::conditions::goalkeeper_clearance_direction(blackboard).is_some() {
+        if blackboard.last_motion_type != Some(MotionType::Walk)
+            && !is_allowed_to_switch(blackboard)
+        {
+            blackboard.ball_action = None;
+            blackboard.kick_target = None;
+            return stand(blackboard);
+        }
+        return super::passing::yield_goalkeeper_clearance(blackboard);
+    }
     let target = resolve_target(blackboard).or_else(|| {
         if super::kickoff::needs_kickoff_updates(blackboard) {
             return None;
@@ -75,7 +85,11 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let target_speed = kicking.target_speed;
     let receiving = super::reception::is_receiving_ball(blackboard);
     let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
-    let quick = (!controlled && kicking.quick)
+    let quick = (receiving
+        && ready_to_receive
+        && blackboard.world_state.robot.player_number
+            != blackboard.parameters.goalkeeper.player_number)
+        || (!controlled && kicking.quick)
         || (was_kicking
             && matches!(
                 blackboard.last_motion_command,

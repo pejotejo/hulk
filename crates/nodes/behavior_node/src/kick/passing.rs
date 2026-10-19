@@ -13,7 +13,7 @@ use crate::{
     actions::stand,
     conditions::{goalkeeper_clearance_direction, hulks_is_kicking_team},
     kick::reception::{is_receiving_ball, receive_rolling_ball},
-    node::Blackboard,
+    node::{Blackboard, ball_timeout},
     substates::{is_sub_state, restart_pass_is_open, restart_pass_receiver},
     switch_motion_type::is_allowed_to_switch,
     walk::walk_to,
@@ -58,16 +58,23 @@ pub(super) fn is_executing_announced_pass(blackboard: &Blackboard, receiver: Pla
 }
 
 fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)> {
+    if goalkeeper_clearance_direction(blackboard).is_some() {
+        return None;
+    }
     let world = &blackboard.world_state;
     let transform = world.robot.ground_to_field?;
     let own_position = transform.as_pose().position();
     let parameters = &blackboard.parameters.kicking.strategy.passing;
     parameters.validate().ok()?;
-    let following_rolling_pass = is_receiving_ball(blackboard)
-        && blackboard
-            .ball
-            .as_ref()
-            .is_some_and(|ball| (own_position - ball.position).dot(&ball.velocity) > 0.0);
+    let following_rolling_pass = blackboard.ball.as_ref().is_some_and(|ball| {
+        ball.age <= world.now
+            && world.now.duration_since(ball.age)
+                < ball_timeout(&blackboard.parameters, ball.source)
+            && ((is_receiving_ball(blackboard)
+                && (own_position - ball.position).dot(&ball.velocity) > 0.0)
+                || (own_position - ball.position).norm()
+                    <= blackboard.parameters.kicking.kick_activation_distance)
+    });
     if parameters.maximum_distance <= 0.0
         || !own_position.x().is_finite()
         || !own_position.y().is_finite()
@@ -130,7 +137,15 @@ pub fn is_pass_ball_arriving(blackboard: &mut Blackboard) -> bool {
             ((projected - pass.target).norm()
                 <= parameters.receiver_standoff + parameters.target_half_width
                 || (is_receiving_ball(blackboard)
-                    && (own_position - ball.position).dot(&ball.velocity) > 0.0))
+                    && (own_position - ball.position).dot(&ball.velocity) > 0.0)
+                || ((own_position - ball.position).norm()
+                    <= blackboard.parameters.kicking.kick_activation_distance
+                    && ball.velocity.norm()
+                        <= blackboard
+                            .parameters
+                            .ball
+                            .interception
+                            .minimum_ball_velocity))
                 && (projected - own_position).norm() < (projected - sender).norm()
         })
     });
@@ -172,6 +187,14 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     let ball = ball.position;
     let position = transform.as_pose().position();
     if restart_pass_is_open(blackboard, position) {
+        if is_sub_state(blackboard, SubState::CornerKick)
+            && restart_pass_receiver(blackboard)
+                .is_some_and(|(receiver, _)| receiver == blackboard.world_state.robot.player_number)
+        {
+            blackboard.ball_action = None;
+            blackboard.kick_target = None;
+            return hold_and_face_ball(blackboard, ball);
+        }
         // Until a pass is announced, open-lane supporters keep their weighted Voronoi position.
         return Status::Failure;
     }
@@ -288,8 +311,10 @@ pub fn yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> Status {
             limits.forward_velocity_limits[1]
         };
         // Scale uniformly to stay on the obstacle-checked segment at any body orientation.
+        // Retain the proven clearance-yield gait while interception uses the faster envelope.
+        let lateral_limit = limits.lateral_velocity_limit.min(1.0);
         let scale = (velocity.x().abs() / forward_limit.max(f32::EPSILON))
-            .max(velocity.y().abs() / limits.lateral_velocity_limit.max(f32::EPSILON))
+            .max(velocity.y().abs() / lateral_limit.max(f32::EPSILON))
             .max(1.0);
         blackboard.path_obstacles_output = planner.obstacles;
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
@@ -366,6 +391,8 @@ mod tests {
         receiver.parameters.kicking.kick_activation_distance = 1.3;
         receiver.parameters.kicking.approach_ball_standoff = 0.3;
         receiver.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        receiver.parameters.kicking.target_speed = 3.4;
+        receiver.parameters.kicking.allow_strong_kicks = true;
         receiver.parameters.walking.path_planning.robot_radius = 0.4;
         let passing = &mut receiver.parameters.kicking.strategy.passing;
         passing.maximum_distance = 4.0;
@@ -389,14 +416,29 @@ mod tests {
         assert_eq!(prepare_to_receive_pass(&mut receiver), Status::Success);
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Walk { .. })
+            Some(BodyMotion::WalkWithVelocity { .. })
         ));
 
-        // The advertised region is no longer nearby; measured contact still releases the kick.
+        // Retain possession after leaving the advertised region to meet and settle the ball.
         receiver.ball.as_mut().unwrap().position = point![2.3, -0.2];
         assert!(is_pass_receiver(&mut receiver));
         assert!(is_pass_ball_arriving(&mut receiver));
-        assert!(is_ready_to_receive_kick(&receiver));
+        assert!(!is_ready_to_receive_kick(&receiver));
+        receiver.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        assert!(is_pass_receiver(&mut receiver));
+        assert!(is_pass_ball_arriving(&mut receiver));
+        assert_eq!(receive_rolling_ball(&mut receiver), Status::Failure);
+        receiver.world_state.now = receiver.world_state.now + Duration::from_millis(1);
+        crate::tree::striker_subtree().tick_with_trace(&mut receiver);
+        assert!(matches!(
+            receiver.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                target_speed: 3.4,
+                ..
+            })
+        ));
+        assert!(is_pass_receiver(&mut receiver));
 
         // Intent cannot pull a receiver toward an unrelated distant or stale pass.
         receiver
@@ -424,5 +466,88 @@ mod tests {
             .target = point![1.5, -1.0];
         receiver.world_state.now = receiver.world_state.now + PassIntent::TIMEOUT;
         assert!(!is_pass_receiver(&mut receiver));
+    }
+
+    #[test]
+    fn old_addressed_pass_does_not_capture_a_keeper_clearance() {
+        let mut receiver = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![-3.5, 0.0],
+                velocity: vector![2.0, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            walking_velocity_limits: WalkingVelocityLimits {
+                forward_velocity_limits: [-0.5, 1.8],
+                lateral_velocity_limit: 1.0,
+                angular_velocity_limit: 2.0,
+            },
+            ..Default::default()
+        };
+        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![-2.0, 0.0], 0.0));
+        receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
+        receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        receiver.parameters.walking.path_planning.robot_radius = 0.4;
+        receiver.parameters.kicking.kick_activation_distance = 1.3;
+        receiver
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_distance = 8.0;
+        receiver
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(3);
+        receiver.world_state.player_states.one = Some(TimeWrapper {
+            time: receiver.world_state.now,
+            inner: PlayerState {
+                pose: point![-4.2, 0.0].into(),
+                ..Default::default()
+            },
+        });
+        receiver.world_state.player_states.three = Some(TimeWrapper {
+            time: receiver.world_state.now,
+            inner: PlayerState {
+                pose: point![-0.5, -1.0].into(),
+                pass: Some(PassIntent {
+                    receiver: PlayerNumber::Two,
+                    target: point![-2.0, 0.0],
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert!(goalkeeper_clearance_direction(&receiver).is_some());
+        assert!(!is_pass_receiver(&mut receiver));
+        assert!(!is_pass_ball_arriving(&mut receiver));
+        assert!(!is_receiving_ball(&receiver));
+        assert_eq!(receive_rolling_ball(&mut receiver), Status::Failure);
+        receiver.ball_action = Some(super::super::strategy::BallAction::Dribble);
+        assert_eq!(
+            super::super::execution::execute_ball_action(&mut receiver),
+            Status::Success
+        );
+        assert!(matches!(
+            receiver.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, .. }) if velocity.y() > 0.0
+        ));
+        assert!(receiver.ball_action.is_none());
+
+        // Cancel an already active kick without entering Walk before its switch dwell.
+        receiver.last_motion_type = Some(MotionType::Kick);
+        receiver.parameters.control.allow_switch.kick = Duration::from_secs(1);
+        assert_eq!(
+            super::super::execution::execute_ball_action(&mut receiver),
+            Status::Success
+        );
+        assert!(matches!(receiver.body_motion, Some(BodyMotion::Stand)));
     }
 }

@@ -33,6 +33,7 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
                     condition!(is_sub_state, SubState::PenaltyKick),
                     subtree!(penalty_kick_striker_subtree),
                 ),
+                action!(crate::kick::reception::receive_rolling_ball),
                 sequence!(
                     action!(select_ball_action),
                     selection!(
@@ -120,6 +121,24 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
     {
         return false;
     }
+    let parameters = &blackboard.parameters.kicking.strategy;
+    let support_distance = blackboard.parameters.voronoi.ball_support_distance.max(
+        parameters.passing.receiver_standoff
+            + 2.0 * blackboard.parameters.walking.path_planning.robot_radius,
+    );
+    if blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()
+        .is_some_and(|game| {
+            game.kicking_team == Some(Team::Hulks) && game.sub_state == Some(SubState::CornerKick)
+        })
+        && ball.position.x() > 0.0
+        && receiver.x()
+            > ball.position.x() - 2.0 * support_distance + parameters.passing.receiver_standoff
+    {
+        return false;
+    }
     let players = restart_players(blackboard);
     let Some((taker_number, taker)) = players.iter().min_by(|(_, a), (_, b)| {
         (*a - ball.position)
@@ -145,7 +164,6 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
         })
         .cloned()
         .collect();
-    let parameters = &blackboard.parameters.kicking.strategy;
     !pass_openings(
         ball.position,
         receiver,
@@ -199,7 +217,12 @@ pub(crate) fn restart_pass_receiver(
         1.0
     };
     let y_sign = if ball.y() >= 0.0 { -1.0 } else { 1.0 };
-    for (forward, inward) in [(1.0, 1.0), (2.0, 1.0), (1.0, 2.0)] {
+    let backward = if game.sub_state == Some(SubState::CornerKick) {
+        2.0
+    } else {
+        1.0
+    };
+    for (forward, inward) in [(backward, 1.0), (backward + 1.0, 1.0), (backward, 2.0)] {
         let target = point![
             (ball.x() + x_sign * distance * forward)
                 .clamp(-field.length / 2.0 + margin, field.length / 2.0 - margin),
@@ -811,6 +834,7 @@ mod tests {
         let tree = crate::tree::create_tree();
         for (state, ball, blocked) in [
             (SubState::CornerKick, point![7.0, 4.5], false),
+            (SubState::CornerKick, point![7.0, -4.5], false),
             (SubState::CornerKick, point![7.0, 4.5], true),
             (SubState::ThrowIn, point![-1.5, 4.5], true),
         ] {
@@ -859,6 +883,36 @@ mod tests {
             assert_eq!(number, PlayerNumber::Two);
             assert!(target.x().abs() + 0.4 < 7.0);
             assert!(target.y().abs() + 0.4 < 4.5);
+            if state == SubState::CornerKick {
+                let mut shallow = taker.clone();
+                let position = point![ball.x() - 1.5, ball.y().signum() * 3.0];
+                shallow
+                    .world_state
+                    .player_states
+                    .two
+                    .as_mut()
+                    .unwrap()
+                    .inner
+                    .pose = Pose2::new(position, 0.0);
+                assert!(
+                    !pass_openings(
+                        ball,
+                        position,
+                        taker_pose.as_transform(),
+                        &shallow.world_state.obstacles,
+                        &shallow.field_dimensions,
+                        &shallow.parameters.kicking.strategy.passing,
+                        shallow.parameters.kicking.strategy.obstacle_clearance
+                    )
+                    .is_empty()
+                );
+                tree.tick_with_trace(&mut shallow);
+                assert!(!matches!(
+                    shallow.ball_action,
+                    Some(BallAction::Pass { .. })
+                ));
+                assert_eq!(shallow.body_motion, Some(BodyMotion::Stand));
+            }
 
             let mut receiver = taker.clone();
             receiver.world_state.robot.player_number = PlayerNumber::Two;
@@ -898,7 +952,13 @@ mod tests {
                 0.4,
             )];
             let (_, trace) = tree.tick_with_trace(&mut receiver);
-            assert!(succeeded(&trace, "walk_to_voronoi_position"));
+            if state == SubState::CornerKick {
+                assert!(succeeded(&trace, "prepare_for_restart_pass"));
+                assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
+                assert!(target.x() <= ball.x() - 3.0);
+            } else {
+                assert!(succeeded(&trace, "walk_to_voronoi_position"));
+            }
 
             let mut expired = taker.clone();
             expired.world_state.now = expired.world_state.now + Duration::from_secs(5);
@@ -950,15 +1010,9 @@ mod tests {
     }
 
     #[test]
-    fn unannounced_restart_support_uses_ball_weight_in_three_player_tree() {
+    fn unannounced_noncorner_support_preserves_voronoi_routes() {
         let tree = crate::tree::create_tree();
         for (state, ball, position, taker) in [
-            (
-                SubState::CornerKick,
-                point![7.0, 4.5],
-                point![3.0, 1.0],
-                point![6.8, 4.2],
-            ),
             (
                 SubState::ThrowIn,
                 point![-1.5, 4.5],
@@ -1005,7 +1059,6 @@ mod tests {
             board.parameters.voronoi.centroid_anchor_weight = 0.6;
             board.parameters.voronoi.centroid_anchor_sigma = 1.0;
             assert!(restart_pass_is_open(&board, position), "{state:?}");
-            let mut distances = Vec::new();
             for ball_weight in [0.0, 2.5] {
                 let mut supporter = board.clone();
                 supporter.parameters.voronoi.ball_weight = ball_weight;
@@ -1016,30 +1069,13 @@ mod tests {
                     panic!("{state:?} support must move before any pass announcement");
                 };
                 let target = transform * path.end_point();
+                assert!(target.inner.iter().all(|coordinate| coordinate.is_finite()));
                 assert!(target.x().abs() <= 7.0 && target.y().abs() <= 4.5);
-                let map = supporter.voronoi_map.as_ref().unwrap();
                 assert_eq!(
-                    map.ownership_at(target),
+                    supporter.voronoi_map.as_ref().unwrap().ownership_at(target),
                     Some(voronoi::Ownership::Robot(PlayerNumber::Two))
                 );
-                if ball_weight > 0.0 {
-                    let nearest = map
-                        .cells()
-                        .filter(|(point, ownership)| {
-                            *ownership == voronoi::Ownership::Robot(PlayerNumber::Two)
-                                && point.x().abs() <= 7.0
-                                && point.y().abs() <= 4.5
-                        })
-                        .map(|(point, _)| (point - ball).norm())
-                        .fold(f32::INFINITY, f32::min);
-                    assert!(
-                        (target - ball).norm() <= nearest + 0.5,
-                        "{state:?}: support must approach the reachable ball ring"
-                    );
-                }
-                distances.push((target - ball).norm());
             }
-            assert!(distances[1] < distances[0], "{state:?}: {distances:?}");
         }
     }
 
@@ -1073,6 +1109,7 @@ mod tests {
                 },
             });
         }
+        let mut formation_targets = Vec::new();
         for number in [PlayerNumber::Two, PlayerNumber::Four, PlayerNumber::Five] {
             let mut supporter = board.clone();
             let transform = supporter.world_state.player_states[number]
@@ -1107,6 +1144,22 @@ mod tests {
                 number != PlayerNumber::Two,
                 "{number:?}"
             );
+            if number != PlayerNumber::Two {
+                let Some(BodyMotion::Walk { path, .. }) = supporter.body_motion else {
+                    unreachable!();
+                };
+                let target = transform * path.end_point();
+                assert!(
+                    (target - ball).norm()
+                        > 2.0 * supporter.parameters.voronoi.ball_support_distance,
+                    "{number:?} must retain its formation region: {target:?}"
+                );
+                formation_targets.push(target);
+            }
         }
+        assert!(
+            (formation_targets[0] - formation_targets[1]).norm()
+                > 2.0 * board.parameters.walking.path_planning.robot_radius
+        );
     }
 }

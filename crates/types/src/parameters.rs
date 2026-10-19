@@ -299,6 +299,9 @@ pub struct KickingParameters {
     pub strong_kick_min_target_distance: f32,
     /// Distance behind the ball for walking and set-play alignment, in metres.
     pub approach_ball_standoff: f32,
+    /// Opponent distance to the ball below which a receiver releases immediately, in metres.
+    #[serde(default = "default_receiving_opponent_distance")]
+    pub receiving_opponent_distance: f32,
     /// Minimum Ground x coordinate of a predicted interception point, in metres.
     pub minimum_interception_forward_distance: f32,
 }
@@ -315,6 +318,7 @@ impl Default for KickingParameters {
             kick_activation_hysteresis: 0.0,
             strong_kick_min_target_distance: 0.0,
             approach_ball_standoff: 0.0,
+            receiving_opponent_distance: default_receiving_opponent_distance(),
             minimum_interception_forward_distance: 0.0,
         }
     }
@@ -330,6 +334,10 @@ pub struct BoosterKickingParameters {
 pub struct KickPowerParameters {
     pub rumpelstilzchen: f64,
     pub schlong: f64,
+}
+
+fn default_receiving_opponent_distance() -> f32 {
+    2.0
 }
 
 /// Distances are meters, angles radians. Values must be finite and nonnegative.

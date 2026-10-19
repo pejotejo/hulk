@@ -11,6 +11,7 @@ use types::{
 };
 
 use crate::{
+    conditions::{goalkeeper_clearance_direction, opponent_near_ball},
     kick::kick_ball_in_ground,
     node::{Blackboard, ball_timeout},
     switch_motion_type::is_allowed_to_switch,
@@ -22,6 +23,9 @@ const MAXIMUM_INTERCEPTION_TIME: f32 = 6.0;
 const INTERCEPTION_TIME_STEP: f32 = 0.1;
 
 pub(crate) fn is_receiving_ball(blackboard: &Blackboard) -> bool {
+    if goalkeeper_clearance_direction(blackboard).is_some() {
+        return false;
+    }
     rolling_ball_in_ground(blackboard).is_some_and(|(position, velocity)| {
         let own_goal = blackboard
             .world_state
@@ -38,6 +42,15 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return false;
     };
+    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+    {
+        return opponent_near_ball(
+            blackboard,
+            blackboard.parameters.kicking.receiving_opponent_distance,
+        ) && position.x() > 0.0
+            && position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance
+            && position.coords().dot(&velocity) < 0.0;
+    }
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
         .max(2.0 * blackboard.field_dimensions.ball_radius);
@@ -111,7 +124,7 @@ fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Ve
 }
 
 pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
-    if blackboard.last_motion_type == Some(MotionType::Kick)
+    if goalkeeper_clearance_direction(blackboard).is_some()
         || (blackboard.last_motion_type != Some(MotionType::Walk)
             && !is_allowed_to_switch(blackboard))
     {
@@ -125,8 +138,21 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     }
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
-    super::strategy::select_ball_action(blackboard);
-    let kick_orientation = super::execution::resolve_target(blackboard)
+    let settle = blackboard.world_state.robot.player_number
+        != blackboard.parameters.goalkeeper.player_number
+        && !opponent_near_ball(
+            blackboard,
+            blackboard.parameters.kicking.receiving_opponent_distance,
+        );
+    if settle && position.coords().dot(&velocity) >= 0.0 {
+        return Status::Failure;
+    }
+    if !settle {
+        super::strategy::select_ball_action(blackboard);
+    }
+    let kick_orientation = (!settle)
+        .then(|| super::execution::resolve_target(blackboard))
+        .flatten()
         .filter(|_| {
             position.x() > 0.0
                 && position.coords().norm()
@@ -142,15 +168,24 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let limits = blackboard.walking_velocity_limits;
     let walk_speed = blackboard.parameters.walking.speed.kicking;
-    let Some(target) = blocking_target(
-        position,
-        velocity,
-        (!super::passing::is_pass_receiver(blackboard)).then_some(goal),
-        standoff,
-        limits,
-        walk_speed,
-        orientation,
-    ) else {
+    let target = if settle {
+        let contact = orientation.as_unit_vector() * standoff;
+        // Hold the incoming line even after it passes the front standoff; do not back into it.
+        let time = ((contact - position.coords()).dot(&velocity) / velocity.norm_squared())
+            .min(MAXIMUM_INTERCEPTION_TIME);
+        Some(position + velocity * time - contact)
+    } else {
+        blocking_target(
+            position,
+            velocity,
+            (!super::passing::is_pass_receiver(blackboard)).then_some(goal),
+            standoff,
+            limits,
+            walk_speed,
+            orientation,
+        )
+    };
+    let Some(target) = target else {
         return Status::Failure;
     };
     let target_in_field = transform * target;
@@ -163,20 +198,40 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     let walking = blackboard.parameters.walking.walk_and_stand;
     blackboard.ball_action = None;
     blackboard.kick_target = None;
-    if target.coords().norm() <= walking.target_reached_thresholds.x {
+    let hold_distance = if settle {
+        walking.target_reached_thresholds.x.max(field.ball_radius)
+    } else {
+        walking.target_reached_thresholds.x
+    };
+    if target.coords().norm() <= hold_distance {
         // Keep Walk active while holding the lane so an arriving ball needs no Stand dwell.
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: Vector2::zeros(),
             angular_velocity: limits.scale_angular_axis(
-                kick_orientation
-                    .unwrap_or_else(|| Orientation2::from_vector(position.coords()))
-                    .angle(),
+                (if settle {
+                    Some(orientation)
+                } else {
+                    kick_orientation
+                })
+                .unwrap_or_else(|| Orientation2::from_vector(position.coords()))
+                .angle(),
             ),
         });
         return Status::Success;
     }
     let path = plan_interception(blackboard, target, transform);
     let forward = path.forward(Point2::origin());
+    if settle {
+        blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+            velocity: crate::walk::adaptive_blocking_velocity(
+                blackboard,
+                forward * walk_speed,
+                position,
+            ),
+            angular_velocity: limits.scale_angular_axis(orientation.angle()),
+        });
+        return Status::Success;
+    }
     if forward.x() < 0.0 {
         // Turning and translation are independent; do not back into a rolling ball.
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
@@ -287,13 +342,14 @@ mod tests {
     use types::{
         field_dimensions::{FieldDimensions, Side},
         motion_command::BodyMotion,
+        obstacles::Obstacle,
         world_state::{BallSource, BallState},
     };
 
     use crate::node::LastBall;
 
     #[test]
-    fn field_player_walks_into_contact_corridor_before_kicking() {
+    fn receiver_blocks_without_pressure_then_releases_quickly_only_when_pressed() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
@@ -325,18 +381,58 @@ mod tests {
             angular_velocity_limit: 2.0,
         };
         assert!(!is_ready_to_receive_kick(&blackboard));
-        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
-        assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Walk { .. })
-        ));
+        assert!(
+            matches!(blackboard.body_motion, Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+            if velocity.x() > 0.0 && angular_velocity < 0.0)
+        );
+        // Already in the lane: hold feet still facing the ball, even inside kick range.
+        blackboard.ball.as_mut().unwrap().position = point![0.0, -0.6];
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(
+            matches!(blackboard.body_motion, Some(BodyMotion::WalkWithVelocity { velocity, .. })
+            if velocity == Vector2::zeros())
+        );
+        blackboard.ball.as_mut().unwrap().position = point![0.1, 0.0];
+        blackboard.ball.as_mut().unwrap().velocity = vector![-1.0, 0.0];
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(
+            matches!(blackboard.body_motion, Some(BodyMotion::WalkWithVelocity { velocity, .. })
+            if velocity == Vector2::zeros())
+        );
+
+        // Far opponents do not rush the reception; the radius is configurable.
         blackboard.ball.as_mut().unwrap().position = point![0.3, -0.2];
+        blackboard.ball.as_mut().unwrap().velocity = vector![0.0, 1.0];
+        blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.5, -0.2], 0.2, 0.2)];
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        blackboard.world_state.obstacles[0].position = point![0.3, 0.6];
+        blackboard.parameters.kicking.receiving_opponent_distance = 0.3;
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        blackboard.parameters.kicking.receiving_opponent_distance = 2.0;
         assert!(is_ready_to_receive_kick(&blackboard));
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::Kick {
+                quick: true,
+                strong: false,
+                ..
+            })
+        ));
+
+        // With space, wait for the touch to settle, then resume a full shot.
+        blackboard.world_state.obstacles.clear();
+        blackboard.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(1);
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                target_speed: 3.4,
+                ..
+            })
         ));
         for (position, velocity) in [
             (point![1.4, 0.0], vector![-0.5, 0.0]),
@@ -407,6 +503,9 @@ mod tests {
         blackboard.last_motion_switch_time = blackboard.world_state.now;
         blackboard.parameters.control.allow_switch.kick = Duration::from_secs(1);
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(1001);
+        blackboard.ball.as_mut().unwrap().age = blackboard.world_state.now;
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         blackboard.last_motion_type = Some(MotionType::Walk);
         blackboard.last_closest_to_ball = false;
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);

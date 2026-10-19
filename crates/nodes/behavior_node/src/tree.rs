@@ -669,6 +669,7 @@ mod clearance_tests {
     fn clearance_step_respects_teammate_bodies_rules_and_current_side() {
         let tree = create_tree();
         let mut rotated = three_players();
+        rotated.walking_velocity_limits.lateral_velocity_limit = 1.5;
         let transform = Pose2::new(point![-3.6, 0.0], std::f32::consts::FRAC_PI_4).as_transform();
         rotated.world_state.robot.ground_to_field = Some(transform);
         tree.tick_with_trace(&mut rotated);
@@ -679,7 +680,7 @@ mod clearance_tests {
         assert!(field_velocity.x().abs() < 1e-6);
         assert!(field_velocity.y() > 0.0);
         assert!(velocity.x() <= rotated.walking_velocity_limits.forward_velocity_limits[1]);
-        assert!(velocity.y().abs() <= rotated.walking_velocity_limits.lateral_velocity_limit);
+        assert!(velocity.y().abs() <= 1.0);
 
         let mut board = three_players();
         board
