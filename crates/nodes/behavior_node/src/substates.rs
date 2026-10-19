@@ -166,8 +166,10 @@ mod tests {
     use hsl_network_messages::{PlayerNumber, Team};
     use linear_algebra::{Point2, Pose2};
     use types::{
+        fall_detection::{FallDetection, Posture},
         field_dimensions::FieldDimensions,
         filtered_game_state::FilteredGameState,
+        messages::OutgoingMessage,
         motion_command::BodyMotion,
         motion_type::MotionType,
         parameters::{KickStrategyParameters, PassingParameters},
@@ -194,6 +196,11 @@ mod tests {
             ..Default::default()
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(1);
+        board.world_state.fall_detection = Some(FallDetection {
+            time: board.world_state.now,
+            valid_until: board.world_state.now + Duration::from_secs(10),
+            posture: Posture::Upright,
+        });
         board.world_state.robot.primary_state = PrimaryState::Playing;
         board.world_state.robot.ground_to_field =
             Some(Pose2::new(ball - linear_algebra::vector![0.6, 0.0], 0.7).as_transform());
@@ -209,6 +216,13 @@ mod tests {
             ..Default::default()
         });
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.voronoi.grid_resolution = 0.25;
+        board.parameters.voronoi.padding = 0.5;
+        board
+            .parameters
+            .walking
+            .walk_and_stand
+            .orientation_tolerance = 0.05;
         board.parameters.kicking.kick_activation_distance = 1.3;
         board.parameters.kicking.allow_strong_kicks = true;
         board.parameters.kicking.strong_kick_min_target_distance = 3.0;
@@ -310,6 +324,128 @@ mod tests {
                 ),
                 "{state:?}"
             );
+        }
+    }
+
+    #[test]
+    fn addressed_restart_receiver_holds_position_until_taker_kicks() {
+        for (state, ball, position) in [
+            (SubState::CornerKick, point![4.5, 3.0], point![2.5, 1.0]),
+            (SubState::ThrowIn, point![0.0, 3.0], point![-1.0, 1.0]),
+        ] {
+            let mut taker = restart(state, ball);
+            taker.world_state.robot.player_number = PlayerNumber::Two;
+            let pose = Pose2::new(
+                position,
+                (ball.y() - position.y()).atan2(ball.x() - position.x()),
+            );
+            taker.world_state.player_states.three = Some(TimeWrapper {
+                time: taker.world_state.now,
+                inner: PlayerState {
+                    pose,
+                    ..Default::default()
+                },
+            });
+            let tree = crate::tree::create_tree();
+            tree.tick_with_trace(&mut taker);
+            assert_eq!(
+                taker.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Three
+                }),
+                "{state:?}"
+            );
+            assert_eq!(taker.body_motion, Some(BodyMotion::Stand));
+            let Some(OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(message))) =
+                taker.try_sending_state_message()
+            else {
+                panic!("restart pass must be announced");
+            };
+
+            let mut receiver = taker.clone();
+            receiver.world_state.robot.player_number = PlayerNumber::Three;
+            receiver.world_state.robot.ground_to_field = Some(pose.as_transform());
+            receiver.world_state.player_states = Default::default();
+            receiver.world_state.player_states.two = Some(TimeWrapper {
+                time: receiver.world_state.now,
+                inner: PlayerState {
+                    pose: message.pose,
+                    pass: message.pass,
+                    ..Default::default()
+                },
+            });
+            receiver.ball_action = None;
+            receiver.kick_target = None;
+            receiver.body_motion = None;
+            tree.tick_with_trace(&mut receiver);
+            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand), "{state:?}");
+
+            taker.world_state.now = taker.world_state.now + Duration::from_millis(150);
+            let state = taker.world_state.player_states.three.as_mut().unwrap();
+            state.time = taker.world_state.now;
+            state.inner.pose = receiver
+                .world_state
+                .robot
+                .ground_to_field
+                .unwrap()
+                .as_pose();
+            taker.kick_target = None;
+            taker.body_motion = None;
+            tree.tick_with_trace(&mut taker);
+            assert!(matches!(
+                taker.body_motion,
+                Some(BodyMotion::Kick {
+                    strong: false,
+                    soft: false,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn restart_boundary_roundoff_is_accepted_but_real_outside_ball_stops() {
+        let mut board = restart(SubState::CornerKick, point![7.000_000_5, 4.500_000_5]);
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.world_state.player_states.two = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: Pose2::new(point![4.0, 2.0], 0.0),
+                ..Default::default()
+            },
+        });
+        assert_eq!(select_ball_action(&mut board), Status::Success);
+        execute_ball_action(&mut board);
+        assert_eq!(
+            board.ball_action,
+            Some(BallAction::Pass {
+                receiver: PlayerNumber::Two
+            })
+        );
+        assert!(board.try_sending_state_message().is_some());
+        board.world_state.now = board.world_state.now + Duration::from_millis(150);
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                soft: false,
+                strong: false,
+                ..
+            })
+        ));
+
+        for ball in [
+            point![7.001, 4.5],
+            point![7.0, 4.501],
+            point![-7.001, 0.0],
+            point![0.0, -4.501],
+        ] {
+            board.ball.as_mut().unwrap().position = ball;
+            assert_eq!(select_ball_action(&mut board), Status::Failure);
+            execute_ball_action(&mut board);
+            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+            assert_eq!(board.kick_target, None);
         }
     }
 }

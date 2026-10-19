@@ -38,8 +38,15 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
         return false;
     };
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
+    let closing_speed = -velocity.x();
+    // Allow 250 ms for turn/swing preparation, within the policy's 2 m input limit.
+    let handoff_distance = if closing_speed > 1.0 {
+        (blackboard.parameters.kicking.kick_activation_distance + closing_speed * 0.25).min(2.0)
+    } else {
+        blackboard.parameters.kicking.kick_activation_distance
+    };
     if position.x() <= 0.0
-        || position.coords().norm() > blackboard.parameters.kicking.kick_activation_distance
+        || position.coords().norm() > handoff_distance
         || Orientation2::from_vector(position.coords()).angle().abs() > 0.45
         || (velocity.x() >= 0.0
             && position.x() > standoff + blackboard.field_dimensions.ball_radius)
@@ -486,6 +493,45 @@ mod tests {
 
         blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(101);
         assert!(!is_receiving_ball(&blackboard));
+        assert!(!is_ready_to_receive_kick(&blackboard));
+    }
+
+    #[test]
+    fn fast_incoming_ball_starts_quick_kick_with_preparation_lead() {
+        let mut blackboard = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![1.7, 0.05],
+                velocity: vector![-2.0, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        blackboard.parameters.walking.path_planning.robot_radius = 0.4;
+        assert!(is_ready_to_receive_kick(&blackboard));
+        assert_eq!(receive_rolling_ball(&mut blackboard), Status::Failure);
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, ball_position, ball_velocity, .. })
+                if ball_position == point![1.7, 0.05] && ball_velocity == vector![-2.0, 0.0]
+        ));
+
+        blackboard.ball.as_mut().unwrap().velocity = vector![-0.5, 0.0];
+        blackboard.ball.as_mut().unwrap().position = point![1.4, 0.05];
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        blackboard.ball.as_mut().unwrap().velocity = vector![-6.0, 0.0];
+        blackboard.ball.as_mut().unwrap().position = point![2.01, 0.05];
+        assert!(!is_ready_to_receive_kick(&blackboard));
+        blackboard.ball.as_mut().unwrap().position = point![1.7, 0.6];
         assert!(!is_ready_to_receive_kick(&blackboard));
     }
 }

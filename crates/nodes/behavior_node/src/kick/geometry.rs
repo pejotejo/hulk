@@ -9,6 +9,9 @@ use types::{
     parameters::PassingParameters,
 };
 
+// Coordinate round trips can put a ball on the line a few ulps outside it.
+pub(super) const BALL_FIELD_BOUNDARY_TOLERANCE: f32 = 1e-4;
+
 /// Geometrically open opponent-goal segments for the ball center, in field coordinates.
 /// `clearance` is an additional nonnegative physical margin in meters, not a risk score.
 /// Boundaries may be tangent to inflated obstacles; execution must choose an interior target.

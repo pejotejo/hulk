@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    geometry::{goal_openings, pass_openings, travel_openings},
+    geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings, travel_openings},
     kick_ball_in_ground, kick_ball_position_in_ground, pass_receiver_position,
     passing::pass_is_announced,
     strategy::BallAction,
@@ -132,8 +132,8 @@ pub(super) fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field
         || !field.width.is_finite()
         || field.length <= 0.0
         || field.width <= 0.0
-        || ball.x().abs() > field.length / 2.0
-        || ball.y().abs() > field.width / 2.0
+        || ball.x().abs() > field.length / 2.0 + BALL_FIELD_BOUNDARY_TOLERANCE
+        || ball.y().abs() > field.width / 2.0 + BALL_FIELD_BOUNDARY_TOLERANCE
     {
         return None;
     }
