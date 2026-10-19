@@ -490,6 +490,16 @@ mod tests {
         assert!(target.coords().norm() - 0.4 > 1.5);
         assert!(target.x() + 0.4 < 0.0);
         let actual = receiver.world_state.robot.ground_to_field.unwrap() * segment.1;
+        assert!((actual - point![-3.0, target.y()]).norm() < 0.001);
+        receiver.world_state.robot.ground_to_field = Some(Pose2::new(actual, 0.0).as_transform());
+        assert_eq!(tree.tick_with_trace(&mut receiver).0, Status::Success);
+        let Some(BodyMotion::Walk { ref path, .. }) = receiver.body_motion else {
+            panic!("receiver should continue from side lane to receive position");
+        };
+        let PathSegment::LineSegment(segment) = path.last_segment() else {
+            panic!("expected straight final approach");
+        };
+        let actual = receiver.world_state.robot.ground_to_field.unwrap() * segment.1;
         assert!((actual - target).norm() < 0.001);
 
         // Ready discovers available teammates without publishing an old pass intent.
@@ -515,7 +525,10 @@ mod tests {
         receiver.update_kickoff();
         assert!(receiver.try_sending_state_message().is_some());
 
-        let pose = Pose2::new(target, (-target.y()).atan2(-target.x()));
+        let incoming_angle = (-target.y()).atan2(-target.x());
+        let outgoing_angle =
+            (-target.y()).atan2(receiver.field_dimensions.length / 2.0 - target.x());
+        let pose = Pose2::new(target, (incoming_angle + outgoing_angle) / 2.0);
         receiver.world_state.robot.ground_to_field = Some(pose.as_transform());
         receiver.world_state.robot.primary_state = PrimaryState::Playing;
         receiver
@@ -624,6 +637,105 @@ mod tests {
         let left = kickoff_receiver_position(&board);
         assert_eq!(left.x(), right.x());
         assert_eq!(left.y(), -right.y());
+    }
+
+    #[test]
+    fn middle_field_receiver_walks_in_on_pass_side_without_crossing_striker() {
+        let tree = crate::tree::create_tree();
+        let mut right_angle = 0.0;
+        for pass_to_left in [false, true] {
+            let mut board = blackboard();
+            board.field_dimensions.length = 14.0;
+            board.field_dimensions.width = 9.0;
+            board.field_dimensions.center_circle_diameter = 3.0;
+            board.parameters.walking.path_planning.robot_radius = 0.4;
+            board.parameters.kickoff.pass_to_left = pass_to_left;
+            board.parameters.kickoff.striker_position = point![-1.5, 0.0];
+            board.world_state.robot.player_number = PlayerNumber::Two;
+            board.world_state.robot.primary_state = PrimaryState::Ready;
+            board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .game_state = FilteredGameState::Ready;
+            board.world_state.player_states.four = None;
+            board.world_state.player_states.five = None;
+            let start = point![-6.5, 4.5];
+            let striker_start = point![-5.6, -4.5];
+            let striker_target = board.parameters.kickoff.striker_position;
+            board.world_state.robot.ground_to_field = Some(Pose2::new(start, 0.0).as_transform());
+            assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+            let Some(BodyMotion::Walk {
+                ref path,
+                target_orientation,
+                ..
+            }) = board.body_motion
+            else {
+                panic!("receiver should walk in during Ready");
+            };
+            let PathSegment::LineSegment(segment) = path.last_segment() else {
+                panic!("expected straight entry to side lane");
+            };
+            let first_target = board.world_state.robot.ground_to_field.unwrap() * segment.1;
+            let receive_target = kickoff_receiver_position(&board);
+            let incoming_angle = (-receive_target.y()).atan2(-receive_target.x());
+            let outgoing_angle = (-receive_target.y())
+                .atan2(board.field_dimensions.length / 2.0 - receive_target.x());
+            let receive_angle = (incoming_angle + outgoing_angle) / 2.0;
+            assert!((target_orientation.angle() - receive_angle).abs() < 0.001);
+            assert!(target_orientation.angle() > incoming_angle.min(outgoing_angle));
+            assert!(target_orientation.angle() < incoming_angle.max(outgoing_angle));
+            if pass_to_left {
+                assert!((target_orientation.angle() + right_angle).abs() < 0.001);
+            } else {
+                right_angle = target_orientation.angle();
+            }
+            if !pass_to_left {
+                assert!(
+                    LineSegment(start, receive_target)
+                        .intersects_line_segment(LineSegment(striker_start, striker_target))
+                );
+                assert!((first_target.x() - start.x()).abs() < 0.001);
+                assert!((first_target.y() - receive_target.y()).abs() < 0.001);
+            } else {
+                assert!((first_target - receive_target).norm() < 0.001);
+            }
+            let entry = LineSegment(start, first_target);
+            assert!(!entry.intersects_line_segment(LineSegment(striker_start, striker_target)));
+            assert!(entry.distance_to(striker_target) > 0.8);
+            if !pass_to_left {
+                board.world_state.robot.ground_to_field =
+                    Some(Pose2::new(first_target, 0.0).as_transform());
+                assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+                let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
+                    panic!("receiver should continue to final pose");
+                };
+                let PathSegment::LineSegment(segment) = path.last_segment() else {
+                    panic!("expected final approach on pass side");
+                };
+                let final_target = board.world_state.robot.ground_to_field.unwrap() * segment.1;
+                assert!((final_target - receive_target).norm() < 0.001);
+                assert!(LineSegment(first_target, final_target).distance_to(striker_target) > 0.8);
+            }
+
+            // Small settling drift must not send an already staged receiver back behind the striker.
+            let near_target = point![
+                receive_target.x(),
+                receive_target.y() - receive_target.y().signum() * 0.1
+            ];
+            board.world_state.robot.ground_to_field =
+                Some(Pose2::new(near_target, receive_angle).as_transform());
+            assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+            let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
+                panic!("receiver should correct its settling drift");
+            };
+            let PathSegment::LineSegment(segment) = path.last_segment() else {
+                panic!("expected a small position correction");
+            };
+            let corrected_target = board.world_state.robot.ground_to_field.unwrap() * segment.1;
+            assert!((corrected_target - receive_target).norm() < 0.001);
+        }
     }
 
     #[test]

@@ -351,6 +351,7 @@ pub(super) fn pass_receiver_position(
         && position.x().abs() < field.length / 2.0
         && position.y().abs() < field.width / 2.0
         && (position.x() - ball.x() >= parameters.minimum_progress
+            || passing::is_executing_announced_pass(blackboard, receiver)
             || world
                 .filtered_game_controller_state
                 .as_ref()

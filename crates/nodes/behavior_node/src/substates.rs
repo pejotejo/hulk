@@ -170,8 +170,9 @@ mod tests {
         field_dimensions::FieldDimensions,
         filtered_game_state::FilteredGameState,
         messages::OutgoingMessage,
-        motion_command::BodyMotion,
+        motion_command::{BodyMotion, MotionCommand},
         motion_type::MotionType,
+        obstacles::Obstacle,
         parameters::{KickStrategyParameters, PassingParameters},
         primary_state::PrimaryState,
         time_wrapper::TimeWrapper,
@@ -389,6 +390,165 @@ mod tests {
                 .ground_to_field
                 .unwrap()
                 .as_pose();
+            taker.kick_target = None;
+            taker.body_motion = None;
+            tree.tick_with_trace(&mut taker);
+            assert!(matches!(
+                taker.body_motion,
+                Some(BodyMotion::Kick {
+                    strong: false,
+                    soft: false,
+                    ..
+                })
+            ));
+
+            let transform = taker.world_state.robot.ground_to_field.unwrap();
+            let target = transform * taker.kick_target.unwrap();
+            taker.last_motion_command = MotionCommand::from_partial_motions(
+                taker.body_motion.clone().unwrap(),
+                taker.head_motion.unwrap(),
+            );
+            taker.last_motion_type = Some(MotionType::Kick);
+            taker.last_motion_switch_time = taker.world_state.now;
+            // GameController releases the restart on the first small ball movement.
+            taker
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .sub_state = None;
+            taker.ball.as_mut().unwrap().position += (target - ball).normalize() * 0.1;
+            taker.kick_target = None;
+            taker.body_motion = None;
+            tree.tick_with_trace(&mut taker);
+            assert_eq!(
+                taker.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Three
+                })
+            );
+            assert!(matches!(
+                taker.body_motion,
+                Some(BodyMotion::Kick {
+                    strong: false,
+                    soft: false,
+                    ..
+                })
+            ));
+
+            let mut blocked = taker.clone();
+            let ball = blocked.ball.as_ref().unwrap().position;
+            blocked.world_state.obstacles = vec![Obstacle::robot(
+                transform.inverse() * (ball + (target - ball) * 0.5),
+                0.4,
+                0.4,
+            )];
+            select_ball_action(&mut blocked);
+            assert!(!matches!(
+                blocked.ball_action,
+                Some(BallAction::Pass { .. })
+            ));
+
+            let mut finished = taker.clone();
+            finished.last_motion_type = Some(MotionType::Walk);
+            select_ball_action(&mut finished);
+            assert!(!matches!(
+                finished.ball_action,
+                Some(BallAction::Pass { .. })
+            ));
+
+            taker.world_state.now = taker.last_sent_hsl_message_time.unwrap()
+                + hsl_network_messages::PassIntent::TIMEOUT;
+            taker.world_state.player_states.three.as_mut().unwrap().time = taker.world_state.now;
+            select_ball_action(&mut taker);
+            assert!(!matches!(taker.ball_action, Some(BallAction::Pass { .. })));
+        }
+    }
+
+    #[test]
+    fn restart_supporter_waits_in_pass_range_before_an_announcement() {
+        for (state, ball, position) in [
+            (SubState::ThrowIn, point![0.0, 3.0], point![-1.0, 1.0]),
+            (SubState::GoalKick, point![-3.5, 0.0], point![-1.5, 1.0]),
+        ] {
+            let mut receiver = restart(state, ball);
+            let taker_pose = receiver
+                .world_state
+                .robot
+                .ground_to_field
+                .unwrap()
+                .as_pose();
+            let pose = Pose2::new(
+                position,
+                (ball.y() - position.y()).atan2(ball.x() - position.x()),
+            );
+            receiver.world_state.robot.ground_to_field = Some(pose.as_transform());
+            receiver.world_state.player_states.two = Some(TimeWrapper {
+                time: receiver.world_state.now,
+                inner: PlayerState {
+                    pose: taker_pose,
+                    ..Default::default()
+                },
+            });
+            let tree = crate::tree::create_tree();
+            assert!(!crate::kick::passing::is_pass_receiver(&mut receiver));
+            tree.tick_with_trace(&mut receiver);
+            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand), "{state:?}");
+
+            for case in 0..3 {
+                let mut moving = receiver.clone();
+                match case {
+                    0 => moving.parameters.kicking.strategy.passing.maximum_distance = 0.5,
+                    1 => {
+                        moving
+                            .world_state
+                            .filtered_game_controller_state
+                            .as_mut()
+                            .unwrap()
+                            .kicking_team = Some(Team::Opponent)
+                    }
+                    _ => {
+                        moving
+                            .world_state
+                            .filtered_game_controller_state
+                            .as_mut()
+                            .unwrap()
+                            .sub_state = Some(SubState::PenaltyKick)
+                    }
+                }
+                moving.body_motion = None;
+                tree.tick_with_trace(&mut moving);
+                assert!(
+                    matches!(moving.body_motion, Some(BodyMotion::Walk { .. })),
+                    "{state:?}, case {case}"
+                );
+            }
+
+            let mut taker = restart(state, ball);
+            taker.world_state.robot.player_number = PlayerNumber::Two;
+            taker.world_state.player_states.three = Some(TimeWrapper {
+                time: receiver.world_state.now,
+                inner: PlayerState {
+                    pose,
+                    ..Default::default()
+                },
+            });
+            // A held receiver's older report agrees with its current obstacle position.
+            taker.world_state.now = taker.world_state.now + Duration::from_millis(300);
+            taker.world_state.obstacles = vec![Obstacle::robot(
+                taker_pose.as_transform().inverse() * position,
+                0.2,
+                0.2,
+            )];
+            tree.tick_with_trace(&mut taker);
+            assert_eq!(
+                taker.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Three
+                })
+            );
+            assert!(taker.try_sending_state_message().is_some());
+            taker.world_state.now = taker.world_state.now + Duration::from_millis(150);
             taker.kick_target = None;
             taker.body_motion = None;
             tree.tick_with_trace(&mut taker);

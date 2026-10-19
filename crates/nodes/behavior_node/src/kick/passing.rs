@@ -1,11 +1,17 @@
 use std::time::Duration;
 
 use coordinate_systems::Field;
-use hsl_network_messages::{PassIntent, PlayerNumber};
+use hsl_network_messages::{PassIntent, PlayerNumber, SubState};
 use linear_algebra::{Orientation2, Point2, Vector2};
-use types::{behavior_tree::Status, motion_command::BodyMotion};
+use types::{behavior_tree::Status, motion_command::BodyMotion, motion_type::MotionType};
 
-use crate::{actions::stand, kick::reception::receive_rolling_ball, node::Blackboard};
+use crate::{
+    actions::stand,
+    conditions::hulks_is_kicking_team,
+    kick::reception::receive_rolling_ball,
+    node::Blackboard,
+    substates::{is_in_sub_state, is_sub_state},
+};
 
 // shortcut: readiness is unconfirmed; tune this delay after measuring delivery and turning.
 const PREPARATION_TIME: Duration = Duration::from_millis(150);
@@ -34,6 +40,14 @@ pub(super) fn pass_is_announced(
     matches_announced_pass(blackboard, PassIntent { receiver, target })
         && blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
             blackboard.world_state.now.duration_since(pass.time) >= PREPARATION_TIME
+        })
+}
+
+pub(super) fn is_executing_announced_pass(blackboard: &Blackboard, receiver: PlayerNumber) -> bool {
+    blackboard.last_motion_type == Some(MotionType::Kick)
+        && blackboard.ball_action == Some(super::strategy::BallAction::Pass { receiver })
+        && blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
+            pass.inner.receiver == receiver && matches_announced_pass(blackboard, pass.inner)
         })
 }
 
@@ -117,10 +131,42 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     if receive_rolling_ball(blackboard) == Status::Success {
         return Status::Success;
     }
-    let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
         blackboard.projected_ball_position(ball.position, ball.velocity)
     });
+    hold_and_face_ball(blackboard, ball)
+}
+
+pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
+    if !hulks_is_kicking_team(blackboard)
+        || !is_in_sub_state(blackboard)
+        || is_sub_state(blackboard, SubState::PenaltyKick)
+    {
+        return Status::Failure;
+    }
+    let (Some(ball), Some(transform)) = (
+        blackboard.ball.as_ref(),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return Status::Failure;
+    };
+    let ball = ball.position;
+    let distance = (ball - transform.as_pose().position()).norm();
+    let parameters = &blackboard.parameters.kicking.strategy.passing;
+    if parameters.validate().is_err()
+        || parameters.maximum_distance <= 0.0
+        || !distance.is_finite()
+        || distance >= parameters.maximum_distance + parameters.receiver_standoff
+    {
+        return Status::Failure;
+    }
+    blackboard.ball_action = None;
+    blackboard.kick_target = None;
+    hold_and_face_ball(blackboard, ball)
+}
+
+fn hold_and_face_ball(blackboard: &mut Blackboard, ball: Point2<Field>) -> Status {
+    let transform = blackboard.world_state.robot.ground_to_field.unwrap();
     let direction = transform.inverse() * ball;
     let Some(direction) = direction.coords().try_normalize(f32::EPSILON) else {
         return stand(blackboard);
@@ -135,7 +181,7 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     {
         return stand(blackboard);
     }
-    // Hold the advertised receiver position rather than continuing supporter movement.
+    // Keep the reception position while turning toward the ball.
     blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
         velocity: Vector2::zeros(),
         angular_velocity: blackboard.walking_velocity_limits.scale_angular_axis(angle),

@@ -132,7 +132,7 @@
     grid_resolution: 0.2,
     padding: 0.5,
     forward_weight: 0.2,
-    ball_weight: 3.0,
+    ball_weight: 2.5,
     // Support distance is the center-circle radius; sigma scales use field width.
     relative_ball_support_sigma: 0.05,
     centroid_anchor_weight: 0.6,
