@@ -1,7 +1,7 @@
 use coordinate_systems::{Field, Ground};
 use filtering::hysteresis::less_than_with_relative_hysteresis;
 use hsl_network_messages::PlayerNumber;
-use linear_algebra::{Isometry2, Orientation2, Point, Point2, Pose2, point};
+use linear_algebra::{Isometry2, Orientation2, Point, Point2, Pose2, Vector2, point};
 use path_planner::path_planner::PathPlanner;
 use types::{
     behavior_tree::Status,
@@ -28,6 +28,45 @@ use crate::{
     selection, sequence, subtree,
     switch_motion_type::{is_allowed_to_switch, is_last_motion_type, switch_motion_type},
 };
+
+pub(crate) fn adaptive_blocking_velocity(
+    blackboard: &Blackboard,
+    desired: Vector2<Ground>,
+    ball: Point2<Ground>,
+) -> Vector2<Ground> {
+    let limits = blackboard.walking_velocity_limits;
+    if limits.validate().is_err()
+        || ![desired.x(), desired.y(), ball.x(), ball.y()]
+            .into_iter()
+            .all(f32::is_finite)
+    {
+        return Vector2::zeros();
+    }
+    let forward_limit = if desired.x() < 0.0 {
+        -limits.forward_velocity_limits[0]
+    } else {
+        limits.forward_velocity_limits[1]
+    };
+    if forward_limit == 0.0 && desired.x() != 0.0 {
+        return Vector2::zeros();
+    }
+    let scale = (desired.x().abs() / forward_limit.max(f32::EPSILON))
+        .max(desired.y().abs() / limits.lateral_velocity_limit)
+        .max(1.0);
+    let mut velocity = desired / scale;
+    let parameters = &blackboard.parameters;
+    let body_half_width = parameters.walking.path_planning.robot_radius / 2.0;
+    let near_front = ball.x() >= 0.0
+        && ball.coords().norm() <= parameters.kicking.kick_activation_distance
+        && ball.y().abs() <= body_half_width + blackboard.field_dimensions.ball_radius;
+    let speed = velocity.norm();
+    let closing_speed = parameters.walking.speed.minimum_speed.max(0.0);
+    if near_front && speed > closing_speed {
+        // Small steps near the body reduce leg opening while blocking a frontal ball.
+        velocity *= closing_speed / speed;
+    }
+    velocity
+}
 
 pub fn plan(
     blackboard: &mut Blackboard,
@@ -525,6 +564,42 @@ fn target_player_position(
 #[cfg(test)]
 mod ball_support_tests {
     use super::*;
+
+    #[test]
+    fn blocking_steps_are_small_in_front_and_fast_for_offset_or_distant_balls() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ..Default::default()
+        };
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.speed.minimum_speed = 0.2;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.walking_velocity_limits.forward_velocity_limits = [-0.8, 1.8];
+        board.walking_velocity_limits.lateral_velocity_limit = 1.5;
+        board.walking_velocity_limits.angular_velocity_limit = 2.0;
+        let desired = linear_algebra::vector![2.0, 4.0];
+        let close = adaptive_blocking_velocity(&board, desired, point![0.5, 0.1]);
+        approx::assert_relative_eq!(close.norm(), 0.2);
+        approx::assert_relative_eq!(close.x() / close.y(), 0.5);
+        for ball in [point![3.0, 0.1], point![0.5, 0.8], point![-0.5, 0.1]] {
+            let fast = adaptive_blocking_velocity(&board, desired, ball);
+            approx::assert_relative_eq!(fast, linear_algebra::vector![0.75, 1.5]);
+        }
+        let backward = adaptive_blocking_velocity(
+            &board,
+            linear_algebra::vector![-2.0, 4.0],
+            point![3.0, 0.1],
+        );
+        approx::assert_relative_eq!(backward, linear_algebra::vector![-0.75, 1.5]);
+        assert_eq!(
+            adaptive_blocking_velocity(&board, Vector2::zeros(), point![0.5, 0.0]),
+            Vector2::zeros()
+        );
+        assert_eq!(
+            adaptive_blocking_velocity(&board, desired, point![f32::NAN, 0.0]),
+            Vector2::zeros()
+        );
+    }
 
     #[test]
     fn defending_keeper_keeps_post_clearance_without_reducing_other_margins() {

@@ -21,7 +21,7 @@
   // Linear velocities: m/s; angular velocity: rad/s.
   walking_velocity_limits: {
     forward_velocity_limits: [-0.8, 1.8],
-    lateral_velocity_limit: 1.0,
+    lateral_velocity_limit: 1.5,
     angular_velocity_limit: 2.0,
   },
   joint_limits: {
