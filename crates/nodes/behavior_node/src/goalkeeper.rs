@@ -27,7 +27,9 @@ use crate::{
     switch_motion_type::switch_motion_type,
     tree::striker_subtree,
     voronoi::calculate_voronoi_grid,
-    walk::{walk_alternatives_subtree, walk_to, walk_to_block_position},
+    walk::{
+        adaptive_blocking_velocity, walk_alternatives_subtree, walk_to, walk_to_block_position,
+    },
 };
 
 pub fn goalkeeper_subtree() -> Node<Blackboard> {
@@ -222,6 +224,7 @@ fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
                 .ball
                 .interception
                 .maximum_ball_distance
+                .min(blackboard.parameters.kicking.kick_activation_distance)
         {
             return false;
         }
@@ -339,21 +342,17 @@ fn walk_to_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status
     if !time_to_line.is_finite() || time_to_line <= 0.0 {
         return status;
     }
-    let velocity = target.coords() / time_to_line;
-    let forward_limit = if velocity.x() < 0.0 {
-        -limits.forward_velocity_limits[0]
-    } else {
-        limits.forward_velocity_limits[1]
-    };
-    let scale = (velocity.x().abs() / forward_limit.max(f32::EPSILON))
-        .max(velocity.y().abs() / limits.lateral_velocity_limit)
-        .max(1.0);
+    let velocity = adaptive_blocking_velocity(
+        blackboard,
+        target.coords() / time_to_line,
+        transform.inverse() * ball.position,
+    );
     let angular_velocity = (target_orientation.angle() / time_to_line).clamp(
         -limits.angular_velocity_limit,
         limits.angular_velocity_limit,
     );
     blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
-        velocity: velocity / scale,
+        velocity,
         angular_velocity,
     });
     status
@@ -923,6 +922,7 @@ mod tests {
         board.parameters.walking.speed.blocking = 0.8;
         board.parameters.walking.speed.minimum_speed = 0.2;
         board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board.parameters.kicking.kick_activation_distance = 1.3;
         board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
         board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.walking_velocity_limits.angular_velocity_limit = 2.0;
@@ -940,6 +940,26 @@ mod tests {
             "commanded {commanded_speed}m/s cannot cover {}m before shot in {time_to_line}s",
             target.coords().norm()
         );
+        board.ball.as_mut().unwrap().velocity = vector![-3.5, 2.4];
+        board.last_ball = board.ball.clone();
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        let Some(BodyMotion::WalkWithVelocity { velocity, .. }) = &board.body_motion else {
+            panic!("expected deadline walk for fast angled shot");
+        };
+        approx::assert_relative_eq!(velocity.y(), 1.0);
+        board.walking_velocity_limits.lateral_velocity_limit = 1.5;
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        let Some(BodyMotion::WalkWithVelocity { velocity, .. }) = &board.body_motion else {
+            panic!("expected faster deadline walk when lateral limit permits");
+        };
+        assert!(velocity.y() > 1.0);
+        approx::assert_relative_eq!(
+            velocity.y() * (2.2 / 3.5),
+            board.walk_position.unwrap().y(),
+            epsilon = 1e-5
+        );
+        board.ball.as_mut().unwrap().velocity = vector![-2.8, 1.6];
+        board.last_ball = board.ball.clone();
         board.walking_velocity_limits.lateral_velocity_limit = 0.25;
         goalkeeper_subtree().tick_with_trace(&mut board);
         let Some(BodyMotion::WalkWithVelocity {
@@ -1023,6 +1043,27 @@ mod tests {
                 Some(BodyMotion::Kick { strong: true, .. })
             ),
             "settled ball under pressure should still get a strong clearance"
+        );
+
+        board.world_state.obstacles.clear();
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.ball.as_mut().unwrap().position = point![-6.2, 0.05];
+        board.ball.as_mut().unwrap().velocity = vector![-3.0, 0.0];
+        board.last_ball = board.ball.clone();
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        let Some(BodyMotion::WalkWithVelocity { velocity, .. }) = board.body_motion else {
+            panic!("expected small blocking steps for a close frontal shot");
+        };
+        approx::assert_relative_eq!(velocity.norm(), 0.2, epsilon = 1e-5);
+
+        board.ball.as_mut().unwrap().position = point![-5.8, 0.2];
+        board.ball.as_mut().unwrap().velocity = vector![-2.8, 1.6];
+        board.last_ball = board.ball.clone();
+        goalkeeper_subtree().tick_with_trace(&mut board);
+        assert!(
+            matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+            "close interceptable balls should still use the kick policy"
         );
     }
 
