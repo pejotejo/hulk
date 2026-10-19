@@ -62,13 +62,10 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                     subtree!(kick_alternatives_subtree),
                 )
             ),
-            switch_motion_type(
-                MotionType::Walk,
-                sequence!(
-                    action!(set_goalkeeper_shot_block_position),
-                    action!(walk_to_goalkeeper_shot_block_position)
-                ),
-                Node::Failure,
+            subtree!(goalkeeper_shot_block_position_subtree),
+            sequence!(
+                condition!(is_own_corner_cutback),
+                subtree!(goalkeeper_center_position_subtree),
             ),
             sequence!(
                 condition!(is_ball_close_enough_to_goal_to_become_striker),
@@ -100,17 +97,20 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
         ),
         sequence!(
             negation!(condition!(hulks_is_kicking_team)),
+            condition!(is_sub_state, SubState::CornerKick),
             selection!(
-                condition!(is_sub_state, SubState::CornerKick),
-                sequence!(
-                    selection!(
-                        condition!(is_sub_state, SubState::ThrowIn),
-                        condition!(is_sub_state, SubState::IndirectFreeKick),
-                        condition!(is_sub_state, SubState::DirectFreeKick),
-                    ),
-                    condition!(is_ball_near_own_goal)
-                ),
+                subtree!(goalkeeper_shot_block_position_subtree),
+                subtree!(goalkeeper_center_position_subtree)
+            )
+        ),
+        sequence!(
+            negation!(condition!(hulks_is_kicking_team)),
+            selection!(
+                condition!(is_sub_state, SubState::ThrowIn),
+                condition!(is_sub_state, SubState::IndirectFreeKick),
+                condition!(is_sub_state, SubState::DirectFreeKick),
             ),
+            condition!(is_ball_near_own_goal),
             subtree!(goalkeeper_active_defense_position_subtree)
         ),
         sequence!(
@@ -122,6 +122,58 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
         ),
         subtree!(goalkeeper_default_position_subtree),
     )
+}
+
+fn goalkeeper_shot_block_position_subtree() -> Node<Blackboard> {
+    switch_motion_type(
+        MotionType::Walk,
+        sequence!(
+            action!(set_goalkeeper_shot_block_position),
+            action!(walk_to_goalkeeper_shot_block_position)
+        ),
+        Node::Failure,
+    )
+}
+
+fn goalkeeper_center_position_subtree() -> Node<Blackboard> {
+    switch_motion_type(
+        MotionType::Walk,
+        sequence!(
+            action!(set_goalkeeper_center_position),
+            action!(walk_to_block_position)
+        ),
+        subtree!(walk_alternatives_subtree),
+    )
+}
+
+fn is_own_corner_cutback(blackboard: &mut Blackboard) -> bool {
+    blackboard.ball.as_ref().is_some_and(|ball| {
+        let goal_x = -blackboard.field_dimensions.length / 2.0;
+        let penalty_area_x = goal_x + blackboard.field_dimensions.penalty_area_length;
+        (goal_x..penalty_area_x).contains(&ball.position.x())
+            && ball.velocity.norm()
+                > blackboard
+                    .parameters
+                    .ball
+                    .interception
+                    .minimum_ball_velocity
+            && ball.velocity.x() > 0.0
+            && ball.position.y() * ball.velocity.y() < 0.0
+            && ball.velocity.y().abs() > ball.velocity.x().abs()
+    })
+}
+
+fn set_goalkeeper_center_position(blackboard: &mut Blackboard) -> Status {
+    if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field {
+        let position = point!(
+            -blackboard.field_dimensions.length / 2.0 + blackboard.parameters.goalkeeper.x_offset,
+            0.0
+        );
+        blackboard.walk_position = Some(ground_to_field.inverse() * position);
+        Status::Success
+    } else {
+        Status::Failure
+    }
 }
 
 fn goalkeeper_active_defense_position_subtree() -> Node<Blackboard> {
@@ -508,15 +560,159 @@ fn is_interception_velocity_towards_own_half(
 
 #[cfg(test)]
 mod tests {
+    use hsl_network_messages::{SubState, Team};
     use linear_algebra::{Isometry2, Pose2, point, vector};
     use types::{
         field_dimensions::{FieldDimensions, Side},
+        filtered_game_controller_state::FilteredGameControllerState,
         motion_command::BodyMotion,
+        path::traits::EndPoints,
         world_state::BallSource,
     };
 
     use super::{goalkeeper_subtree, shot_y_at_defense_line};
     use crate::node::{Blackboard, LastBall};
+
+    #[test]
+    fn opponent_corners_keep_center_until_a_shot_without_changing_open_play() {
+        for side in [-1.0, 1.0] {
+            let transform = Isometry2::from_parts(vector![-6.7, 0.0], 0.0);
+            let mut board = Blackboard {
+                field_dimensions: FieldDimensions {
+                    length: 14.0,
+                    width: 9.0,
+                    goal_inner_width: 2.4,
+                    penalty_area_length: 3.0,
+                    ..FieldDimensions::SPL_2025
+                },
+                ..Default::default()
+            };
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.last_motion_type = Some(types::motion_type::MotionType::Walk);
+            board.parameters.goalkeeper.x_offset = 0.3;
+            board.parameters.goalkeeper.distance_to_goalpost = 0.15;
+            board.parameters.goalkeeper.passive_distance = 4.5;
+            board
+                .parameters
+                .goalkeeper
+                .active_defense_maximum_robot_distance = 2.0;
+            board.parameters.ball.interception.minimum_ball_velocity = 1.0;
+            board.parameters.walking.speed.blocking = 0.8;
+            board.parameters.walking.speed.minimum_speed = 0.2;
+            board.parameters.walking.speed.velocity_fade_distance = 3.0;
+            board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
+            board.walking_velocity_limits.lateral_velocity_limit = 1.0;
+            board.walking_velocity_limits.angular_velocity_limit = 2.0;
+            let near_post_y = 2.8_f32 / 0.2_f32.hypot(2.8) * 1.05;
+            for (sub_state, kicking_team, position, velocity, expected, is_shot) in [
+                (
+                    Some(SubState::CornerKick),
+                    Team::Opponent,
+                    point![-7.0, side * 4.5],
+                    vector![0.0, 0.0],
+                    point![-6.7, 0.0],
+                    false,
+                ),
+                (
+                    Some(SubState::CornerKick),
+                    Team::Opponent,
+                    point![-6.0, side * 2.0],
+                    vector![1.0, -2.0 * side],
+                    point![-6.7, 0.0],
+                    false,
+                ),
+                (
+                    Some(SubState::CornerKick),
+                    Team::Opponent,
+                    point![-5.5, side * 0.6],
+                    vector![-3.0, -0.8 * side],
+                    point![-6.7, side * 0.28],
+                    true,
+                ),
+                (
+                    None,
+                    Team::Opponent,
+                    point![-6.0, side * 2.0],
+                    vector![1.0, -2.0 * side],
+                    point![-6.7, 0.0],
+                    false,
+                ),
+                (
+                    None,
+                    Team::Opponent,
+                    point![-5.2, side * 0.8],
+                    vector![1.0, -2.0 * side],
+                    point![-6.7, 0.0],
+                    false,
+                ),
+                (
+                    None,
+                    Team::Opponent,
+                    point![-5.5, side * 0.6],
+                    vector![-3.0, -0.8 * side],
+                    point![-6.7, side * 0.28],
+                    true,
+                ),
+                (
+                    None,
+                    Team::Opponent,
+                    point![-6.8, side * 2.8],
+                    vector![1.0, 2.0 * side],
+                    point![-6.85, side * near_post_y],
+                    false,
+                ),
+                (
+                    None,
+                    Team::Opponent,
+                    point![-6.8, side * 2.8],
+                    vector![0.0, 0.0],
+                    point![-6.85, side * near_post_y],
+                    false,
+                ),
+                (
+                    Some(SubState::CornerKick),
+                    Team::Hulks,
+                    point![7.0, side * 4.5],
+                    vector![0.0, 0.0],
+                    point![-6.7, side * 4.5 * 0.3 / 14.0],
+                    false,
+                ),
+            ] {
+                board.world_state.filtered_game_controller_state =
+                    Some(FilteredGameControllerState {
+                        sub_state,
+                        kicking_team: Some(kicking_team),
+                        ..Default::default()
+                    });
+                board.ball = Some(LastBall {
+                    position,
+                    velocity,
+                    age: Default::default(),
+                    field_side: Side::Left,
+                    source: BallSource::Own,
+                });
+                board.last_ball = board.ball.clone();
+                board.body_motion = None;
+                board.walk_position = None;
+                let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+                assert_eq!(status, types::behavior_tree::Status::Success);
+                let target = board
+                    .walk_position
+                    .or_else(|| match &board.body_motion {
+                        Some(BodyMotion::Walk { path, .. }) => Some(path.end_point()),
+                        _ => None,
+                    })
+                    .unwrap();
+                approx::assert_relative_eq!(transform * target, expected, epsilon = 1e-4);
+                if is_shot {
+                    assert!(matches!(
+                        board.body_motion,
+                        Some(BodyMotion::WalkWithVelocity { .. })
+                    ));
+                }
+            }
+        }
+    }
 
     #[test]
     fn only_clears_when_opponent_is_nearby() {
