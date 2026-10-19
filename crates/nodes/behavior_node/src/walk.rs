@@ -22,9 +22,8 @@ use crate::{
     condition,
     conditions::{hulks_is_kicking_team, opponent_near_ball},
     kick::{
-        kick,
+        execution::execute_ball_action,
         kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
-        select_kick_target, use_last_kick_settings,
     },
     node::Blackboard,
     selection, sequence, subtree,
@@ -279,11 +278,7 @@ pub fn walk_alternatives_subtree() -> Node<Blackboard> {
     selection!(
         sequence!(
             condition!(is_last_motion_type, MotionType::Kick),
-            sequence!(
-                action!(kick),
-                action!(select_kick_target),
-                action!(use_last_kick_power),
-            )
+            action!(execute_ball_action)
         ),
         action!(stand)
     )

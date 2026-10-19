@@ -76,8 +76,6 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let receiving = super::reception::is_receiving_ball(blackboard);
     let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
     let quick = (!controlled && kicking.quick)
-        || rolling
-        || receiving
         || (was_kicking
             && matches!(
                 blackboard.last_motion_command,
@@ -323,7 +321,7 @@ mod tests {
     };
 
     #[test]
-    fn moving_receptions_use_regular_quick_kicks_but_settled_shots_stay_strong() {
+    fn rolling_kicks_honor_quick_parameter_and_preserve_active_settings() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             ball_action: Some(BallAction::ShootAtGoalCenter),
@@ -365,11 +363,17 @@ mod tests {
             blackboard.body_motion,
             Some(BodyMotion::Kick {
                 strong: false,
-                quick: true,
+                quick: false,
                 soft: false,
                 target_speed: 3.4,
                 ..
             })
+        ));
+        blackboard.parameters.kicking.quick = true;
+        execute_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, .. })
         ));
         blackboard.last_motion_command = MotionCommand::from_partial_motions(
             blackboard.body_motion.clone().unwrap(),
@@ -378,6 +382,7 @@ mod tests {
             },
         );
         blackboard.last_motion_type = Some(MotionType::Kick);
+        blackboard.parameters.kicking.quick = false;
         blackboard.ball.as_mut().unwrap().velocity = Vector2::zeros();
         execute_ball_action(&mut blackboard);
         assert!(matches!(
@@ -394,7 +399,11 @@ mod tests {
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { strong: true, .. })
+            Some(BodyMotion::Kick {
+                strong: true,
+                quick: false,
+                ..
+            })
         ));
 
         blackboard.parameters.kicking.allow_strong_kicks = false;

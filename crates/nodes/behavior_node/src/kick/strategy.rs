@@ -1130,6 +1130,58 @@ mod tests {
     }
 
     #[test]
+    fn walking_fallback_retains_ktsl_pass_or_dribble_and_revalidates_corridors() {
+        let tree = crate::walk::walk_alternatives_subtree();
+        for action in [
+            BallAction::Pass {
+                receiver: PlayerNumber::Two,
+            },
+            BallAction::Dribble,
+        ] {
+            let mut board = passing_blackboard();
+            board.ball_action = Some(action);
+            if action == BallAction::Dribble {
+                board.world_state.player_states.two = None;
+                board.world_state.obstacles.clear();
+            }
+            execute_ball_action(&mut board);
+            if matches!(action, BallAction::Pass { .. }) {
+                assert!(board.try_sending_state_message().is_some());
+                board.world_state.now = board.world_state.now + Duration::from_millis(150);
+                execute_ball_action(&mut board);
+            }
+            let target = board.kick_target;
+            board.last_motion_type = Some(types::motion_type::MotionType::Kick);
+            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+                board.body_motion.clone().unwrap(),
+                types::motion_command::HeadMotion::LookAround,
+            );
+            board.kick_target = None;
+            board.body_motion = None;
+            tree.tick_with_trace(&mut board);
+            assert_eq!(board.ball_action, Some(action));
+            assert_eq!(board.kick_target, target);
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    strong: false,
+                    soft: false,
+                    ..
+                })
+            ));
+
+            // A newly occupied ball corridor cancels continuation instead of aiming at goal.
+            board.world_state.obstacles = vec![Obstacle::robot(point![0.0, 0.0], 0.4, 0.4)];
+            board.kick_target = None;
+            board.body_motion = None;
+            tree.tick_with_trace(&mut board);
+            assert_eq!(board.ball_action, None);
+            assert_eq!(board.kick_target, None);
+            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+        }
+    }
+
+    #[test]
     fn goal_center_fallback_stops_without_valid_ball_or_localization() {
         for case in 0..5 {
             let mut blackboard = blackboard();
