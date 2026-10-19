@@ -481,7 +481,14 @@ fn target_player_position(
 
     let resolution = map.resolution();
 
-    let support_distance = parameters.ball_support_distance.max(resolution);
+    let nearest_ball_distance = candidates
+        .iter()
+        .map(|point| (*point - ball_position).norm())
+        .fold(f32::INFINITY, f32::min);
+    let support_distance = parameters
+        .ball_support_distance
+        .max(resolution)
+        .max(nearest_ball_distance);
     let support_sigma = parameters.ball_support_sigma.max(resolution);
     let inv_two_support_sigma_sq = 1.0 / (2.0 * support_sigma * support_sigma);
 
@@ -503,8 +510,8 @@ fn target_player_position(
         let dx_centroid = point.x() - centroid.x();
         let dy_centroid = point.y() - centroid.y();
         let centroid_penalty = parameters.centroid_anchor_weight
-            * (dx_centroid * dx_centroid + dy_centroid * dy_centroid).sqrt()
-            / centroid_sigma;
+            * ((dx_centroid * dx_centroid + dy_centroid * dy_centroid).sqrt() / centroid_sigma)
+                .min(1.0);
 
         let score = forward_term + ball_term - centroid_penalty;
         if best_target.is_none_or(|(best_score, _)| score > best_score) {
@@ -685,7 +692,7 @@ mod ball_support_tests {
         map.multi_source_dijkstra(&[(Pose2::new(point![-2.0, 0.0], 0.0), PlayerNumber::Two)]);
         let ball = point![3.8, 0.0];
         let mut parameters = VoronoiParameters {
-            ball_weight: 1.0,
+            ball_weight: 0.25,
             ball_support_distance: 1.5,
             ball_support_sigma: 0.5,
             centroid_anchor_weight: 0.6,
@@ -700,7 +707,7 @@ mod ball_support_tests {
             &parameters,
         )
         .unwrap();
-        parameters.ball_weight = 3.0;
+        parameters.ball_weight = 2.5;
         let after = target_player_position(
             &map,
             PlayerNumber::Two,

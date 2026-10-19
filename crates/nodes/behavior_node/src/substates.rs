@@ -352,6 +352,7 @@ mod tests {
     use hsl_network_messages::{PlayerNumber, Team};
     use linear_algebra::{Point2, Pose2};
     use types::{
+        behavior_tree::NodeTrace,
         fall_detection::{FallDetection, Posture},
         field_dimensions::FieldDimensions,
         filtered_game_state::FilteredGameState,
@@ -360,6 +361,7 @@ mod tests {
         motion_type::MotionType,
         obstacles::Obstacle,
         parameters::{KickStrategyParameters, PassingParameters},
+        path::traits::EndPoints,
         primary_state::PrimaryState,
         time_wrapper::TimeWrapper,
         world_state::PlayerState,
@@ -368,6 +370,11 @@ mod tests {
     use crate::{kick::strategy::BallAction, node::LastBall};
 
     use super::*;
+
+    fn succeeded(trace: &NodeTrace, name: &str) -> bool {
+        (trace.name == name && trace.status == Status::Success)
+            || trace.children.iter().any(|child| succeeded(child, name))
+    }
 
     fn restart(state: SubState, ball: Point2<coordinate_systems::Field>) -> Blackboard {
         let mut board = Blackboard {
@@ -652,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn restart_supporter_waits_in_pass_range_before_an_announcement() {
+    fn restart_supporter_moves_until_a_pass_announcement() {
         for (state, ball, position) in [
             (SubState::ThrowIn, point![0.0, 3.0], point![-1.0, 1.0]),
             (SubState::GoalKick, point![-3.5, 0.0], point![-1.5, 1.0]),
@@ -678,8 +685,12 @@ mod tests {
             });
             let tree = crate::tree::create_tree();
             assert!(!crate::kick::passing::is_pass_receiver(&mut receiver));
-            tree.tick_with_trace(&mut receiver);
-            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand), "{state:?}");
+            let (_, trace) = tree.tick_with_trace(&mut receiver);
+            assert!(succeeded(&trace, "walk_to_voronoi_position"), "{state:?}");
+            assert!(matches!(
+                receiver.body_motion,
+                Some(BodyMotion::Walk { .. })
+            ));
 
             for case in 0..3 {
                 let mut moving = receiver.clone();
@@ -719,7 +730,7 @@ mod tests {
                     ..Default::default()
                 },
             });
-            // A held receiver's older report agrees with its current obstacle position.
+            // The receiver's older report agrees with its current obstacle position.
             taker.world_state.now = taker.world_state.now + Duration::from_millis(300);
             taker.world_state.obstacles = vec![Obstacle::robot(
                 taker_pose.as_transform().inverse() * position,
@@ -886,8 +897,8 @@ mod tests {
                 0.4,
                 0.4,
             )];
-            tree.tick_with_trace(&mut receiver);
-            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
+            let (_, trace) = tree.tick_with_trace(&mut receiver);
+            assert!(succeeded(&trace, "walk_to_voronoi_position"));
 
             let mut expired = taker.clone();
             expired.world_state.now = expired.world_state.now + Duration::from_secs(5);
@@ -919,6 +930,183 @@ mod tests {
                 })
             );
             assert_eq!(taker.body_motion, Some(BodyMotion::Stand));
+            let Some(OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(message))) =
+                taker.try_sending_state_message()
+            else {
+                panic!("staged receiver must receive the pass announcement");
+            };
+            receiver
+                .world_state
+                .player_states
+                .three
+                .as_mut()
+                .unwrap()
+                .inner
+                .pass = message.pass;
+            let (_, trace) = tree.tick_with_trace(&mut receiver);
+            assert!(succeeded(&trace, "prepare_to_receive_pass"));
+            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
+        }
+    }
+
+    #[test]
+    fn unannounced_restart_support_uses_ball_weight_in_three_player_tree() {
+        let tree = crate::tree::create_tree();
+        for (state, ball, position, taker) in [
+            (
+                SubState::CornerKick,
+                point![7.0, 4.5],
+                point![3.0, 1.0],
+                point![6.8, 4.2],
+            ),
+            (
+                SubState::ThrowIn,
+                point![-1.5, 4.5],
+                point![-3.0, -0.5],
+                point![-1.2, 4.2],
+            ),
+            (
+                SubState::GoalKick,
+                point![-5.5, 0.0],
+                point![-1.5, -2.0],
+                point![-5.2, 0.2],
+            ),
+            (
+                SubState::IndirectFreeKick,
+                point![0.0, 0.0],
+                point![-3.0, -1.0],
+                point![-0.3, 0.2],
+            ),
+        ] {
+            let mut board = restart(state, ball);
+            board.field_dimensions.length = 14.0;
+            board.field_dimensions.width = 9.0;
+            board.world_state.robot.player_number = PlayerNumber::Two;
+            let transform = Pose2::new(position, 0.0).as_transform();
+            board.world_state.robot.ground_to_field = Some(transform);
+            for (number, position) in [
+                (PlayerNumber::One, point![-6.6, 0.0]),
+                (PlayerNumber::Three, taker),
+            ] {
+                board.world_state.player_states[number] = Some(TimeWrapper {
+                    time: board.world_state.now,
+                    inner: PlayerState {
+                        pose: Pose2::new(position, 0.0),
+                        ..Default::default()
+                    },
+                });
+            }
+            board.parameters.walking.path_planning.robot_radius = 0.4;
+            board.parameters.walking.speed.kicking = 1.8;
+            board.parameters.walking.speed.velocity_fade_distance = 3.0;
+            board.parameters.voronoi.ball_support_distance = 1.5;
+            board.parameters.voronoi.forward_weight = 0.2;
+            board.parameters.voronoi.ball_support_sigma = 0.5;
+            board.parameters.voronoi.centroid_anchor_weight = 0.6;
+            board.parameters.voronoi.centroid_anchor_sigma = 1.0;
+            assert!(restart_pass_is_open(&board, position), "{state:?}");
+            let mut distances = Vec::new();
+            for ball_weight in [0.0, 2.5] {
+                let mut supporter = board.clone();
+                supporter.parameters.voronoi.ball_weight = ball_weight;
+                let (_, trace) = tree.tick_with_trace(&mut supporter);
+                assert!(succeeded(&trace, "walk_to_voronoi_position"), "{state:?}");
+                assert!(!succeeded(&trace, "prepare_for_restart_pass"), "{state:?}");
+                let Some(BodyMotion::Walk { path, .. }) = supporter.body_motion else {
+                    panic!("{state:?} support must move before any pass announcement");
+                };
+                let target = transform * path.end_point();
+                assert!(target.x().abs() <= 7.0 && target.y().abs() <= 4.5);
+                let map = supporter.voronoi_map.as_ref().unwrap();
+                assert_eq!(
+                    map.ownership_at(target),
+                    Some(voronoi::Ownership::Robot(PlayerNumber::Two))
+                );
+                if ball_weight > 0.0 {
+                    let nearest = map
+                        .cells()
+                        .filter(|(point, ownership)| {
+                            *ownership == voronoi::Ownership::Robot(PlayerNumber::Two)
+                                && point.x().abs() <= 7.0
+                                && point.y().abs() <= 4.5
+                        })
+                        .map(|(point, _)| (point - ball).norm())
+                        .fold(f32::INFINITY, f32::min);
+                    assert!(
+                        (target - ball).norm() <= nearest + 0.5,
+                        "{state:?}: support must approach the reachable ball ring"
+                    );
+                }
+                distances.push((target - ball).norm());
+            }
+            assert!(distances[1] < distances[0], "{state:?}: {distances:?}");
+        }
+    }
+
+    #[test]
+    fn five_player_restart_stages_only_one_blocked_receiver() {
+        let tree = crate::tree::create_tree();
+        let ball = point![7.0, 4.5];
+        let mut board = restart(SubState::CornerKick, ball);
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.speed.kicking = 1.8;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board.parameters.voronoi.ball_weight = 3.0;
+        board.parameters.voronoi.ball_support_distance = 1.5;
+        board.parameters.voronoi.ball_support_sigma = 1.0;
+        board.parameters.voronoi.centroid_anchor_weight = 0.6;
+        board.parameters.voronoi.centroid_anchor_sigma = 1.0;
+        for (number, position) in [
+            (PlayerNumber::One, point![-6.6, 0.0]),
+            (PlayerNumber::Two, point![-3.0, -0.5]),
+            (PlayerNumber::Three, point![6.8, 4.2]),
+            (PlayerNumber::Four, point![-5.0, -3.0]),
+            (PlayerNumber::Five, point![-4.0, -2.0]),
+        ] {
+            board.world_state.player_states[number] = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PlayerState {
+                    pose: Pose2::new(position, 0.0),
+                    ..Default::default()
+                },
+            });
+        }
+        for number in [PlayerNumber::Two, PlayerNumber::Four, PlayerNumber::Five] {
+            let mut supporter = board.clone();
+            let transform = supporter.world_state.player_states[number]
+                .as_ref()
+                .unwrap()
+                .inner
+                .pose
+                .as_transform();
+            supporter.world_state.robot.player_number = number;
+            supporter.world_state.robot.ground_to_field = Some(transform);
+            supporter.world_state.obstacles = vec![Obstacle::robot(
+                transform.inverse() * point![2.0, 2.0],
+                0.3,
+                0.3,
+            )];
+            assert_eq!(
+                restart_pass_receiver(&supporter).unwrap().0,
+                PlayerNumber::Two
+            );
+            let (_, trace) = tree.tick_with_trace(&mut supporter);
+            assert!(matches!(
+                supporter.body_motion,
+                Some(BodyMotion::Walk { .. })
+            ));
+            assert_eq!(
+                succeeded(&trace, "prepare_for_restart_pass"),
+                number == PlayerNumber::Two,
+                "{number:?}"
+            );
+            assert_eq!(
+                succeeded(&trace, "walk_to_voronoi_position"),
+                number != PlayerNumber::Two,
+                "{number:?}"
+            );
         }
     }
 }
