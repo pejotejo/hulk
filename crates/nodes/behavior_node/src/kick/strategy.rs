@@ -1,7 +1,5 @@
 use coordinate_systems::{Field, Ground};
-use filtering::hysteresis::{
-    greater_than_with_relative_hysteresis, less_than_with_relative_hysteresis,
-};
+use filtering::hysteresis::less_than_with_relative_hysteresis;
 use geometry::{Distance, line_segment::LineSegment};
 use hsl_network_messages::{PlayerNumber, SubState, Team};
 use linear_algebra::{Isometry2, Point2, point};
@@ -150,14 +148,7 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
                 retained = Some((opening, angle));
             }
         }
-        if let Some((opening, angle)) = best
-            && greater_than_with_relative_hysteresis(
-                matches!(previous, Some(BallAction::Shoot { .. })),
-                angle,
-                parameters.minimum_shot_angle,
-                0.0..=parameters.shot_angle_hysteresis,
-            )
-        {
+        if let Some((opening, angle)) = best {
             let opening = retained
                 .filter(|(_, old_angle)| angle <= old_angle + parameters.shot_angle_hysteresis)
                 .map_or(opening, |(opening, _)| opening);
@@ -442,6 +433,47 @@ mod tests {
         blackboard.ball.as_mut().unwrap().position = point![-2.0, 0.0];
         select_ball_action(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+    }
+
+    #[test]
+    fn starts_midfield_shots_around_a_center_keeper_with_filtered_posts() {
+        for ball_x in [0.0, -1.0, -2.0, -3.0] {
+            let mut board = blackboard();
+            let field = &mut board.field_dimensions;
+            field.length = 14.0;
+            field.width = 9.0;
+            field.goal_inner_width = 2.4;
+            field.ball_radius = 0.105;
+            board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+            let ball = point![ball_x, 0.0];
+            let keeper = point![6.5, 0.0];
+            board.ball.as_mut().unwrap().position = ball;
+            board.world_state.obstacles = vec![Obstacle::robot(
+                board.world_state.robot.ground_to_field.unwrap().inverse() * keeper,
+                0.2,
+                0.2,
+            )];
+            // The filtering profile publishes larger post obstacles than the physical posts.
+            for y in [-1.25, 1.25] {
+                board
+                    .world_state
+                    .obstacles
+                    .push(Obstacle::goal_post(point![7.025, y], 0.2));
+            }
+
+            select_ball_action(&mut board);
+            let Some(BallAction::Shoot { opening }) = board.ball_action else {
+                panic!("expected a fresh shot from x={ball_x}");
+            };
+            assert!(opening.0.y() * opening.1.y() > 0.0);
+            let target = crate::kick::execution::resolve_target(&mut board).unwrap();
+            assert!(LineSegment(ball, target).distance_to(keeper) > 0.355);
+
+            board.world_state.obstacles[0].radius_at_foot_height = 2.0;
+            board.ball_action = None;
+            select_ball_action(&mut board);
+            assert!(!matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+        }
     }
 
     #[test]
