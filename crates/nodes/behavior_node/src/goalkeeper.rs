@@ -1,11 +1,14 @@
 use coordinate_systems::Field;
+use geometry::line_segment::LineSegment;
 use hsl_network_messages::SubState;
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
+use path_planner::path_planner::PathPlanner;
 use types::{
     behavior_tree::Status,
     field_dimensions::FieldDimensions,
     motion_command::{BodyMotion, OrientationMode},
     motion_type::MotionType,
+    obstacles::ObstacleKind,
     path::PathSegment,
 };
 
@@ -28,7 +31,8 @@ use crate::{
     tree::striker_subtree,
     voronoi::calculate_voronoi_grid,
     walk::{
-        adaptive_blocking_velocity, walk_alternatives_subtree, walk_to, walk_to_block_position,
+        adaptive_blocking_velocity, walk_alternatives_subtree, walk_to, walk_to_ball,
+        walk_to_block_position,
     },
 };
 
@@ -39,6 +43,10 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
             sequence!(
                 condition!(is_ball_behind_own_goal_line),
                 subtree!(goalkeeper_center_position_subtree),
+            ),
+            sequence!(
+                condition!(is_goalkeeper_kick_approach_obstructed),
+                switch_motion_type(MotionType::Walk, action!(walk_to_ball), Node::Failure)
             ),
             sequence!(
                 condition!(is_in_sub_state),
@@ -88,6 +96,53 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
             subtree!(goalkeeper_default_position_subtree),
         ),
     )
+}
+
+fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
+    if goalkeeper_shot_block_position(blackboard).is_some()
+        || (is_in_sub_state(blackboard) && !hulks_is_kicking_team(blackboard))
+    {
+        return false;
+    }
+    let (Some(ball), Some(transform)) = (
+        blackboard.ball.as_ref(),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return false;
+    };
+    let ball = transform.inverse() * ball.position;
+    if ball.coords().norm()
+        > blackboard.parameters.kicking.kick_activation_distance.max(
+            blackboard
+                .parameters
+                .goalkeeper
+                .kick_away_ball_maximum_robot_distance,
+        )
+    {
+        return false;
+    }
+    // The kick policy cannot avoid posts or the net during its final approach.
+    let dimensions = &blackboard.field_dimensions;
+    let mut planner = PathPlanner::default();
+    for mut post in blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .copied()
+        .filter(|obstacle| obstacle.kind == ObstacleKind::GoalPost)
+    {
+        post.radius_at_hip_height = dimensions.goal_post_diameter / 2.0;
+        planner.with_obstacles(
+            &[post],
+            blackboard.parameters.walking.path_planning.robot_radius * 0.75,
+        );
+    }
+    planner.with_goal_support_structures(transform.inverse(), dimensions);
+    let approach = LineSegment(Point2::origin(), ball);
+    planner
+        .obstacles
+        .iter()
+        .any(|obstacle| obstacle.shape.intersects_line_segment(approach))
 }
 
 fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
@@ -567,7 +622,7 @@ fn is_interception_velocity_towards_own_half(
 #[cfg(test)]
 mod tests {
     use hsl_network_messages::{SubState, Team};
-    use linear_algebra::{Isometry2, Pose2, point, vector};
+    use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point, vector};
     use types::{
         field_dimensions::{FieldDimensions, Side},
         filtered_game_controller_state::FilteredGameControllerState,
@@ -618,6 +673,84 @@ mod tests {
         assert_eq!(status, types::behavior_tree::Status::Success);
         approx::assert_relative_eq!(transform * board.walk_position.unwrap(), point![-6.7, 0.0]);
         assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+    }
+
+    #[test]
+    fn keeper_walks_around_post_before_entering_obstacle_blind_kick() {
+        use types::{obstacles::Obstacle, path::traits::PathProgress, world_state::BallState};
+
+        for side in [-1.0, 1.0] {
+            for angle in [0.0, 0.7 * side] {
+                let transform = Isometry2::from_parts(vector![-6.9, side * 1.7], angle);
+                let ball = LastBall {
+                    position: point![-6.6, side * 0.8],
+                    velocity: Vector2::zeros(),
+                    age: Default::default(),
+                    field_side: Side::Left,
+                    source: BallSource::Own,
+                };
+                let mut board = Blackboard {
+                    field_dimensions: FieldDimensions {
+                        length: 14.0,
+                        width: 9.0,
+                        goal_inner_width: 2.4,
+                        ..FieldDimensions::SPL_2025
+                    },
+                    ball: Some(ball.clone()),
+                    last_ball: Some(ball.clone()),
+                    last_motion_type: Some(types::motion_type::MotionType::Walk),
+                    ..Default::default()
+                };
+                board.world_state.robot.ground_to_field = Some(transform);
+                board.world_state.now = ros_z::time::Time::from_nanos(1_000_000_000);
+                board
+                    .parameters
+                    .goalkeeper
+                    .kick_away_ball_maximum_robot_distance = 1.5;
+                board.parameters.kicking.approach_ball_standoff = 0.3;
+                board.parameters.walking.path_planning.robot_radius = 0.4;
+                board
+                    .parameters
+                    .walking
+                    .path_planning
+                    .obstacle_escape_spline_segments = 5;
+                board.parameters.walking.speed.velocity_fade_distance = 3.0;
+                board.world_state.ball = Some(BallState {
+                    ball_in_ground: transform.inverse() * ball.position,
+                    ..Default::default()
+                });
+                let post = point![-7.025, side * 1.25];
+                board.world_state.obstacles = vec![
+                    Obstacle::goal_post(transform.inverse() * post, 0.2),
+                    Obstacle::robot(transform.inverse() * point![-5.2, side * 0.8], 0.2, 0.2),
+                ];
+
+                let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+                assert_eq!(status, types::behavior_tree::Status::Success);
+                let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+                    panic!(
+                        "post on final approach must keep keeper out of Kick: {:?}",
+                        board.body_motion
+                    );
+                };
+                assert!(path.segments.len() > 1, "must plan a post detour");
+                let forward = transform * path.forward(Point2::origin());
+                assert!(forward.x() > 0.0, "detour must start toward the field");
+
+                let clear_transform = Isometry2::from_parts(vector![-6.9, side * 0.3], 0.0);
+                board.world_state.robot.ground_to_field = Some(clear_transform);
+                for obstacle in &mut board.world_state.obstacles {
+                    obstacle.position = clear_transform.inverse() * (transform * obstacle.position);
+                }
+                board.world_state.ball.as_mut().unwrap().ball_in_ground =
+                    clear_transform.inverse() * ball.position;
+                goalkeeper_subtree().tick_with_trace(&mut board);
+                assert!(
+                    matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+                    "clear approach should resume normal clearance"
+                );
+            }
+        }
     }
 
     #[test]
