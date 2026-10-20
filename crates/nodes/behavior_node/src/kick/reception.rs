@@ -416,7 +416,7 @@ mod tests {
             blackboard.body_motion,
             Some(BodyMotion::Kick {
                 quick: true,
-                strong: false,
+                strong: true,
                 ..
             })
         ));

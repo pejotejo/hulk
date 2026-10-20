@@ -359,6 +359,8 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
         let kicker = crate::kick::kickoff::kickoff_kicker(blackboard);
         let own_field_player =
             own_kickoff && player_number != blackboard.parameters.goalkeeper.player_number;
+        let receiving_pose = crate::kick::kickoff::kickoff_receiving_pose(blackboard)
+            .filter(|_| Some(player_number) == kickoff_receiver(blackboard));
         let kickoff = &blackboard.parameters.kickoff;
         let standard_player = if own_field_player {
             match player_number {
@@ -395,17 +397,24 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
             if player_number == kicker {
                 target_position = striker_position;
             } else if Some(player_number) == kickoff_receiver(blackboard) {
-                target_position = kickoff_receiver_position(blackboard);
-                // Receive with an open stance so the next shot needs only a small turn.
-                target_orientation = Orientation2::from_vector(
-                    (-target_position.coords()).normalize()
-                        + (point![blackboard.field_dimensions.length / 2.0, 0.0] - target_position)
-                            .normalize(),
-                );
+                if let Some(pose) = receiving_pose {
+                    target_position = pose.position();
+                    target_orientation = pose.orientation();
+                } else {
+                    target_position = kickoff_receiver_position(blackboard);
+                    // Receive with an open stance so the next shot needs only a small turn.
+                    target_orientation = Orientation2::from_vector(
+                        (-target_position.coords()).normalize()
+                            + (point![blackboard.field_dimensions.length / 2.0, 0.0]
+                                - target_position)
+                                .normalize(),
+                    );
+                }
             }
         }
         if player_number != blackboard.parameters.goalkeeper.player_number
             && !(own_kickoff && player_number == kicker)
+            && receiving_pose.is_none()
         {
             target_position = kickoff_support_position(blackboard, target_position);
         }

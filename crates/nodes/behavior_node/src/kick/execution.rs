@@ -62,19 +62,26 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         blackboard.ball_action,
         Some(BallAction::Dribble | BallAction::Pass { .. })
     );
+    let force_strong = matches!(
+        blackboard.ball_action,
+        Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter)
+    ) || (matches!(blackboard.ball_action, Some(BallAction::Pass { .. }))
+        && super::kickoff::own_kickoff(blackboard));
     let rolling = ball_velocity.norm()
         > blackboard
             .parameters
             .ball
             .interception
             .minimum_ball_velocity;
-    let mut strong = !controlled
-        && !rolling
-        && kicking.allow_strong_kicks
-        && (target - ball).norm() >= kicking.strong_kick_min_target_distance;
+    let mut strong = kicking.allow_strong_kicks
+        && (force_strong
+            || (!controlled
+                && !rolling
+                && (target - ball).norm() >= kicking.strong_kick_min_target_distance));
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
     if was_kicking
         && !controlled
+        && !force_strong
         && let MotionCommand::Kick {
             strong: previous, ..
         } = blackboard.last_motion_command
@@ -335,7 +342,7 @@ mod tests {
     };
 
     #[test]
-    fn rolling_kicks_honor_quick_parameter_and_preserve_active_settings() {
+    fn goal_shots_are_strong_even_when_close_or_rolling_and_honor_quick() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             ball_action: Some(BallAction::ShootAtGoalCenter),
@@ -349,6 +356,7 @@ mod tests {
             ..Default::default()
         };
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
+        blackboard.field_dimensions.length = 6.0;
         blackboard.parameters.kicking.target_speed = 3.4;
         blackboard.parameters.kicking.strategy.maximum_shot_distance = 12.0;
         blackboard.parameters.kicking.soft = true;
@@ -376,7 +384,7 @@ mod tests {
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick {
-                strong: false,
+                strong: true,
                 quick: false,
                 soft: false,
                 target_speed: 3.4,
@@ -396,13 +404,16 @@ mod tests {
             },
         );
         blackboard.last_motion_type = Some(MotionType::Kick);
+        if let MotionCommand::Kick { strong, .. } = &mut blackboard.last_motion_command {
+            *strong = false;
+        }
         blackboard.parameters.kicking.quick = false;
         blackboard.ball.as_mut().unwrap().velocity = Vector2::zeros();
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick {
-                strong: false,
+                strong: true,
                 quick: true,
                 ..
             })
