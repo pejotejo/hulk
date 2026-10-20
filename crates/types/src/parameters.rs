@@ -290,6 +290,9 @@ pub struct KickingParameters {
     pub quick: bool,
     /// Desired outgoing ball speed in m/s.
     pub target_speed: f32,
+    /// Desired outgoing ball speed for a controlled dribble, in m/s.
+    #[serde(default = "default_dribble_target_speed")]
+    pub dribble_target_speed: f32,
     pub allow_strong_kicks: bool,
     /// Ball distance at the centre of the walk-to-kick handoff band, in metres.
     pub kick_activation_distance: f32,
@@ -313,6 +316,7 @@ impl Default for KickingParameters {
             soft: false,
             quick: false,
             target_speed: 3.4,
+            dribble_target_speed: default_dribble_target_speed(),
             allow_strong_kicks: false,
             kick_activation_distance: 0.0,
             kick_activation_hysteresis: 0.0,
@@ -340,6 +344,10 @@ fn default_receiving_opponent_distance() -> f32 {
     2.0
 }
 
+fn default_dribble_target_speed() -> f32 {
+    0.5
+}
+
 /// Distances are meters, angles radians. Values must be finite and nonnegative.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ros_z::Message)]
 pub struct KickStrategyParameters {
@@ -351,6 +359,9 @@ pub struct KickStrategyParameters {
     pub maximum_dribble_distance: f32,
     pub obstacle_clearance: f32,
     pub minimum_shot_angle: f32,
+    /// Below this opening angle, prefer a useful pass or controlled advance when available.
+    #[serde(default)]
+    pub preferred_shot_angle: f32,
     pub shot_angle_hysteresis: f32,
     pub pressure_distance: f32,
     pub clear_goal_distance: f32,
@@ -366,6 +377,7 @@ impl KickStrategyParameters {
             ("maximum_dribble_distance", self.maximum_dribble_distance),
             ("obstacle_clearance", self.obstacle_clearance),
             ("minimum_shot_angle", self.minimum_shot_angle),
+            ("preferred_shot_angle", self.preferred_shot_angle),
             ("shot_angle_hysteresis", self.shot_angle_hysteresis),
             ("pressure_distance", self.pressure_distance),
             ("clear_goal_distance", self.clear_goal_distance),

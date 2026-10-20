@@ -44,12 +44,19 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     };
     if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
     {
-        return opponent_near_ball(
-            blackboard,
-            blackboard.parameters.kicking.receiving_opponent_distance,
-        ) && position.x() > 0.0
+        let controlled = controlled_ball_at_feet(blackboard, position, velocity)
+            && super::execution::resolve_target(blackboard).is_some_and(|target| {
+                let transform = blackboard.world_state.robot.ground_to_field.unwrap();
+                let direction = transform.inverse() * target - position;
+                direction.x() > 0.0 && direction.dot(&position.coords()) > 0.0
+            });
+        return position.x() > 0.0
             && position.coords().norm() <= blackboard.parameters.kicking.kick_activation_distance
-            && position.coords().dot(&velocity) < 0.0;
+            && (controlled
+                || (opponent_near_ball(
+                    blackboard,
+                    blackboard.parameters.kicking.receiving_opponent_distance,
+                ) && position.coords().dot(&velocity) < 0.0));
     }
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let half_width = (blackboard.parameters.walking.path_planning.robot_radius / 2.0)
@@ -84,6 +91,22 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
         position.y()
     };
     lateral_position.abs() <= half_width
+}
+
+fn controlled_ball_at_feet(
+    blackboard: &Blackboard,
+    position: Point2<Ground>,
+    velocity: Vector2<Ground>,
+) -> bool {
+    position.coords().norm() <= 2.0 * blackboard.parameters.kicking.approach_ball_standoff
+        && position.y().abs() <= blackboard.parameters.walking.path_planning.robot_radius / 2.0
+        && velocity.norm()
+            <= 2.0
+                * blackboard
+                    .parameters
+                    .ball
+                    .interception
+                    .minimum_ball_velocity
 }
 
 fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vector2<Ground>)> {
@@ -133,6 +156,15 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return Status::Failure;
     };
+    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+        && controlled_ball_at_feet(blackboard, position, velocity)
+        && !opponent_near_ball(
+            blackboard,
+            blackboard.parameters.kicking.receiving_opponent_distance,
+        )
+    {
+        super::strategy::select_ball_action(blackboard);
+    }
     if is_ready_to_receive_kick(blackboard) {
         return Status::Failure;
     }
@@ -349,7 +381,7 @@ mod tests {
     use crate::node::LastBall;
 
     #[test]
-    fn receiver_blocks_without_pressure_then_releases_quickly_only_when_pressed() {
+    fn receiver_blocks_until_controlled_or_pressed_then_releases_quickly() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
@@ -366,6 +398,12 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.goalkeeper.player_number = PlayerNumber::One;
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        blackboard
+            .parameters
+            .ball
+            .interception
+            .minimum_ball_velocity = 0.3;
+        blackboard.parameters.walking.path_planning.robot_radius = 0.4;
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
         blackboard.parameters.kicking.approach_ball_standoff = 0.3;
         blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
@@ -421,8 +459,31 @@ mod tests {
             })
         ));
 
-        // With space, wait for the touch to settle, then resume a full shot.
+        // A controlled touch at the feet can continue without waiting for a complete stop.
         blackboard.world_state.obstacles.clear();
+        blackboard.ball.as_mut().unwrap().position = point![0.4, 0.05];
+        blackboard.ball.as_mut().unwrap().velocity = vector![-0.45, 0.0];
+        assert!(is_ready_to_receive_kick(&blackboard));
+        crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick { quick: true, ball_velocity, .. })
+                if ball_velocity == vector![-0.45, 0.0]
+        ));
+        for (position, velocity) in [
+            (point![0.4, 0.3], vector![-0.45, 0.0]),
+            (point![0.8, 0.0], vector![-0.45, 0.0]),
+            (point![0.4, 0.05], vector![-1.0, 0.0]),
+        ] {
+            let ball = blackboard.ball.as_mut().unwrap();
+            ball.position = position;
+            ball.velocity = velocity;
+            assert!(!is_ready_to_receive_kick(&blackboard));
+            assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
+        }
+
+        // Settled possession also resumes the ordinary action immediately.
+        blackboard.ball.as_mut().unwrap().position = point![0.4, 0.05];
         blackboard.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
         blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(1);
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);

@@ -55,7 +55,13 @@ pub fn kickoff_receiver_position(blackboard: &Blackboard) -> Point2<Field> {
         .y()
         .abs()
         .max(blackboard.field_dimensions.center_circle_diameter / 2.0 + radius + 0.05)
-        + radius;
+        + radius
+        + blackboard
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .receiver_standoff;
     kickoff_support_position(
         blackboard,
         point![
@@ -73,15 +79,16 @@ fn kickoff_pass_position(blackboard: &Blackboard) -> Option<Point2<Field>> {
     let ball = blackboard.ball.as_ref()?.position;
     let staged = kickoff_receiver_position(blackboard);
     let direction = (staged - ball).try_normalize(f32::EPSILON)?;
-    let target = staged
-        - direction
-            * blackboard
-                .parameters
-                .kicking
-                .strategy
-                .passing
-                .receiver_standoff;
-    Some(point![0.05, target.y()])
+    Some(
+        staged
+            - direction
+                * blackboard
+                    .parameters
+                    .kicking
+                    .strategy
+                    .passing
+                    .receiver_standoff,
+    )
 }
 
 pub(crate) fn kickoff_receiving_pose(blackboard: &Blackboard) -> Option<Pose2<Field>> {
@@ -237,7 +244,7 @@ fn player_pose(
         .then_some(state.inner.pose)
 }
 
-/// Kickoff leads the receiver slightly forward, while retaining receiver and corridor checks.
+/// Kickoff permits a sideways/backwards pass, while retaining receiver and corridor checks.
 pub(super) fn kickoff_pass_target(
     blackboard: &Blackboard,
     receiver: PlayerNumber,
@@ -429,6 +436,7 @@ mod tests {
             maximum_dribble_distance: 1.0,
             obstacle_clearance: 0.1,
             minimum_shot_angle: 0.02,
+            preferred_shot_angle: 0.0,
             shot_angle_hysteresis: 0.05,
             pressure_distance: 0.8,
             clear_goal_distance: 1.5,
@@ -514,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn side_parameter_mirrors_legal_receiver_and_forward_pass() {
+    fn side_parameter_mirrors_wider_legal_receiver_and_backward_pass() {
         let mut board = blackboard();
         board.field_dimensions.length = 14.0;
         board.field_dimensions.width = 9.0;
@@ -523,7 +531,8 @@ mod tests {
         let right_position = kickoff_receiver_position(&board);
         let minimum_y = board.field_dimensions.center_circle_diameter / 2.0
             + 2.0 * board.parameters.walking.path_planning.robot_radius
-            + 0.05;
+            + 0.05
+            + board.parameters.kicking.strategy.passing.receiver_standoff;
         assert!(right_position.y().abs() >= minimum_y - 1e-5);
         let right_stance = kickoff_receiving_pose(&board).unwrap();
         board
@@ -536,12 +545,15 @@ mod tests {
             .pose = right_stance;
         assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Five));
         let right = kickoff_pass_target(&board, PlayerNumber::Five).unwrap();
-        assert!(right.x() > 0.0 && right.x() <= 0.3 && right.y() < 0.0);
+        assert!(right.x() < 0.0 && right.y() < 0.0);
         assert!((right - right_position).norm() <= 0.9);
+        let incoming = (right - Point2::origin()).normalize();
         assert!(
-            LineSegment(Point2::origin(), right).distance_to(right_position)
-                > board.parameters.walking.path_planning.robot_radius
-                    + board.field_dimensions.ball_radius
+            (right_position
+                - right
+                - incoming * board.parameters.kicking.strategy.passing.receiver_standoff)
+                .norm()
+                < 1e-5
         );
         board.parameters.kickoff.pass_to_left = true;
         let left_position = kickoff_receiver_position(&board);
@@ -706,14 +718,14 @@ mod tests {
         assert_eq!(tree.tick_with_trace(&mut receiver).0, Status::Success);
         let receiving_pose = kickoff_receiving_pose(&receiver).unwrap();
         let body_radius = receiver.parameters.walking.path_planning.robot_radius / 2.0;
-        assert!(receiving_pose.position().x() > target.x());
+        assert!((receiving_pose.position() - target).norm() < 1e-5);
         assert!(
             receiving_pose.position().x() + body_radius + receiver.field_dimensions.ball_radius
                 <= f32::EPSILON
         );
         assert!(receiving_pose.position().coords().norm() - body_radius > 1.5);
         let Some(BodyMotion::Walk { ref path, .. }) = receiver.body_motion else {
-            panic!("receiver must step into its Playing stance before the kick");
+            panic!("receiver must align its Playing stance before the kick");
         };
         let PathSegment::LineSegment(segment) = path.last_segment() else {
             panic!("expected direct approach to receiving stance");
@@ -768,7 +780,7 @@ mod tests {
             .inner
             .pose = settled_pose;
         let pass_target = kickoff_pass_target(&striker, PlayerNumber::Three).unwrap();
-        assert_eq!(pass_target.x(), 0.05);
+        assert!(pass_target.x() < 0.0);
         let passing = &striker.parameters.kicking.strategy.passing;
         assert!(
             (pass_target - target).norm()

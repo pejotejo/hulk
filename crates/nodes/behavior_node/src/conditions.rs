@@ -14,7 +14,10 @@ use voronoi::Ownership;
 
 use crate::{
     goalkeeper::goalkeeper_clearance_target,
-    kick::{kick_ball_position_in_ground, passing::is_pass_receiver},
+    kick::{
+        kick_ball_position_in_ground,
+        passing::{is_pass_receiver, outgoing_pass_in_flight},
+    },
     node::{Blackboard, ball_timeout},
     substates::is_in_sub_state,
 };
@@ -190,6 +193,7 @@ pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool
 pub fn is_finishing_striker_kick(blackboard: &mut Blackboard) -> bool {
     let now = blackboard.world_state.now;
     blackboard.last_closest_to_ball
+        && !outgoing_pass_in_flight(blackboard)
         && blackboard.last_motion_type == Some(MotionType::Kick)
         && blackboard.last_motion_switch_time <= now
         && now.duration_since(blackboard.last_motion_switch_time) < Duration::from_millis(1500)
@@ -283,6 +287,17 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 }
 
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
+    if outgoing_pass_in_flight(blackboard)
+        || (!blackboard.last_closest_to_ball
+            && blackboard.player_number
+                != blackboard.parameters.goalkeeper.player_number
+            && teammate_controls_ball(blackboard))
+    {
+        blackboard.last_closest_to_ball = false;
+        blackboard.closest_to_ball_entered_area_since = None;
+        blackboard.closest_to_ball_left_area_since = None;
+        return false;
+    }
     let own_player_number = blackboard.player_number;
 
     let raw_is_closest = is_finishing_striker_kick(blackboard)
@@ -327,6 +342,54 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
 
     blackboard.last_closest_to_ball = is_closest;
     is_closest
+}
+
+fn teammate_controls_ball(blackboard: &Blackboard) -> bool {
+    let world = &blackboard.world_state;
+    let (Some(ball), Some(transform)) = (&blackboard.ball, world.robot.ground_to_field) else {
+        return false;
+    };
+    if ball.age > world.now
+        || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+        || !ball
+            .position
+            .inner
+            .iter()
+            .chain(transform.translation().inner.iter())
+            .all(|value| value.is_finite())
+    {
+        return false;
+    }
+    let own_distance = (transform.as_pose().position() - ball.position).norm();
+    world.player_states.iter().any(|(number, state)| {
+        number != world.robot.player_number
+            && number != blackboard.parameters.goalkeeper.player_number
+            && world
+                .filtered_game_controller_state
+                .as_ref()
+                .is_none_or(|game| game.penalties[number].is_none())
+            && state.as_ref().is_some_and(|state| {
+                let distance = (state.inner.pose.position() - ball.position).norm();
+                state.time <= world.now
+                    && world.now.duration_since(state.time)
+                        < blackboard
+                            .parameters
+                            .kicking
+                            .strategy
+                            .passing
+                            .maximum_receiver_age
+                    && state
+                        .inner
+                        .pose
+                        .position()
+                        .inner
+                        .iter()
+                        .all(|value| value.is_finite())
+                    && distance <= blackboard.parameters.kicking.kick_activation_distance
+                    && distance + blackboard.parameters.kicking.approach_ball_standoff
+                        < own_distance
+            })
+    })
 }
 
 fn posture(blackboard: &Blackboard) -> Option<Posture> {
@@ -450,7 +513,12 @@ pub fn is_simple(blackboard: &mut Blackboard) -> bool {
 mod tests {
     use super::*;
     use crate::node::LastBall;
-    use types::{field_dimensions::Side, world_state::BallSource};
+    use hsl_network_messages::{Penalty, PlayerNumber};
+    use types::{
+        field_dimensions::Side,
+        time_wrapper::TimeWrapper,
+        world_state::{BallSource, PlayerState},
+    };
 
     #[test]
     fn incoming_ball_claims_its_region_without_waiting_for_entry_dwell() {
@@ -491,6 +559,77 @@ mod tests {
         assert!(is_closest_to_ball(&mut board));
         board.world_state.now = board.world_state.now + Duration::from_millis(150);
         assert!(!is_closest_to_ball(&mut board));
+    }
+
+    #[test]
+    fn new_striker_defers_to_teammate_controlling_ball_despite_raw_ownership() {
+        let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
+        map.multi_source_dijkstra(&[(linear_algebra::Pose2::default(), PlayerNumber::Two)]);
+        let mut board = Blackboard {
+            voronoi_map: Some(map),
+            ..Default::default()
+        };
+        board.world_state.now = board.world_state.now + Duration::from_secs(1);
+        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(1);
+        board.ball = Some(LastBall {
+            position: point![1.2, 0.0],
+            velocity: Default::default(),
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        board.world_state.player_states.three = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: point![1.0, 0.0].into(),
+                ..Default::default()
+            },
+        });
+        assert!(!is_closest_to_ball(&mut board));
+        assert!(board.closest_to_ball_entered_area_since.is_none());
+        for case in 0..6 {
+            let mut available = board.clone();
+            let peer = available.world_state.player_states.three.as_mut().unwrap();
+            match case {
+                0 => peer.time = Default::default(),
+                1 => peer.inner.pose = point![-2.0, 0.0].into(),
+                2 => {
+                    available.world_state.filtered_game_controller_state =
+                        Some(FilteredGameControllerState {
+                            penalties: types::players::Players {
+                                three: Some(Penalty::PickUp {
+                                    remaining: Duration::from_secs(1),
+                                }),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        });
+                }
+                3 => peer.time = available.world_state.now + Duration::from_secs(1),
+                4 => peer.inner.pose = point![f32::NAN, 0.0].into(),
+                _ => {
+                    available.world_state.robot.ground_to_field = Some(
+                        linear_algebra::Isometry2::from_parts(vector![1.1, 0.0], 0.0),
+                    )
+                }
+            }
+            assert!(is_closest_to_ball(&mut available), "eligibility {case}");
+        }
+        board.last_closest_to_ball = true;
+        board.last_motion_type = Some(MotionType::Kick);
+        assert!(is_finishing_striker_kick(&mut board));
+        assert!(is_closest_to_ball(&mut board));
     }
 
     #[test]

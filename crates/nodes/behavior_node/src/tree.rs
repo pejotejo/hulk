@@ -401,6 +401,99 @@ mod clearance_tests {
     }
 
     #[test]
+    fn launched_pass_hands_off_striker_and_controlled_receiver_kicks_immediately() {
+        let tree = create_tree();
+        let mut sender = three_players();
+        sender.world_state.robot.ground_to_field = Some(Default::default());
+        sender
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = point![0.0, 0.0].into();
+        sender
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = point![3.5, 0.0].into();
+        sender.ball.as_mut().unwrap().position = point![0.5, 0.0];
+        sender.ball.as_mut().unwrap().velocity = vector![2.0, 0.0];
+        sender.last_motion_type = Some(MotionType::Kick);
+        sender.last_motion_switch_time = sender.world_state.now - Duration::from_millis(500);
+        sender.ball_action = Some(BallAction::Pass {
+            receiver: PlayerNumber::Three,
+        });
+        sender.last_announced_pass = Some(TimeWrapper {
+            time: sender.world_state.now - Duration::from_millis(200),
+            inner: PassIntent {
+                receiver: PlayerNumber::Three,
+                target: point![3.0, 0.0],
+            },
+        });
+        sender.last_sent_hsl_message_time = Some(sender.last_announced_pass.as_ref().unwrap().time);
+        let (_, trace) = tree.tick_with_trace(&mut sender);
+        assert!(succeeded(&trace, "walk_to_voronoi_position"));
+        assert!(!succeeded(&trace, "is_finishing_striker_kick"));
+        assert!(!sender.last_closest_to_ball);
+        assert!(!matches!(sender.body_motion, Some(BodyMotion::Kick { .. })));
+
+        let mut receiver = sender.clone();
+        receiver.world_state.robot.player_number = PlayerNumber::Three;
+        receiver.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![3.5, 0.0], std::f32::consts::PI).as_transform());
+        receiver
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pass = Some(sender.last_announced_pass.as_ref().unwrap().inner);
+        receiver.last_announced_pass = None;
+        receiver.last_motion_type = Some(MotionType::Walk);
+        receiver.ball_action = None;
+        receiver.ball.as_mut().unwrap().position = point![3.2, 0.0];
+        receiver.ball.as_mut().unwrap().velocity = vector![0.45, 0.0];
+        let (_, trace) = tree.tick_with_trace(&mut receiver);
+        assert!(succeeded(&trace, "is_pass_ball_arriving"));
+        assert!(receiver.last_closest_to_ball);
+        assert!(succeeded(&trace, "receive_rolling_ball"));
+        assert!(!matches!(
+            receiver.body_motion,
+            Some(BodyMotion::Kick { .. })
+        ));
+
+        let mut aligned = receiver.clone();
+        aligned.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![3.1, 0.0], 0.0).as_transform());
+        aligned.ball.as_mut().unwrap().position = point![3.4, 0.0];
+        aligned.ball.as_mut().unwrap().velocity = vector![-0.45, 0.0];
+        aligned.ball_action = None;
+        tree.tick_with_trace(&mut aligned);
+        assert!(matches!(
+            aligned.ball_action,
+            Some(BallAction::Shoot { .. })
+        ));
+        assert!(matches!(
+            aligned.body_motion,
+            Some(BodyMotion::Kick { quick: true, .. })
+        ));
+
+        // A receiver facing the sender waits for the stop and lets the normal policy align.
+        receiver.ball.as_mut().unwrap().velocity = vector![0.2, 0.0];
+        tree.tick_with_trace(&mut receiver);
+        assert!(matches!(
+            receiver.body_motion,
+            Some(BodyMotion::Kick { quick: false, .. })
+        ));
+    }
+
+    #[test]
     fn three_players_clear_then_yield_even_after_projected_possession_claim() {
         let tree = create_tree();
         let mut keeper = three_players();

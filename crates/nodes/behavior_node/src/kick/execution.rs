@@ -89,7 +89,11 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     {
         strong = previous;
     }
-    let target_speed = kicking.target_speed;
+    let target_speed = if blackboard.ball_action == Some(BallAction::Dribble) {
+        kicking.dribble_target_speed.min(kicking.target_speed)
+    } else {
+        kicking.target_speed
+    };
     let receiving = super::reception::is_receiving_ball(blackboard);
     let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
     let quick = (receiving
@@ -159,7 +163,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     status
 }
 
-pub(super) fn resolve_target(blackboard: &mut Blackboard) -> Option<Point2<Field>> {
+pub(super) fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
     let action = blackboard.ball_action?;
     let transform = blackboard.world_state.robot.ground_to_field?;
     let ball = transform * kick_ball_position_in_ground(blackboard, &transform)?;
@@ -312,7 +316,7 @@ fn resolve_action_target(
         .map(|(target, _)| target)
 }
 
-fn goalward_target(
+pub(super) fn goalward_target(
     ball: Point2<Field>,
     goal: Point2<Field>,
     opening: LineSegment<Field>,
@@ -436,6 +440,25 @@ mod tests {
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick { strong: false, .. })
+        ));
+
+        blackboard.ball_action = Some(BallAction::Dribble);
+        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard
+            .parameters
+            .kicking
+            .strategy
+            .maximum_dribble_distance = 1.0;
+        blackboard.parameters.kicking.dribble_target_speed = 1.2;
+        execute_ball_action(&mut blackboard);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                soft: false,
+                target_speed: 1.2,
+                ..
+            })
         ));
     }
 }

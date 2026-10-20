@@ -30,6 +30,7 @@ pub(crate) fn matches_announced_pass(blackboard: &Blackboard, pass: PassIntent) 
         .as_ref()
         .is_some_and(|announced| {
             announced.time <= now
+                && now.duration_since(announced.time) < PassIntent::TIMEOUT
                 && announced.inner.receiver == pass.receiver
                 && (announced.inner.target - pass.target).norm() <= parameters.target_half_width
         })
@@ -57,8 +58,90 @@ pub(super) fn is_executing_announced_pass(blackboard: &Blackboard, receiver: Pla
         })
 }
 
+pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
+    let world = &blackboard.world_state;
+    let (Some(announced), Some(ball), Some(transform)) = (
+        blackboard.last_announced_pass.as_ref(),
+        blackboard.ball.as_ref(),
+        world.robot.ground_to_field,
+    ) else {
+        return false;
+    };
+    let pass = announced.inner;
+    let parameters = &blackboard.parameters.kicking.strategy.passing;
+    let Some(receiver) = world.player_states[pass.receiver].as_ref() else {
+        return false;
+    };
+    if parameters.validate().is_err()
+        || parameters.maximum_distance <= 0.0
+        || world.robot.primary_state != types::primary_state::PrimaryState::Playing
+        || pass.receiver == world.robot.player_number
+        || pass.receiver == blackboard.parameters.goalkeeper.player_number
+        || (blackboard.last_motion_type != Some(MotionType::Kick)
+            && blackboard.ball_action.is_some())
+        || blackboard.ball_action.is_some_and(|action| {
+            action
+                != super::strategy::BallAction::Pass {
+                    receiver: pass.receiver,
+                }
+        })
+        || announced.time > world.now
+        || world.now.duration_since(announced.time) >= PassIntent::TIMEOUT
+        || !matches_announced_pass(blackboard, pass)
+        || ball.age > world.now
+        || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+        || receiver.time > world.now
+        || world.now.duration_since(receiver.time) >= parameters.maximum_receiver_age
+        || world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| game.penalties[pass.receiver].is_some())
+        || !ball
+            .position
+            .inner
+            .iter()
+            .chain(ball.velocity.inner.iter())
+            .chain(pass.target.inner.iter())
+            .chain(receiver.inner.pose.position().inner.iter())
+            .chain(transform.translation().inner.iter())
+            .all(|value| value.is_finite())
+        || pass.target.x().abs() >= blackboard.field_dimensions.length / 2.0
+        || pass.target.y().abs() >= blackboard.field_dimensions.width / 2.0
+        || receiver.inner.pose.position().x().abs() >= blackboard.field_dimensions.length / 2.0
+        || receiver.inner.pose.position().y().abs() >= blackboard.field_dimensions.width / 2.0
+    {
+        return false;
+    }
+    let position = transform.as_pose().position();
+    let to_ball = ball.position - position;
+    let to_target = pass.target - position;
+    let Some(direction) = to_target.try_normalize(f32::EPSILON) else {
+        return false;
+    };
+    let contact = blackboard.parameters.kicking.approach_ball_standoff
+        + blackboard.field_dimensions.ball_radius;
+    let corridor = parameters.target_half_width
+        + blackboard.parameters.walking.path_planning.robot_radius
+        + blackboard.field_dimensions.ball_radius;
+    // The announced recipient owns this launch; recover if it stops, reverses, or misses its lane.
+    to_target.norm() <= parameters.maximum_distance + parameters.receiver_standoff
+        && (receiver.inner.pose.position() - pass.target).norm()
+            <= parameters.receiver_standoff + blackboard.parameters.kicking.kick_activation_distance
+        && to_ball.norm() > contact
+        && (receiver.inner.pose.position() - ball.position).norm() > contact
+        && ball.velocity.norm()
+            > blackboard
+                .parameters
+                .ball
+                .interception
+                .minimum_ball_velocity
+        && to_ball.dot(&ball.velocity) > 0.0
+        && (receiver.inner.pose.position() - ball.position).dot(&ball.velocity) > 0.0
+        && (to_ball - direction * to_ball.dot(&direction)).norm() <= corridor
+}
+
 fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)> {
-    if goalkeeper_clearance_direction(blackboard).is_some() {
+    if goalkeeper_clearance_direction(blackboard).is_some() || outgoing_pass_in_flight(blackboard) {
         return None;
     }
     let world = &blackboard.world_state;
@@ -363,6 +446,139 @@ mod tests {
     };
 
     use crate::{kick::reception::is_ready_to_receive_kick, node::LastBall};
+
+    #[test]
+    fn launched_pass_releases_sender_until_received_missed_or_expired() {
+        let mut sender = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Kick),
+            last_closest_to_ball: true,
+            ..Default::default()
+        };
+        sender.world_state.now = sender.world_state.now + Duration::from_secs(1);
+        sender.world_state.robot.player_number = PlayerNumber::Three;
+        sender.world_state.robot.primary_state = types::primary_state::PrimaryState::Playing;
+        sender.world_state.robot.ground_to_field = Some(Default::default());
+        sender.world_state.filtered_game_controller_state = Some(
+            types::filtered_game_controller_state::FilteredGameControllerState {
+                remaining_time_in_half: Duration::from_secs(100),
+                remaining_number_of_messages: 10_000,
+                ..Default::default()
+            },
+        );
+        sender.parameters.goalkeeper.player_number = PlayerNumber::One;
+        sender.parameters.ball.last_ball_timeout = Duration::from_secs(5);
+        sender.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        sender.parameters.ball.closest_to_ball.exit_duration = Duration::from_millis(150);
+        sender.parameters.kicking.approach_ball_standoff = 0.3;
+        sender.parameters.kicking.kick_activation_distance = 1.3;
+        sender.parameters.walking.path_planning.robot_radius = 0.4;
+        let parameters = &mut sender.parameters.kicking.strategy.passing;
+        parameters.maximum_distance = 8.0;
+        parameters.receiver_standoff = 0.5;
+        parameters.target_half_width = 0.2;
+        parameters.maximum_receiver_age = Duration::from_secs(5);
+        sender.ball = Some(LastBall {
+            position: point![0.5, 0.0],
+            velocity: vector![2.0, 0.0],
+            age: sender.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        sender.world_state.player_states.two = Some(TimeWrapper {
+            time: sender.world_state.now,
+            inner: PlayerState {
+                pose: point![3.5, 0.0].into(),
+                ..Default::default()
+            },
+        });
+        sender.last_announced_pass = Some(TimeWrapper {
+            time: sender.world_state.now - Duration::from_millis(200),
+            inner: PassIntent {
+                receiver: PlayerNumber::Two,
+                target: point![3.0, 0.0],
+            },
+        });
+        sender.last_sent_hsl_message_time = Some(sender.last_announced_pass.as_ref().unwrap().time);
+        let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
+        map.multi_source_dijkstra(&[(linear_algebra::Pose2::default(), PlayerNumber::Three)]);
+        sender.voronoi_map = Some(map);
+
+        assert!(outgoing_pass_in_flight(&sender));
+        assert!(!crate::conditions::is_finishing_striker_kick(&mut sender));
+        assert!(!crate::conditions::is_closest_to_ball(&mut sender));
+        // Keep the recipient informed during flight without extending the local handoff.
+        let announced_at = sender.last_announced_pass.as_ref().unwrap().time;
+        let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
+            message,
+        ))) = sender.try_sending_state_message()
+        else {
+            panic!("expected state broadcast")
+        };
+        assert_eq!(
+            message.pass,
+            Some(sender.last_announced_pass.as_ref().unwrap().inner)
+        );
+        assert_eq!(
+            sender.last_announced_pass.as_ref().unwrap().time,
+            announced_at
+        );
+        sender.last_motion_type = Some(MotionType::Walk);
+        sender.world_state.now = sender.world_state.now + Duration::from_millis(200);
+        assert!(!crate::conditions::is_closest_to_ball(&mut sender));
+
+        for case in 0..11 {
+            let mut recovery = sender.clone();
+            match case {
+                0 => recovery.ball.as_mut().unwrap().velocity = Vector2::zeros(),
+                1 => recovery.ball.as_mut().unwrap().velocity = vector![-2.0, 0.0],
+                2 => recovery.ball.as_mut().unwrap().position = point![1.0, 2.0],
+                3 => {
+                    recovery
+                        .world_state
+                        .player_states
+                        .two
+                        .as_mut()
+                        .unwrap()
+                        .time = recovery.world_state.now + Duration::from_secs(1)
+                }
+                4 => recovery.world_state.now = announced_at + PassIntent::TIMEOUT,
+                5 => {
+                    recovery
+                        .world_state
+                        .filtered_game_controller_state
+                        .as_mut()
+                        .unwrap()
+                        .penalties
+                        .two = Some(hsl_network_messages::Penalty::PickUp {
+                        remaining: Duration::from_secs(1),
+                    })
+                }
+                6 => recovery.ball.as_mut().unwrap().position = point![3.2, 0.0],
+                7 => recovery.ball.as_mut().unwrap().position = point![0.3, 0.0],
+                8 => {
+                    recovery.last_announced_pass.as_mut().unwrap().inner.target =
+                        point![f32::NAN, 0.0]
+                }
+                9 => recovery.ball_action = Some(super::super::strategy::BallAction::Clear),
+                _ => {
+                    recovery.ball_action = Some(super::super::strategy::BallAction::Pass {
+                        receiver: PlayerNumber::Two,
+                    });
+                }
+            }
+            assert!(!outgoing_pass_in_flight(&recovery), "recovery {case}");
+        }
+        sender.world_state.now = announced_at + PassIntent::TIMEOUT;
+        let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
+            message,
+        ))) = sender.try_sending_state_message()
+        else {
+            panic!("expected expired pass cancellation")
+        };
+        assert!(message.pass.is_none());
+        assert!(sender.last_announced_pass.is_none());
+    }
 
     #[test]
     fn receiver_follows_measured_pass_after_leaving_announced_target() {

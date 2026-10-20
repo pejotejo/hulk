@@ -236,6 +236,11 @@ fn validate_behavior_parameters(
     if !parameters.kicking.target_speed.is_finite() || parameters.kicking.target_speed < 0.0 {
         errors.push("kicking.target_speed must be finite and non-negative".to_owned());
     }
+    if !parameters.kicking.dribble_target_speed.is_finite()
+        || parameters.kicking.dribble_target_speed < 0.0
+    {
+        errors.push("kicking.dribble_target_speed must be finite and non-negative".to_owned());
+    }
     if !parameters.kicking.receiving_opponent_distance.is_finite()
         || parameters.kicking.receiving_opponent_distance < 0.0
     {
@@ -554,9 +559,6 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         let (status, trace) = block_in_place(|| tree.tick_with_trace(&mut blackboard));
         if blackboard.kick_target.is_none() {
             blackboard.ball_action = None;
-        }
-        if !matches!(blackboard.ball_action, Some(BallAction::Pass { .. })) {
-            blackboard.last_announced_pass = None;
         }
         let motion_command: MotionCommand = assemble_motion_command(&blackboard, status)?;
 
