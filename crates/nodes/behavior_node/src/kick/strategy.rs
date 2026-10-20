@@ -5,11 +5,15 @@ use hsl_network_messages::{PlayerNumber, SubState, Team};
 use linear_algebra::{Isometry2, Point2, point};
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
-use types::behavior_tree::Status;
+use types::{
+    behavior_tree::Status,
+    obstacles::{Obstacle, ObstacleKind},
+};
 
 use crate::{conditions::opponent_near_ball, node::Blackboard};
 
 use super::{
+    execution::goalward_target,
     geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings, travel_openings},
     kick_ball_position_in_ground, pass_receiver_position,
     passing::is_executing_announced_pass,
@@ -116,7 +120,7 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         Some(SubState::ThrowIn | SubState::IndirectFreeKick)
     );
     let range = parameters.maximum_shot_distance;
-    if can_shoot && range.is_finite() && range > goal_x - ball.x() {
+    let shot = if can_shoot && range.is_finite() && range > goal_x - ball.x() {
         // Clip regions to reachable goal points before rating their angular width.
         let reachable_y = (range.powi(2) - (goal_x - ball.x()).powi(2)).sqrt();
         let mut best = None;
@@ -148,12 +152,55 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
                 retained = Some((opening, angle));
             }
         }
-        if let Some((opening, angle)) = best {
-            let opening = retained
+        best.map(|(opening, angle)| {
+            retained
                 .filter(|(_, old_angle)| angle <= old_angle + parameters.shot_angle_hysteresis)
-                .map_or(opening, |(opening, _)| opening);
+                .unwrap_or((opening, angle))
+        })
+    } else {
+        None
+    };
+
+    if let Some((opening, angle)) = shot {
+        if angle >= parameters.preferred_shot_angle {
             return Some(BallAction::Shoot { opening });
         }
+        if let Some(BallAction::Pass { receiver }) = pass
+            && let Some(position) = pass_receiver_position(blackboard, ball, receiver)
+            && receiver_has_space(blackboard, position, ground_to_field)
+            && (receiver_goal_angle(blackboard, position, ground_to_field) > angle
+                || position.x() - ball.x() > parameters.passing.minimum_progress)
+        {
+            return pass;
+        }
+        let goal = point![goal_x, 0.0];
+        if !under_pressure
+            && travel_openings(
+                ball,
+                ground_to_field,
+                &world.obstacles,
+                field,
+                parameters.maximum_dribble_distance,
+                parameters.obstacle_clearance,
+            )
+            .into_iter()
+            .map(|opening| goalward_target(ball, goal, opening))
+            .min_by(|a, b| {
+                (a - ball)
+                    .angle(&(goal - ball))
+                    .total_cmp(&(b - ball).angle(&(goal - ball)))
+            })
+            .is_some_and(|target| {
+                target.x() > ball.x()
+                    && (goal - target).norm() < (goal - ball).norm()
+                    && visible_goal_angle(blackboard, target, ground_to_field, &world.obstacles)
+                        > angle
+            })
+        {
+            return Some(BallAction::Dribble);
+        }
+        // A narrow, clear shot still beats waiting when neither pass nor dribble improves it.
+        return Some(BallAction::Shoot { opening });
     }
 
     if let Some(pass) = pass {
@@ -184,7 +231,7 @@ fn choose_pass(
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
     let previous = blackboard.ball_action;
-    let mut best = None;
+    let mut best: Option<(PlayerNumber, f32, f32, bool)> = None;
     let mut retained = None;
     for (receiver, _) in world.player_states.iter() {
         let Some(position) = pass_receiver_position(blackboard, ball, receiver) else {
@@ -195,7 +242,10 @@ fn choose_pass(
             .as_ref()
             .is_some_and(|game| {
                 game.kicking_team == Some(Team::Hulks)
-                    && game.sub_state == Some(SubState::CornerKick)
+                    && matches!(
+                        game.sub_state,
+                        Some(SubState::CornerKick | SubState::ThrowIn)
+                    )
             })
             && !is_executing_announced_pass(blackboard, receiver)
             && !crate::substates::restart_pass_is_open(blackboard, position)
@@ -219,20 +269,90 @@ fn choose_pass(
             return Some(BallAction::Pass { receiver });
         }
         let progress = position.x() - ball.x();
-        if best.is_none_or(|(_, best_progress)| progress > best_progress) {
-            best = Some((receiver, progress));
+        let angle = receiver_goal_angle(blackboard, position, ground_to_field);
+        let space = receiver_has_space(blackboard, position, ground_to_field);
+        if best.is_none_or(|(_, best_angle, best_progress, best_space)| {
+            (space && !best_space)
+                || (space == best_space
+                    && (angle > best_angle + parameters.shot_angle_hysteresis
+                        || (angle + parameters.shot_angle_hysteresis >= best_angle
+                            && progress > best_progress)))
+        }) {
+            best = Some((receiver, angle, progress, space));
         }
         if previous == Some(BallAction::Pass { receiver }) {
-            retained = Some((receiver, progress));
+            retained = Some((receiver, angle, progress, space));
         }
     }
-    best.map(|(receiver, progress)| {
+    best.map(|(receiver, angle, progress, space)| {
         let receiver = retained
-            .filter(|(_, old_progress)| {
-                progress <= old_progress + parameters.passing.selection_hysteresis
+            .filter(|(_, old_angle, old_progress, old_space)| {
+                (!space || *old_space)
+                    && angle <= old_angle + parameters.shot_angle_hysteresis
+                    && progress <= old_progress + parameters.passing.selection_hysteresis
             })
-            .map_or(receiver, |(receiver, _)| receiver);
+            .map_or(receiver, |(receiver, _, _, _)| receiver);
         BallAction::Pass { receiver }
+    })
+}
+
+fn visible_goal_angle(
+    blackboard: &Blackboard,
+    position: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+    obstacles: &[Obstacle],
+) -> f32 {
+    goal_openings(
+        position,
+        ground_to_field,
+        obstacles,
+        &blackboard.field_dimensions,
+        blackboard.parameters.kicking.strategy.obstacle_clearance,
+    )
+    .into_iter()
+    .map(|opening| LineSegment(position, opening.0).angle(LineSegment(position, opening.1)))
+    .fold(0.0, f32::max)
+}
+
+fn is_receiver_obstacle(
+    obstacle: &Obstacle,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> bool {
+    matches!(
+        obstacle.kind,
+        ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+    ) && (ground_to_field * obstacle.position - receiver).norm() <= obstacle.radius_at_foot_height
+}
+
+fn receiver_goal_angle(
+    blackboard: &Blackboard,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> f32 {
+    let obstacles: Vec<_> = blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .filter(|obstacle| !is_receiver_obstacle(obstacle, receiver, ground_to_field))
+        .copied()
+        .collect();
+    visible_goal_angle(blackboard, receiver, ground_to_field, &obstacles)
+}
+
+fn receiver_has_space(
+    blackboard: &Blackboard,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> bool {
+    blackboard.world_state.obstacles.iter().all(|obstacle| {
+        !matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) || is_receiver_obstacle(obstacle, receiver, ground_to_field)
+            || (ground_to_field * obstacle.position - receiver).norm()
+                - obstacle.radius_at_foot_height
+                > blackboard.parameters.kicking.strategy.pressure_distance
     })
 }
 
@@ -282,6 +402,7 @@ mod tests {
             maximum_dribble_distance: 3.0,
             obstacle_clearance: 0.05,
             minimum_shot_angle: 0.02,
+            preferred_shot_angle: 0.0,
             shot_angle_hysteresis: 0.05,
             pressure_distance: 0.8,
             clear_goal_distance: 1.5,
@@ -325,6 +446,81 @@ mod tests {
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.0, 0.0], 0.2, 0.25)];
         blackboard
+    }
+
+    #[test]
+    fn narrow_goal_openings_prefer_useful_passes_or_short_forward_dribbles() {
+        let mut board = passing_blackboard();
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.field_dimensions.goal_inner_width = 2.4;
+        board.field_dimensions.ball_radius = 0.105;
+        board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        board.parameters.kicking.strategy.maximum_dribble_distance = 1.0;
+        board.parameters.kicking.strategy.preferred_shot_angle = 0.12;
+        board.parameters.kicking.strategy.passing.maximum_distance = 8.0;
+        board.parameters.kicking.strategy.passing.minimum_progress = 0.0;
+        let keeper = Obstacle::robot(point![6.6, 0.0], 0.2, 0.2);
+        for receiver in [point![2.5, 2.0], point![0.0, 2.5]] {
+            board
+                .world_state
+                .player_states
+                .two
+                .as_mut()
+                .unwrap()
+                .inner
+                .pose = Pose2::new(receiver, 0.0);
+            board.world_state.obstacles = vec![
+                keeper,
+                Obstacle::robot(
+                    board.world_state.robot.ground_to_field.unwrap().inverse() * receiver,
+                    0.2,
+                    0.2,
+                ),
+            ];
+            board.ball_action = None;
+            select_ball_action(&mut board);
+            assert_eq!(
+                board.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Two
+                }),
+                "receiver at {receiver:?}"
+            );
+        }
+
+        // A wider pass still needs a clear corridor and room to control the reception.
+        for opponent in [point![0.0, 1.2], point![0.0, 3.2]] {
+            board.world_state.obstacles = vec![
+                keeper,
+                Obstacle::robot(point![0.0, 2.5], 0.2, 0.2),
+                Obstacle::robot(opponent, 0.2, 0.2),
+            ];
+            board.ball_action = None;
+            select_ball_action(&mut board);
+            assert_eq!(board.ball_action, Some(BallAction::Dribble));
+        }
+
+        board.world_state.player_states.two = None;
+        board.world_state.obstacles = vec![keeper];
+        board.ball_action = None;
+        select_ball_action(&mut board);
+        assert_eq!(board.ball_action, Some(BallAction::Dribble));
+
+        // Do not wait indefinitely when no improving dribble or pass is available.
+        board.parameters.kicking.strategy.maximum_dribble_distance = 0.0;
+        select_ball_action(&mut board);
+        assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+
+        // Close openings and an unguarded goal remain immediate shots.
+        board.parameters.kicking.strategy.maximum_dribble_distance = 1.0;
+        board.ball.as_mut().unwrap().position = point![4.0, 0.0];
+        select_ball_action(&mut board);
+        assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+        board.ball.as_mut().unwrap().position = point![0.0, 0.0];
+        board.world_state.obstacles.clear();
+        select_ball_action(&mut board);
+        assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
     }
 
     #[test]
@@ -466,7 +662,7 @@ mod tests {
                 panic!("expected a fresh shot from x={ball_x}");
             };
             assert!(opening.0.y() * opening.1.y() > 0.0);
-            let target = crate::kick::execution::resolve_target(&mut board).unwrap();
+            let target = crate::kick::execution::resolve_target(&board).unwrap();
             assert!(LineSegment(ball, target).distance_to(keeper) > 0.355);
 
             board.world_state.obstacles[0].radius_at_foot_height = 2.0;

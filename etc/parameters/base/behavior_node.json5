@@ -69,6 +69,7 @@
       maximum_dribble_distance: 3.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,
+      preferred_shot_angle: 0.12,
       shot_angle_hysteresis: 0.05,
       pressure_distance: 0.8,
       clear_goal_distance: 1.5,
@@ -76,9 +77,9 @@
       passing: {
         // Provisional regular-kick reach; calibrate at target_speed before deployment.
         maximum_distance: 8.0,
-        minimum_progress: 0.25,
+        minimum_progress: 0.0,
         receiver_standoff: 0.5,
-        target_half_width: 0.2,
+        target_half_width: 0.3,
         selection_hysteresis: 0.25,
         maximum_receiver_age: { secs: 3, nanos: 0 },
       },
@@ -86,6 +87,7 @@
     soft: false,
     quick: false,
     target_speed: 3.4, // Desired outgoing ball speed in m/s.
+    dribble_target_speed: 0.5,
     allow_strong_kicks: true,
     kick_activation_distance: 1.3,
     kick_activation_hysteresis: 0.3,

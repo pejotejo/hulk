@@ -91,9 +91,15 @@ impl Blackboard {
             && game_controller_state
                 .sub_state
                 .is_some_and(|state| state != SubState::PenaltyKick);
+        let outgoing_pass = crate::kick::passing::outgoing_pass_in_flight(self);
+        let cancelling_pass = self.last_announced_pass.is_some()
+            && !outgoing_pass
+            && !matches!(self.ball_action, Some(BallAction::Pass { .. }));
         if matches!(self.ball_action, Some(BallAction::Pass { .. }))
             || preparing_kickoff
             || preparing_restart
+            || outgoing_pass
+            || cancelling_pass
         {
             // Keep pass preparation inside receiver freshness without spending the reserved budget.
             let preparation_interval = (self
@@ -105,6 +111,9 @@ impl Blackboard {
                 / 2)
             .clamp(Duration::from_millis(100), PassIntent::TIMEOUT / 2);
             send_interval = send_interval.min(preparation_interval);
+        }
+        if cancelling_pass {
+            send_interval = Duration::ZERO;
         }
         if !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval) {
             return None;
@@ -133,7 +142,13 @@ impl Blackboard {
                     })
                 }
                 _ => None,
-            };
+            }
+            .or_else(|| {
+                self.last_announced_pass
+                    .as_ref()
+                    .filter(|_| outgoing_pass)
+                    .map(|pass| pass.inner)
+            });
             let announcement_time = pass
                 .filter(|pass| matches_announced_pass(self, *pass))
                 .and_then(|_| self.last_announced_pass.as_ref().map(|pass| pass.time))

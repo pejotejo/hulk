@@ -139,6 +139,18 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
     {
         return false;
     }
+    if blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()
+        .is_some_and(|game| {
+            game.kicking_team == Some(Team::Hulks) && game.sub_state == Some(SubState::ThrowIn)
+        })
+        && (receiver.x() - ball.position.x()).abs()
+            < 1.5 * support_distance - parameters.passing.receiver_standoff
+    {
+        return false;
+    }
     let players = restart_players(blackboard);
     let Some((taker_number, taker)) = players.iter().min_by(|(_, a), (_, b)| {
         (*a - ball.position)
@@ -220,7 +232,7 @@ pub(crate) fn restart_pass_receiver(
     let backward = if game.sub_state == Some(SubState::CornerKick) {
         2.0
     } else {
-        1.0
+        1.5
     };
     for (forward, inward) in [(backward, 1.0), (backward + 1.0, 1.0), (backward, 2.0)] {
         let target = point![
@@ -836,6 +848,7 @@ mod tests {
             (SubState::CornerKick, point![7.0, 4.5], false),
             (SubState::CornerKick, point![7.0, -4.5], false),
             (SubState::CornerKick, point![7.0, 4.5], true),
+            (SubState::ThrowIn, point![-1.5, 4.5], false),
             (SubState::ThrowIn, point![-1.5, 4.5], true),
         ] {
             let mut taker = restart(state, ball);
@@ -912,6 +925,11 @@ mod tests {
                     Some(BallAction::Pass { .. })
                 ));
                 assert_eq!(shallow.body_motion, Some(BodyMotion::Stand));
+            } else {
+                assert!(
+                    (target.x() - ball.x()).abs()
+                        >= 1.5 * taker.parameters.voronoi.ball_support_distance
+                );
             }
 
             let mut receiver = taker.clone();
@@ -1016,7 +1034,7 @@ mod tests {
             (
                 SubState::ThrowIn,
                 point![-1.5, 4.5],
-                point![-3.0, -0.5],
+                point![-3.5, -0.5],
                 point![-1.2, 4.2],
             ),
             (
