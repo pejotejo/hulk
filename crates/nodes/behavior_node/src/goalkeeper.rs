@@ -1,5 +1,5 @@
 use coordinate_systems::Field;
-use geometry::line_segment::LineSegment;
+use geometry::{Distance, line_segment::LineSegment};
 use hsl_network_messages::SubState;
 use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
 use path_planner::path_planner::PathPlanner;
@@ -10,6 +10,7 @@ use types::{
     motion_type::MotionType,
     obstacles::ObstacleKind,
     path::PathSegment,
+    path_obstacles::PathObstacleShape,
 };
 
 use crate::{
@@ -138,11 +139,38 @@ fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
         );
     }
     planner.with_goal_support_structures(transform.inverse(), dimensions);
-    let approach = LineSegment(Point2::origin(), ball);
-    planner
-        .obstacles
-        .iter()
-        .any(|obstacle| obstacle.shape.intersects_line_segment(approach))
+    let direction = (transform.inverse() * point![dimensions.length / 2.0, 0.0] - ball).normalize();
+    let standoff = blackboard.parameters.kicking.approach_ball_standoff;
+    let stance = ball - direction * standoff;
+    let lateral_error = direction.x() * ball.y() - direction.y() * ball.x();
+    let needs_alignment = stance.coords().norm() > standoff
+        || lateral_error.abs()
+            > blackboard
+                .parameters
+                .walking
+                .walk_and_stand
+                .target_reached_thresholds
+                .x
+                .max(dimensions.ball_radius);
+    let alignment_radius = blackboard
+        .parameters
+        .kicking
+        .kick_activation_distance
+        .min(blackboard.parameters.walking.path_planning.robot_radius + standoff);
+    planner.obstacles.iter().any(|obstacle| {
+        let distance = match obstacle.shape {
+            PathObstacleShape::Circle(circle) => circle.center.coords().norm(),
+            PathObstacleShape::LineSegment(line) => line.distance_to(Point2::origin()),
+        };
+        obstacle
+            .shape
+            .intersects_line_segment(LineSegment(Point2::origin(), ball))
+            || obstacle
+                .shape
+                .intersects_line_segment(LineSegment(Point2::origin(), stance))
+            // Let the planner finish alignment beside a post before handing over to Kick.
+            || (needs_alignment && distance <= alignment_radius)
+    })
 }
 
 fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
@@ -741,10 +769,24 @@ mod tests {
                 let forward = transform * path.forward(Point2::origin());
                 assert!(forward.x() > 0.0, "detour must start toward the field");
 
+                let side_transform = Isometry2::from_parts(vector![-6.55, side * 1.39], 0.0);
+                board.world_state.robot.ground_to_field = Some(side_transform);
+                for obstacle in &mut board.world_state.obstacles {
+                    obstacle.position = side_transform.inverse() * (transform * obstacle.position);
+                }
+                board.world_state.ball.as_mut().unwrap().ball_in_ground =
+                    side_transform.inverse() * ball.position;
+                goalkeeper_subtree().tick_with_trace(&mut board);
+                assert!(
+                    matches!(board.body_motion, Some(BodyMotion::Walk { .. })),
+                    "clear ball line must not hand over before alignment beside the post"
+                );
+
                 let clear_transform = Isometry2::from_parts(vector![-6.9, side * 0.3], 0.0);
                 board.world_state.robot.ground_to_field = Some(clear_transform);
                 for obstacle in &mut board.world_state.obstacles {
-                    obstacle.position = clear_transform.inverse() * (transform * obstacle.position);
+                    obstacle.position =
+                        clear_transform.inverse() * (side_transform * obstacle.position);
                 }
                 board.world_state.ball.as_mut().unwrap().ball_in_ground =
                     clear_transform.inverse() * ball.position;
