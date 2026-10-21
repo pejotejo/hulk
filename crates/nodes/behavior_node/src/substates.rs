@@ -80,7 +80,10 @@ fn restart_players(blackboard: &Blackboard) -> Vec<(PlayerNumber, Point2<Field>)
     game.penalties
         .iter()
         .filter_map(|(player, penalty)| {
-            if penalty.is_some() || player == blackboard.parameters.goalkeeper.player_number {
+            if penalty.is_some()
+                || player == blackboard.parameters.goalkeeper.player_number
+                || Some(player) == blackboard.replacement_goalkeeper_coordinator.keeper()
+            {
                 return None;
             }
             let position = if player == world.robot.player_number {

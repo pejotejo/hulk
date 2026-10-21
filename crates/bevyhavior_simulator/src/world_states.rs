@@ -260,6 +260,7 @@ mod tests {
                 position: point![x + 1.0, y],
             }),
             pass: None,
+            replacement_goalkeeper_claim: false,
         })
     }
 
@@ -406,6 +407,7 @@ mod tests {
                             inner: PlayerState {
                                 pose: Pose2::new(point![1.0, 0.5], 0.0),
                                 pass: None,
+                                replacement_goalkeeper_claim: false,
                                 ball_position: Some(BallPosition::from_network_ball(
                                     hsl_network_messages::BallPosition {
                                         age: Duration::from_millis(500),

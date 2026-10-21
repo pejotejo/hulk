@@ -41,7 +41,8 @@ use types::{
 use voronoi::VoronoiGrid;
 
 use crate::{
-    kick::strategy::BallAction, motion_assembler::assemble_motion_command, tree::create_tree,
+    kick::strategy::BallAction, motion_assembler::assemble_motion_command,
+    replacement_goalkeeper::ReplacementGoalkeeperCoordinator, tree::create_tree,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
@@ -80,6 +81,8 @@ pub struct Blackboard {
     pub last_sent_game_controller_return_message_time: Option<Time>,
     pub last_sent_hsl_message_time: Option<Time>,
     pub last_announced_pass: Option<TimeWrapper<PassIntent>>,
+    pub replacement_goalkeeper_coordinator: ReplacementGoalkeeperCoordinator,
+    pub last_sent_replacement_goalkeeper_claim: bool,
     pub kickoff_receiver_wait_started: Option<Time>,
     pub restart_pass_wait_started: Option<Time>,
     pub kickoff_prepared: bool,
@@ -429,6 +432,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
         last_announced_pass: None,
+        replacement_goalkeeper_coordinator: ReplacementGoalkeeperCoordinator::default(),
+        last_sent_replacement_goalkeeper_claim: false,
         kickoff_receiver_wait_started: None,
         restart_pass_wait_started: None,
         kickoff_prepared: false,

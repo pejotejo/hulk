@@ -34,6 +34,10 @@ use crate::{
     negation,
     node::Blackboard,
     penalty_shootout::{is_penalty_shootout, penalty_shootout_subtree},
+    replacement_goalkeeper::{
+        is_active_replacement_goalkeeper, refresh_replacement_goalkeeper_role,
+        replacement_goalkeeper_subtree,
+    },
     search::leuchtturm,
     selection, sequence,
     substates::{is_in_sub_state, is_sub_state, sub_state_subtree},
@@ -47,7 +51,7 @@ use crate::{
 };
 
 pub fn create_tree() -> Node<Blackboard> {
-    selection!(
+    let behavior = selection!(
         sequence!(
             condition!(is_primary_state, PrimaryState::Damping),
             action!(damping)
@@ -98,7 +102,8 @@ pub fn create_tree() -> Node<Blackboard> {
             subtree!(playing_subtree)
         ),
         Node::Failure
-    )
+    );
+    sequence!(action!(refresh_replacement_goalkeeper_role), behavior)
 }
 
 fn ready_subtree() -> Node<Blackboard> {
@@ -119,6 +124,10 @@ fn playing_subtree() -> Node<Blackboard> {
             subtree!(penalty_shootout_subtree)
         ),
         subtree!(kickoff_subtree),
+        sequence!(
+            condition!(is_active_replacement_goalkeeper),
+            subtree!(replacement_goalkeeper_subtree),
+        ),
         sequence!(
             condition!(should_yield_goalkeeper_clearance),
             subtree!(look_at_ball_subtree),
@@ -398,6 +407,150 @@ mod clearance_tests {
     fn succeeded(trace: &NodeTrace, name: &str) -> bool {
         (trace.name == name && trace.status == Status::Success)
             || trace.children.iter().any(|child| succeeded(child, name))
+    }
+
+    #[test]
+    fn losing_team_packets_keeps_goalkeeper_defending_until_confirmed_alone() {
+        let mut keeper = three_players();
+        keeper.world_state.robot.player_number = PlayerNumber::One;
+        keeper.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![-6.7, 0.0], 0.0).as_transform());
+        keeper.world_state.player_states = types::players::Players::new(None);
+        keeper.parameters.goalkeeper.x_offset = 0.3;
+        keeper.parameters.goalkeeper.distance_to_goalpost = 0.15;
+        keeper.ball.as_mut().unwrap().position = point![-5.5, 0.6];
+        keeper.ball.as_mut().unwrap().velocity = vector![-3.0, -0.8];
+        let (_, trace) = create_tree().tick_with_trace(&mut keeper);
+        assert!(!succeeded(&trace, "is_last_hulk_standing"));
+        assert!(succeeded(&trace, "set_goalkeeper_shot_block_position"));
+
+        let game = keeper
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap();
+        game.penalties = types::players::Players::new(Some(Penalty::PickUp {
+            remaining: Duration::from_secs(30),
+        }));
+        game.penalties.one = None;
+        assert!(is_last_hulk_standing(&mut keeper));
+        keeper.world_state.filtered_game_controller_state = None;
+        assert!(is_last_hulk_standing(&mut keeper));
+    }
+
+    #[test]
+    fn replacement_covers_goal_instead_of_chasing_and_returns_to_field_on_recovery() {
+        let tree = create_tree();
+        let mut board = three_players();
+        board.parameters.network.hsl_striker_message_receive_timeout = Duration::from_secs(3);
+        board.parameters.network.half_duration = Duration::from_secs(600);
+        board
+            .parameters
+            .network
+            .remaining_amount_of_messages_to_stop_sending = 20;
+        let game = board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap();
+        game.remaining_number_of_messages = 100;
+        game.remaining_time_in_half = Duration::from_secs(600);
+        board.last_sent_hsl_message_time = Some(board.world_state.now);
+        board.parameters.goalkeeper.x_offset = 0.3;
+        board
+            .world_state
+            .player_states
+            .one
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = point![-4.0, 1.0].into();
+        board.ball.as_mut().unwrap().position = point![-3.5, 1.0];
+        board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+        tree.tick_with_trace(&mut board);
+        assert!(board.replacement_goalkeeper_coordinator.claims_role());
+        assert!(board.try_sending_state_message().is_some());
+        assert!(board.last_sent_replacement_goalkeeper_claim);
+        board.world_state.now = board.world_state.now + Duration::from_millis(501);
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "is_active_replacement_goalkeeper"));
+        assert!(!succeeded(&trace, "is_closest_to_ball"));
+        assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+        let cover_pose = board.world_state.robot.ground_to_field.unwrap().as_pose();
+        board.voronoi_inputs.clear();
+        calculate_voronoi_grid(&mut board);
+        assert!(!board.voronoi_inputs.contains(&cover_pose));
+
+        let mut passer = board.clone();
+        passer.world_state.robot.player_number = PlayerNumber::Three;
+        passer.world_state.robot.ground_to_field = Some(
+            passer
+                .world_state
+                .player_states
+                .three
+                .as_ref()
+                .unwrap()
+                .inner
+                .pose
+                .as_transform(),
+        );
+        passer
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .replacement_goalkeeper_claim = true;
+        refresh_replacement_goalkeeper_role(&mut passer);
+        passer
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .sub_state = Some(SubState::ThrowIn);
+        passer.ball.as_mut().unwrap().position = point![-3.0, 4.5];
+        assert!(crate::substates::restart_pass_receiver(&passer).is_none());
+        passer.replacement_goalkeeper_coordinator = Default::default();
+        assert!(crate::substates::restart_pass_receiver(&passer).is_some());
+
+        // The covering player keeps defending even when a loose ball reaches it.
+        board.ball.as_mut().unwrap().position = cover_pose.position() + vector![0.25, 0.0];
+        board.body_motion = None;
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "is_active_replacement_goalkeeper"));
+        assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+
+        board
+            .world_state
+            .player_states
+            .one
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = point![-6.7, 0.0].into();
+        tree.tick_with_trace(&mut board);
+        assert!(board.replacement_goalkeeper_coordinator.keeper().is_none());
+        assert!(!board.replacement_goalkeeper_coordinator.claims_role());
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .remaining_number_of_messages = 20;
+        assert!(board.try_sending_state_message().is_none());
+        assert!(board.last_sent_replacement_goalkeeper_claim);
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .remaining_number_of_messages = 100;
+        assert!(board.try_sending_state_message().is_some());
+        assert!(!board.last_sent_replacement_goalkeeper_claim);
+        board.voronoi_inputs.clear();
+        calculate_voronoi_grid(&mut board);
+        assert!(board.voronoi_inputs.contains(&cover_pose));
     }
 
     #[test]

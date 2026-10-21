@@ -84,6 +84,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
         || world.robot.primary_state != types::primary_state::PrimaryState::Playing
         || pass.receiver == world.robot.player_number
         || pass.receiver == blackboard.parameters.goalkeeper.player_number
+        || Some(pass.receiver) == blackboard.replacement_goalkeeper_coordinator.keeper()
         || (blackboard.last_motion_type != Some(MotionType::Kick)
             && blackboard.ball_action.is_some())
         || blackboard.ball_action.is_some_and(|action| {

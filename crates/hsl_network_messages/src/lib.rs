@@ -37,6 +37,8 @@ pub struct StateMessage {
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
     pub pass: Option<PassIntent>,
+    #[serde(default)]
+    pub replacement_goalkeeper_claim: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, Message)]
@@ -101,11 +103,16 @@ mod tests {
                 receiver: PlayerNumber::Two,
                 target: Point2::origin(),
             }),
+            replacement_goalkeeper_claim: true,
         });
         let bytes = bincode::serialize(&test_message).unwrap();
         assert!(bytes.len() <= 128);
         let HulkMessage::State(decoded) = bincode::deserialize(&bytes).unwrap();
         let HulkMessage::State(original) = test_message;
         assert_eq!(decoded.pass, original.pass);
+        assert_eq!(
+            decoded.replacement_goalkeeper_claim,
+            original.replacement_goalkeeper_claim
+        );
     }
 }

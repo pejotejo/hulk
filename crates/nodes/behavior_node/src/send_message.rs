@@ -86,6 +86,15 @@ impl Blackboard {
         let game_controller_state = self.world_state.filtered_game_controller_state.as_ref()?;
         let mut send_interval =
             state_message_send_interval(game_controller_state, &self.parameters.network)?;
+        let replacement_goalkeeper_claim = self.replacement_goalkeeper_coordinator.claims_role();
+        let keeper_claim_changed =
+            replacement_goalkeeper_claim != self.last_sent_replacement_goalkeeper_claim;
+        if self.replacement_goalkeeper_coordinator.is_electing() {
+            send_interval = send_interval.min(Duration::from_millis(100));
+        } else if self.replacement_goalkeeper_coordinator.keeper().is_some() {
+            send_interval =
+                send_interval.min(self.parameters.network.hsl_striker_message_receive_timeout / 2);
+        }
         let preparing_restart = game_controller_state.kicking_team == Some(Team::Hulks)
             && game_controller_state
                 .sub_state
@@ -144,6 +153,7 @@ impl Blackboard {
             send_interval = Duration::ZERO;
         }
         if !announcing_pass
+            && !keeper_claim_changed
             && !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval)
         {
             return None;
@@ -193,10 +203,11 @@ impl Blackboard {
                 pose,
                 ball_position,
                 pass,
+                replacement_goalkeeper_claim,
             });
 
             self.last_sent_hsl_message_time = Some(now);
-
+            self.last_sent_replacement_goalkeeper_claim = replacement_goalkeeper_claim;
             Some(OutgoingMessage::Hsl(message))
         } else {
             None
