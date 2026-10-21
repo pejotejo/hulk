@@ -91,4 +91,6 @@ pub struct PlayerState {
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,
     pub pass: Option<PassIntent>,
+    #[serde(default)]
+    pub replacement_goalkeeper_claim: bool,
 }

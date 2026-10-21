@@ -288,7 +288,7 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     if outgoing_pass_in_flight(blackboard)
-        || (!blackboard.last_closest_to_ball
+        || (!is_finishing_striker_kick(blackboard)
             && blackboard.player_number
                 != blackboard.parameters.goalkeeper.player_number
             && teammate_controls_ball(blackboard))
@@ -364,6 +364,7 @@ fn teammate_controls_ball(blackboard: &Blackboard) -> bool {
     world.player_states.iter().any(|(number, state)| {
         number != world.robot.player_number
             && number != blackboard.parameters.goalkeeper.player_number
+            && Some(number) != blackboard.replacement_goalkeeper_coordinator.keeper()
             && world
                 .filtered_game_controller_state
                 .as_ref()
@@ -503,6 +504,15 @@ pub fn is_last_hulk_standing(blackboard: &mut Blackboard) -> bool {
         .all(|(player_number, player_state)| {
             player_number == own_player_number || player_state.is_none()
         })
+        && blackboard
+            .world_state
+            .filtered_game_controller_state
+            .as_ref()
+            .is_none_or(|game| {
+                game.penalties
+                    .iter()
+                    .all(|(number, penalty)| number == own_player_number || penalty.is_some())
+            })
 }
 
 pub fn is_simple(blackboard: &mut Blackboard) -> bool {
@@ -562,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn new_striker_defers_to_teammate_controlling_ball_despite_raw_ownership() {
+    fn striker_defers_to_teammate_controlling_ball_unless_finishing_kick() {
         let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
         map.multi_source_dijkstra(&[(linear_algebra::Pose2::default(), PlayerNumber::Two)]);
         let mut board = Blackboard {
@@ -598,6 +608,9 @@ mod tests {
         });
         assert!(!is_closest_to_ball(&mut board));
         assert!(board.closest_to_ball_entered_area_since.is_none());
+        board.last_closest_to_ball = true;
+        assert!(!is_closest_to_ball(&mut board));
+        assert!(board.closest_to_ball_left_area_since.is_none());
         for case in 0..6 {
             let mut available = board.clone();
             let peer = available.world_state.player_states.three.as_mut().unwrap();
@@ -630,6 +643,9 @@ mod tests {
         board.last_motion_type = Some(MotionType::Kick);
         assert!(is_finishing_striker_kick(&mut board));
         assert!(is_closest_to_ball(&mut board));
+        board.world_state.now = board.world_state.now + Duration::from_millis(500);
+        assert!(!is_finishing_striker_kick(&mut board));
+        assert!(!is_closest_to_ball(&mut board));
     }
 
     #[test]

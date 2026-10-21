@@ -212,6 +212,8 @@ fn create_behavior_blackboard(
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
         last_announced_pass: None,
+        replacement_goalkeeper_coordinator: Default::default(),
+        last_sent_replacement_goalkeeper_claim: false,
         kickoff_receiver_wait_started: None,
         restart_pass_wait_started: None,
         kickoff_prepared: false,
@@ -353,6 +355,10 @@ mod tests {
         ] {
             let mut blackboard = kick_blackboard(point![ball_x, 0.0]);
             blackboard.parameters.kicking.allow_strong_kicks = true;
+            blackboard
+                .parameters
+                .kicking
+                .strong_kick_min_target_distance = 6.0;
             blackboard.parameters.kicking.target_speed = 1.2;
             assert_eq!(kick(&mut blackboard), Status::Success);
             assert_eq!(

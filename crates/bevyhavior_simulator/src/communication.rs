@@ -115,6 +115,7 @@ pub fn apply_incoming_hsl_messages(
         let player_state = PlayerState {
             pose: state_message.pose,
             pass: state_message.pass,
+            replacement_goalkeeper_claim: state_message.replacement_goalkeeper_claim,
             ball_position: state_message.ball_position.map(|ball| {
                 BallPosition::from_network_ball(
                     ball,
@@ -229,6 +230,7 @@ mod tests {
             }),
             head_yaw: 0.0,
             pass: None,
+            replacement_goalkeeper_claim: false,
         })
     }
 

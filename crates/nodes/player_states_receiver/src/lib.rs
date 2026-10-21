@@ -92,6 +92,7 @@ fn apply_message(
         inner: PlayerState {
             pose: state_message.pose,
             pass: state_message.pass,
+            replacement_goalkeeper_claim: state_message.replacement_goalkeeper_claim,
             ball_position: state_message
                 .ball_position
                 .map(|ball| BallPosition::from_network_ball(ball, time)),
@@ -165,6 +166,7 @@ mod tests {
                         receiver: PlayerNumber::Three,
                         target: Default::default(),
                     }),
+                    replacement_goalkeeper_claim: true,
                 })),
             },
         );
@@ -173,6 +175,7 @@ mod tests {
         assert_eq!(player.time, time);
         assert_eq!(player.inner.pose, pose);
         assert_eq!(player.inner.pass.unwrap().receiver, PlayerNumber::Three);
+        assert!(player.inner.replacement_goalkeeper_claim);
     }
 
     #[test]
