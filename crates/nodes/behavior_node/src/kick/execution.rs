@@ -240,13 +240,18 @@ fn resolve_action_target(
             if let Some(target) = super::kickoff::kickoff_pass_target(blackboard, receiver) {
                 return Some(target);
             }
+            let mut passing = parameters.passing.clone();
+            // Finish a launched pass as its remaining travel shrinks; still check obstacles.
+            if super::passing::is_executing_announced_pass(blackboard, receiver) {
+                passing.minimum_distance = 0.0;
+            }
             pass_openings(
                 ball,
                 pass_receiver_position(blackboard, ball, receiver)?,
                 transform,
                 &blackboard.world_state.obstacles,
                 field,
-                &parameters.passing,
+                &passing,
                 parameters.obstacle_clearance,
             )
         }

@@ -397,6 +397,9 @@ impl KickStrategyParameters {
 pub struct PassingParameters {
     /// Conservative pass reach in meters; zero disables passing.
     pub maximum_distance: f32,
+    /// Minimum ball travel to the reception region, in meters.
+    #[serde(default)]
+    pub minimum_distance: f32,
     pub minimum_progress: f32,
     /// Reception region sits this far in front of the receiver, toward the ball.
     pub receiver_standoff: f32,
@@ -410,6 +413,7 @@ impl PassingParameters {
     pub fn validate(&self) -> Result<(), String> {
         for (name, value) in [
             ("maximum_distance", self.maximum_distance),
+            ("minimum_distance", self.minimum_distance),
             ("minimum_progress", self.minimum_progress),
             ("receiver_standoff", self.receiver_standoff),
             ("target_half_width", self.target_half_width),

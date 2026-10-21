@@ -113,6 +113,7 @@ pub fn pass_openings(
     if parameters.validate().is_err()
         || !distance.is_finite()
         || travel <= f32::EPSILON
+        || travel < parameters.minimum_distance
         || travel >= parameters.maximum_distance
     {
         return Vec::new();
@@ -250,6 +251,27 @@ mod tests {
                 )
                 .is_empty()
             );
+        }
+        let parameters = PassingParameters {
+            minimum_distance: 2.0,
+            ..parameters
+        };
+        for (receiver_x, allowed) in [(2.49, false), (2.5, true), (2.51, true)] {
+            let openings = pass_openings(
+                Point2::origin(),
+                point![receiver_x, 0.0],
+                Default::default(),
+                &[],
+                &field,
+                &parameters,
+                0.05,
+            );
+            assert_eq!(!openings.is_empty(), allowed);
+            for opening in openings {
+                for target in [opening.0, opening.center(), opening.1] {
+                    assert!(target.coords().norm() >= parameters.minimum_distance);
+                }
+            }
         }
     }
 

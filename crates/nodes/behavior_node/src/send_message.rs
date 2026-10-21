@@ -90,10 +90,39 @@ impl Blackboard {
             && game_controller_state
                 .sub_state
                 .is_some_and(|state| state != SubState::PenaltyKick);
+        let preparing_pass = matches!(self.ball_action, Some(BallAction::Pass { .. }))
+            && (preparing_kickoff
+                || preparing_restart
+                || self
+                    .ball
+                    .as_ref()
+                    .zip(self.world_state.robot.ground_to_field)
+                    .is_some_and(|(ball, transform)| {
+                        (ball.position - transform.as_pose().position()).norm()
+                            <= self.parameters.kicking.kick_activation_distance
+                                + self.parameters.kicking.kick_activation_hysteresis
+                    }));
         let outgoing_pass = crate::kick::passing::outgoing_pass_in_flight(self);
-        let cancelling_pass = self.last_announced_pass.is_some()
-            && !outgoing_pass
-            && !matches!(self.ball_action, Some(BallAction::Pass { .. }));
+        let cancelling_pass =
+            self.last_announced_pass.is_some() && !outgoing_pass && !preparing_pass;
+        let announcing_pass = preparing_pass
+            && self.world_state.robot.primary_state == PrimaryState::Playing
+            && match (
+                self.ball_action,
+                self.kick_target,
+                self.world_state.robot.ground_to_field,
+            ) {
+                (Some(BallAction::Pass { receiver }), Some(target), Some(transform)) => {
+                    !matches_announced_pass(
+                        self,
+                        PassIntent {
+                            receiver,
+                            target: transform * target,
+                        },
+                    )
+                }
+                _ => false,
+            };
         if matches!(self.ball_action, Some(BallAction::Pass { .. }))
             || preparing_kickoff
             || preparing_restart
@@ -114,7 +143,9 @@ impl Blackboard {
         if cancelling_pass {
             send_interval = Duration::ZERO;
         }
-        if !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval) {
+        if !announcing_pass
+            && !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval)
+        {
             return None;
         }
         if let Some(ground_to_field) = self.world_state.robot.ground_to_field {
@@ -133,7 +164,8 @@ impl Blackboard {
 
             let pass = match (self.ball_action, self.kick_target) {
                 (Some(BallAction::Pass { receiver }), Some(target))
-                    if self.world_state.robot.primary_state == PrimaryState::Playing =>
+                    if self.world_state.robot.primary_state == PrimaryState::Playing
+                        && preparing_pass =>
                 {
                     Some(PassIntent {
                         receiver,
