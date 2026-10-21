@@ -168,8 +168,8 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         if let Some(BallAction::Pass { receiver }) = pass
             && let Some(position) = pass_receiver_position(blackboard, ball, receiver)
             && receiver_has_space(blackboard, position, ground_to_field)
-            && (receiver_goal_angle(blackboard, position, ground_to_field) > angle
-                || position.x() - ball.x() > parameters.passing.minimum_progress)
+            && receiver_goal_angle(blackboard, position, ground_to_field)
+                > angle + parameters.shot_angle_hysteresis
         {
             return pass;
         }
@@ -237,6 +237,7 @@ fn choose_pass(
         let Some(position) = pass_receiver_position(blackboard, ball, receiver) else {
             continue;
         };
+        let executing_pass = is_executing_announced_pass(blackboard, receiver);
         if world
             .filtered_game_controller_state
             .as_ref()
@@ -247,10 +248,14 @@ fn choose_pass(
                         Some(SubState::CornerKick | SubState::ThrowIn)
                     )
             })
-            && !is_executing_announced_pass(blackboard, receiver)
+            && !executing_pass
             && !crate::substates::restart_pass_is_open(blackboard, position)
         {
             continue;
+        }
+        let mut passing = parameters.passing.clone();
+        if executing_pass {
+            passing.minimum_distance = 0.0;
         }
         if pass_openings(
             ball,
@@ -258,14 +263,14 @@ fn choose_pass(
             ground_to_field,
             &world.obstacles,
             field,
-            &parameters.passing,
+            &passing,
             parameters.obstacle_clearance,
         )
         .is_empty()
         {
             continue;
         }
-        if is_executing_announced_pass(blackboard, receiver) {
+        if executing_pass {
             return Some(BallAction::Pass { receiver });
         }
         let progress = position.x() - ball.x();
@@ -429,6 +434,7 @@ mod tests {
         blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
         blackboard.parameters.kicking.strategy.passing = PassingParameters {
             maximum_distance: 3.0,
+            minimum_distance: 0.0,
             minimum_progress: 0.5,
             receiver_standoff: 0.5,
             target_half_width: 0.2,
@@ -461,7 +467,16 @@ mod tests {
         board.parameters.kicking.strategy.passing.maximum_distance = 8.0;
         board.parameters.kicking.strategy.passing.minimum_progress = 0.0;
         let keeper = Obstacle::robot(point![6.6, 0.0], 0.2, 0.2);
-        for receiver in [point![2.5, 2.0], point![0.0, 2.5]] {
+        for (receiver, expected) in [
+            (
+                point![2.5, 2.0],
+                BallAction::Pass {
+                    receiver: PlayerNumber::Two,
+                },
+            ),
+            (point![1.0, 0.5], BallAction::Dribble),
+            (point![0.0, 2.5], BallAction::Dribble),
+        ] {
             board
                 .world_state
                 .player_states
@@ -482,9 +497,7 @@ mod tests {
             select_ball_action(&mut board);
             assert_eq!(
                 board.ball_action,
-                Some(BallAction::Pass {
-                    receiver: PlayerNumber::Two
-                }),
+                Some(expected),
                 "receiver at {receiver:?}"
             );
         }
@@ -519,6 +532,27 @@ mod tests {
         assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
         board.ball.as_mut().unwrap().position = point![0.0, 0.0];
         board.world_state.obstacles.clear();
+        select_ball_action(&mut board);
+        assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+
+        // The production preference lets a clear midfield opening win over a useful pass.
+        board.parameters.kicking.strategy.preferred_shot_angle = 0.06;
+        let receiver = point![2.5, 2.0];
+        board.world_state.player_states.two = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: receiver.into(),
+                ..Default::default()
+            },
+        });
+        board.world_state.obstacles = vec![
+            keeper,
+            Obstacle::robot(
+                board.world_state.robot.ground_to_field.unwrap().inverse() * receiver,
+                0.2,
+                0.2,
+            ),
+        ];
         select_ball_action(&mut board);
         assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
     }
@@ -837,7 +871,7 @@ mod tests {
     #[test]
     fn pass_rejects_unavailable_receivers_and_unsafe_corridors() {
         type InvalidateReceiver = fn(&mut Blackboard);
-        let cases: [(&str, InvalidateReceiver); 12] = [
+        let cases: [(&str, InvalidateReceiver); 13] = [
             ("goalkeeper", |b| {
                 b.parameters.goalkeeper.player_number = PlayerNumber::Two
             }),
@@ -850,6 +884,9 @@ mod tests {
             }),
             ("disabled", |b| {
                 b.parameters.kicking.strategy.passing.maximum_distance = 0.0
+            }),
+            ("short", |b| {
+                b.parameters.kicking.strategy.passing.minimum_distance = 1.6
             }),
             ("missing", |b| b.world_state.player_states.two = None),
             ("self", |b| {
@@ -914,72 +951,132 @@ mod tests {
     }
 
     #[test]
-    fn pass_waits_for_normal_message_and_preparation_without_acknowledgement() {
-        let mut blackboard = passing_blackboard();
-        blackboard.last_sent_hsl_message_time = Some(blackboard.world_state.now);
-        select_ball_action(&mut blackboard);
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        assert!(blackboard.try_sending_state_message().is_none());
-
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(301);
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
+    fn new_pass_announces_immediately_and_only_set_plays_wait_for_preparation() {
+        let mut approaching = passing_blackboard();
+        approaching.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![-2.0, 0.0], 0.0).as_transform());
+        approaching.world_state.obstacles[0].position = point![4.0, 0.0];
+        approaching.parameters.kicking.kick_activation_distance = 1.3;
+        approaching.parameters.kicking.kick_activation_hysteresis = 0.3;
+        approaching.parameters.walking.speed.kicking = 1.8;
+        approaching.parameters.walking.speed.velocity_fade_distance = 3.0;
+        select_ball_action(&mut approaching);
+        execute_ball_action(&mut approaching);
+        assert!(matches!(
+            approaching.ball_action,
+            Some(BallAction::Pass { .. })
+        ));
+        assert!(!approaching.last_close_enough_to_kick);
         let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
             message,
-        ))) = blackboard.try_sending_state_message()
+        ))) = approaching.try_sending_state_message()
         else {
-            panic!("expected regular state message")
+            panic!("expected ordinary state update while approaching");
         };
-        let pass = message.pass.unwrap();
-        assert_eq!(pass.receiver, PlayerNumber::Two);
-        let transform = blackboard.world_state.robot.ground_to_field.unwrap();
-        assert_eq!(
-            Some(pass.target),
-            blackboard.kick_target.map(|target| transform * target)
-        );
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(149);
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(1);
-        execute_ball_action(&mut blackboard);
+        assert!(message.pass.is_none());
+        approaching.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![-1.5, 0.0], 0.0).as_transform());
+        approaching.world_state.obstacles[0].position = point![3.5, 0.0];
+        execute_ball_action(&mut approaching);
         assert!(matches!(
-            blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
+            approaching.body_motion,
+            Some(BodyMotion::Walk { .. })
         ));
-        assert!(blackboard.try_sending_state_message().is_none());
-
-        // A materially different reception target needs its own ordinary update.
-        let receiver = point![2.0, 0.8];
-        let state = blackboard.world_state.player_states.two.as_mut().unwrap();
-        state.inner.pose = receiver.into();
-        state.time = blackboard.world_state.now;
-        blackboard.world_state.obstacles[0].position = transform.inverse() * receiver;
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(151);
-        assert!(blackboard.try_sending_state_message().is_some());
-        execute_ball_action(&mut blackboard);
-        assert_eq!(blackboard.body_motion, Some(BodyMotion::Stand));
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(150);
-        execute_ball_action(&mut blackboard);
+        assert!(approaching.try_sending_state_message().is_some());
+        approaching.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![-0.6, 0.0], 0.0).as_transform());
+        approaching.world_state.obstacles[0].position = point![2.6, 0.0];
+        execute_ball_action(&mut approaching);
         assert!(matches!(
-            blackboard.body_motion,
+            approaching.body_motion,
             Some(BodyMotion::Kick { .. })
         ));
 
-        blackboard.ball_action = Some(BallAction::Dribble);
-        blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(151);
-        let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
-            message,
-        ))) = blackboard.try_sending_state_message()
-        else {
-            panic!("expected cancellation in regular update")
-        };
-        assert_eq!(message.pass, None);
-        assert!(blackboard.last_announced_pass.is_none());
+        for sub_state in [None, Some(SubState::ThrowIn)] {
+            let mut board = passing_blackboard();
+            board.parameters.kicking.strategy.passing.minimum_distance = 1.4;
+            board.last_sent_hsl_message_time = Some(board.world_state.now);
+            let game = board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap();
+            game.kicking_team = Some(Team::Hulks);
+            game.sub_state = sub_state;
+            select_ball_action(&mut board);
+            execute_ball_action(&mut board);
+            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+            let Some(types::messages::OutgoingMessage::Hsl(
+                hsl_network_messages::HulkMessage::State(message),
+            )) = board.try_sending_state_message()
+            else {
+                panic!("new pass must announce without waiting for the normal cooldown");
+            };
+            let pass = message.pass.unwrap();
+            assert_eq!(pass.receiver, PlayerNumber::Two);
+            let transform = board.world_state.robot.ground_to_field.unwrap();
+            assert_eq!(
+                Some(pass.target),
+                board.kick_target.map(|target| transform * target)
+            );
+            execute_ball_action(&mut board);
+            if sub_state.is_some() {
+                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+                board.world_state.now = board.world_state.now + Duration::from_millis(149);
+                execute_ball_action(&mut board);
+                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+                board.world_state.now = board.world_state.now + Duration::from_millis(1);
+                execute_ball_action(&mut board);
+            }
+            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert!(board.try_sending_state_message().is_none());
+
+            // The remaining distance shrinks during an already announced kick.
+            board.last_motion_type = Some(types::motion_type::MotionType::Kick);
+            board.ball.as_mut().unwrap().position = point![0.2, 0.0];
+            select_ball_action(&mut board);
+            execute_ball_action(&mut board);
+            assert!(matches!(board.ball_action, Some(BallAction::Pass { .. })));
+            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            board.ball.as_mut().unwrap().position = Point2::origin();
+            board.last_motion_type = None;
+
+            // A changed target is announced promptly, without resending unchanged intent each tick.
+            let receiver = point![2.0, 0.8];
+            let state = board.world_state.player_states.two.as_mut().unwrap();
+            state.inner.pose = receiver.into();
+            state.time = board.world_state.now;
+            board.world_state.obstacles[0].position = transform.inverse() * receiver;
+            execute_ball_action(&mut board);
+            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+            assert!(board.try_sending_state_message().is_some());
+            if sub_state.is_some() {
+                board.world_state.now = board.world_state.now + Duration::from_millis(150);
+            }
+            execute_ball_action(&mut board);
+            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+
+            board.ball_action = Some(BallAction::Dribble);
+            board.world_state.now = board.world_state.now + Duration::from_millis(1);
+            let Some(types::messages::OutgoingMessage::Hsl(
+                hsl_network_messages::HulkMessage::State(message),
+            )) = board.try_sending_state_message()
+            else {
+                panic!("expected cancellation");
+            };
+            assert_eq!(message.pass, None);
+            assert!(board.last_announced_pass.is_none());
+            board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .remaining_number_of_messages = 19;
+            board.ball_action = Some(BallAction::Pass {
+                receiver: PlayerNumber::Two,
+            });
+            assert!(board.try_sending_state_message().is_none());
+        }
     }
 
     #[test]

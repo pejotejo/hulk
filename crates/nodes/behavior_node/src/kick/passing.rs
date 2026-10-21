@@ -19,7 +19,7 @@ use crate::{
     walk::walk_to,
 };
 
-// shortcut: readiness is unconfirmed; tune this delay after measuring delivery and turning.
+// shortcut: set-play readiness is unconfirmed; tune after measuring delivery and turning.
 const PREPARATION_TIME: Duration = Duration::from_millis(150);
 
 pub(crate) fn matches_announced_pass(blackboard: &Blackboard, pass: PassIntent) -> bool {
@@ -44,10 +44,17 @@ pub(super) fn pass_is_announced(
     receiver: PlayerNumber,
     target: Point2<Field>,
 ) -> bool {
+    let set_play = super::kickoff::own_kickoff(blackboard)
+        || blackboard
+            .world_state
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| game.sub_state.is_some());
     matches_announced_pass(blackboard, PassIntent { receiver, target })
-        && blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
-            blackboard.world_state.now.duration_since(pass.time) >= PREPARATION_TIME
-        })
+        && (!set_play
+            || blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
+                blackboard.world_state.now.duration_since(pass.time) >= PREPARATION_TIME
+            }))
 }
 
 pub(super) fn is_executing_announced_pass(blackboard: &Blackboard, receiver: PlayerNumber) -> bool {

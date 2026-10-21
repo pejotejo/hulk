@@ -852,6 +852,7 @@ mod tests {
             (SubState::ThrowIn, point![-1.5, 4.5], true),
         ] {
             let mut taker = restart(state, ball);
+            taker.parameters.kicking.strategy.passing.minimum_distance = 3.0;
             taker.field_dimensions.length = 14.0;
             taker.field_dimensions.width = 9.0;
             taker.field_dimensions.ball_radius = 0.105;
@@ -898,6 +899,7 @@ mod tests {
             assert!(target.y().abs() + 0.4 < 4.5);
             if state == SubState::CornerKick {
                 let mut shallow = taker.clone();
+                shallow.parameters.kicking.strategy.passing.minimum_distance = 0.0;
                 let position = point![ball.x() - 1.5, ball.y().signum() * 3.0];
                 shallow
                     .world_state

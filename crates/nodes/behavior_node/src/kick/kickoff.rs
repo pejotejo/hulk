@@ -443,6 +443,7 @@ mod tests {
             clear_distance_hysteresis: 0.2,
             passing: types::parameters::PassingParameters {
                 maximum_distance: 3.0,
+                minimum_distance: 0.0,
                 minimum_progress: 0.5,
                 receiver_standoff: 0.5,
                 target_half_width: 0.2,
