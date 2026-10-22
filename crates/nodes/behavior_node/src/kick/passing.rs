@@ -12,7 +12,10 @@ use types::{
 use crate::{
     actions::stand,
     conditions::{goalkeeper_clearance_direction, hulks_is_kicking_team},
-    kick::reception::{is_receiving_ball, receive_rolling_ball},
+    kick::{
+        kick_ball_position_in_ground,
+        reception::{is_receiving_ball, receive_rolling_ball},
+    },
     node::{Blackboard, ball_timeout},
     substates::{is_sub_state, restart_pass_is_open, restart_pass_receiver},
     switch_motion_type::is_allowed_to_switch,
@@ -58,11 +61,32 @@ pub(super) fn pass_is_announced(
 }
 
 pub(super) fn is_executing_announced_pass(blackboard: &Blackboard, receiver: PlayerNumber) -> bool {
-    blackboard.last_motion_type == Some(MotionType::Kick)
-        && blackboard.ball_action == Some(super::strategy::BallAction::Pass { receiver })
-        && blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
+    if blackboard.last_motion_type != Some(MotionType::Kick)
+        || blackboard.ball_action != Some(super::strategy::BallAction::Pass { receiver })
+        || !blackboard.last_announced_pass.as_ref().is_some_and(|pass| {
             pass.inner.receiver == receiver && matches_announced_pass(blackboard, pass.inner)
         })
+    {
+        return false;
+    }
+    if outgoing_pass_in_flight(blackboard) {
+        return true;
+    }
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return false;
+    };
+    let Some(ball) = kick_ball_position_in_ground(blackboard, &transform) else {
+        return false;
+    };
+    let Some(receiver) = blackboard.world_state.player_states[receiver].as_ref() else {
+        return false;
+    };
+    let parameters = &blackboard.parameters.kicking.strategy.passing;
+    let travel =
+        (receiver.inner.pose.position() - transform * ball).norm() - parameters.receiver_standoff;
+    // Allow contact drift, not an arbitrarily short kick when the receiver moves in.
+    travel.is_finite()
+        && travel >= (parameters.minimum_distance - parameters.target_half_width).max(0.0)
 }
 
 pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
@@ -513,6 +537,17 @@ mod tests {
         sender.voronoi_map = Some(map);
 
         assert!(outgoing_pass_in_flight(&sender));
+        let mut finishing = sender.clone();
+        finishing
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .minimum_distance = 3.0;
+        finishing.ball_action = Some(super::super::strategy::BallAction::Pass {
+            receiver: PlayerNumber::Two,
+        });
+        assert!(is_executing_announced_pass(&finishing, PlayerNumber::Two));
         assert!(!crate::conditions::is_finishing_striker_kick(&mut sender));
         assert!(!crate::conditions::is_closest_to_ball(&mut sender));
         // Keep the recipient informed during flight without extending the local handoff.

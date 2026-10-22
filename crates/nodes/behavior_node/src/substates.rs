@@ -232,12 +232,18 @@ pub(crate) fn restart_pass_receiver(
         1.0
     };
     let y_sign = if ball.y() >= 0.0 { -1.0 } else { 1.0 };
-    let backward = if game.sub_state == Some(SubState::CornerKick) {
+    let backward: f32 = if game.sub_state == Some(SubState::CornerKick) {
         2.0
     } else {
         1.5
     };
     for (forward, inward) in [(backward, 1.0), (backward + 1.0, 1.0), (backward, 2.0)] {
+        let distance = distance.max(
+            (parameters.passing.minimum_distance
+                + parameters.passing.receiver_standoff
+                + parameters.passing.target_half_width)
+                / forward.hypot(inward),
+        );
         let target = point![
             (ball.x() + x_sign * distance * forward)
                 .clamp(-field.length / 2.0 + margin, field.length / 2.0 - margin),
@@ -855,7 +861,7 @@ mod tests {
             (SubState::ThrowIn, point![-1.5, 4.5], true),
         ] {
             let mut taker = restart(state, ball);
-            taker.parameters.kicking.strategy.passing.minimum_distance = 3.0;
+            taker.parameters.kicking.strategy.passing.minimum_distance = 4.0;
             taker.field_dimensions.length = 14.0;
             taker.field_dimensions.width = 9.0;
             taker.field_dimensions.ball_radius = 0.105;
@@ -900,6 +906,18 @@ mod tests {
             assert_eq!(number, PlayerNumber::Two);
             assert!(target.x().abs() + 0.4 < 7.0);
             assert!(target.y().abs() + 0.4 < 4.5);
+            let passing = &taker.parameters.kicking.strategy.passing;
+            assert!(
+                (target - ball).norm() - passing.receiver_standoff >= passing.minimum_distance,
+                "{state:?} receiver must leave enough ball travel after its standoff"
+            );
+            let mut closed_lane = taker.clone();
+            closed_lane.world_state.obstacles.push(Obstacle::robot(
+                taker_pose.as_transform().inverse() * (ball + (target - ball) * 0.5),
+                0.4,
+                0.4,
+            ));
+            assert!(!restart_pass_is_open(&closed_lane, target));
             if state == SubState::CornerKick {
                 let mut shallow = taker.clone();
                 shallow.parameters.kicking.strategy.passing.minimum_distance = 0.0;
@@ -1117,6 +1135,7 @@ mod tests {
         board.parameters.voronoi.ball_support_sigma = 1.0;
         board.parameters.voronoi.centroid_anchor_weight = 0.6;
         board.parameters.voronoi.centroid_anchor_sigma = 1.0;
+        board.parameters.kicking.strategy.passing.minimum_distance = 4.0;
         for (number, position) in [
             (PlayerNumber::One, point![-6.6, 0.0]),
             (PlayerNumber::Two, point![-3.0, -0.5]),
@@ -1148,10 +1167,10 @@ mod tests {
                 0.3,
                 0.3,
             )];
-            assert_eq!(
-                restart_pass_receiver(&supporter).unwrap().0,
-                PlayerNumber::Two
-            );
+            let (receiver, target) = restart_pass_receiver(&supporter).unwrap();
+            assert_eq!(receiver, PlayerNumber::Two);
+            let passing = &supporter.parameters.kicking.strategy.passing;
+            assert!((target - ball).norm() - passing.receiver_standoff >= passing.minimum_distance);
             let (_, trace) = tree.tick_with_trace(&mut supporter);
             assert!(matches!(
                 supporter.body_motion,
