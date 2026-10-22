@@ -72,6 +72,12 @@ fn is_receiver_under_pressure(blackboard: &Blackboard) -> bool {
         })
 }
 
+pub(crate) fn is_settling_pass(blackboard: &mut Blackboard) -> bool {
+    blackboard.player_number != blackboard.parameters.goalkeeper.player_number
+        && super::passing::is_pass_receiver(blackboard)
+        && !is_receiver_under_pressure(blackboard)
+}
+
 fn is_on_contact_path(
     blackboard: &Blackboard,
     position: Point2<Ground>,
@@ -129,6 +135,17 @@ fn controlled_ball_at_feet(
 }
 
 fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vector2<Ground>)> {
+    fresh_ball_in_ground(blackboard).filter(|(_, velocity)| {
+        velocity.norm()
+            > blackboard
+                .parameters
+                .ball
+                .interception
+                .minimum_ball_velocity
+    })
+}
+
+fn fresh_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vector2<Ground>)> {
     if opponent_ball_holder(blackboard).is_some() {
         return None;
     }
@@ -154,17 +171,11 @@ fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Ve
     if !fresh_ball && !fresh_visual {
         return None;
     }
-    (position
+    position
         .inner
         .iter()
         .chain(velocity.inner.iter())
         .all(|value| value.is_finite())
-        && velocity.norm()
-            > blackboard
-                .parameters
-                .ball
-                .interception
-                .minimum_ball_velocity)
         .then_some((position, velocity))
 }
 
@@ -172,7 +183,12 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     if goalkeeper_clearance_direction(blackboard).is_some() {
         return Status::Failure;
     }
-    let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
+    let settle = is_settling_pass(blackboard);
+    let Some((position, velocity)) = (if settle {
+        fresh_ball_in_ground(blackboard)
+    } else {
+        rolling_ball_in_ground(blackboard)
+    }) else {
         return Status::Failure;
     };
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
@@ -224,18 +240,24 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         && !is_receiver_under_pressure(blackboard)
     {
         super::strategy::select_ball_action(blackboard);
+        if settle {
+            // Controlled possession can turn toward an outgoing target behind the receiver.
+            return Status::Failure;
+        }
     }
     if is_ready_to_receive_kick(blackboard) {
         return Status::Failure;
     }
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
     let pass_receiver = super::passing::is_pass_receiver(blackboard);
-    let settle = blackboard.player_number != blackboard.parameters.goalkeeper.player_number
-        && pass_receiver
-        && !is_receiver_under_pressure(blackboard);
-    if settle && position.coords().dot(&velocity) >= 0.0 {
-        return Status::Failure;
-    }
+    let hold_pass = settle
+        && (position.coords().dot(&velocity) >= 0.0
+            || velocity.norm()
+                <= blackboard
+                    .parameters
+                    .ball
+                    .interception
+                    .minimum_ball_velocity);
     if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
         && !should_block_ball(position, velocity, goal)
     {
@@ -258,20 +280,26 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
                 .try_normalize(f32::EPSILON)
                 .map(Orientation2::from_vector)
         });
-    let orientation = kick_orientation.unwrap_or_else(|| Orientation2::from_vector(-velocity));
+    let orientation = kick_orientation.unwrap_or_else(|| {
+        Orientation2::from_vector(if hold_pass {
+            position.coords()
+        } else {
+            -velocity
+        })
+    });
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let limits = blackboard.walking_velocity_limits;
     let walk_speed = blackboard.parameters.walking.speed.kicking;
     let walking = blackboard.parameters.walking.walk_and_stand;
     let hold_distance = if settle {
-        walking
-            .target_reached_thresholds
-            .x
-            .max(blackboard.field_dimensions.ball_radius / 2.0)
+        // Tolerate lane noise while still moving a foot into a centered arrival.
+        0.8 * RobotDimensions::ROBOT_TO_LEFT_PELVIS.y()
     } else {
         walking.target_reached_thresholds.x
     };
-    let target = if settle {
+    let target = if hold_pass {
+        Some(Point2::origin())
+    } else if settle {
         let ball_in_receiving_frame = orientation.as_transform::<Ground>().inverse() * position;
         let foot_offset =
             RobotDimensions::ROBOT_TO_LEFT_PELVIS.y() * ball_in_receiving_frame.y().signum();
@@ -304,7 +332,15 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     }
     blackboard.ball_action = None;
     blackboard.kick_target = None;
-    if target.coords().norm() <= hold_distance {
+    let ball_in_receiving_frame = orientation.as_transform::<Ground>().inverse() * position;
+    let contact_imminent = ball_in_receiving_frame.y().abs()
+        <= blackboard.parameters.walking.path_planning.robot_radius / 2.0
+            + blackboard.field_dimensions.ball_radius
+        && ball_in_receiving_frame.x() <= standoff + velocity.norm() * 0.35;
+    if target.coords().norm() <= hold_distance
+        || (settle
+            && (orientation.angle().abs() > walking.orientation_tolerance || contact_imminent))
+    {
         // Keep Walk active while holding the lane so an arriving ball needs no Stand dwell.
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: Vector2::zeros(),
@@ -514,7 +550,7 @@ mod tests {
         crate::tree::striker_subtree().tick_with_trace(&mut blackboard);
         assert!(
             matches!(blackboard.body_motion, Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
-            if velocity.x() > 0.0 && angular_velocity < 0.0)
+            if velocity == Vector2::zeros() && angular_velocity < 0.0)
         );
         // Already in the lane: hold feet still facing the ball, even inside kick range.
         let foot_offset = RobotDimensions::ROBOT_TO_LEFT_PELVIS.y();
@@ -606,8 +642,7 @@ mod tests {
         assert!(is_ready_to_receive_kick(&blackboard));
     }
 
-    #[test]
-    fn addressed_pass_aligns_a_foot_lane_without_advancing_into_the_arrival() {
+    fn addressed_receiver() -> Blackboard {
         let mut board = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
@@ -636,6 +671,11 @@ mod tests {
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.parameters.walking.speed.kicking = 1.8;
         board.parameters.walking.speed.minimum_speed = 0.2;
+        board
+            .parameters
+            .walking
+            .walk_and_stand
+            .orientation_tolerance = 0.2;
         board.parameters.kicking.strategy.passing.maximum_distance = 8.0;
         board.world_state.player_states.three = Some(types::time_wrapper::TimeWrapper {
             time: board.world_state.now,
@@ -648,6 +688,12 @@ mod tests {
                 ..crate::test_support::player_state()
             },
         });
+        board
+    }
+
+    #[test]
+    fn addressed_pass_aligns_a_foot_lane_without_advancing_into_the_arrival() {
+        let mut board = addressed_receiver();
         for side in [-1.0, 1.0] {
             board.ball.as_mut().unwrap().position = point![2.0, side * 0.5];
             board.world_state.obstacles = vec![Obstacle::robot(point![2.0, side * 0.5], 0.2, 0.2)];
@@ -666,13 +712,12 @@ mod tests {
                 Some(BodyMotion::WalkWithVelocity { velocity, .. })
                 if velocity == Vector2::zeros()));
 
-            // Correct the last small lane error slowly, rather than stepping over the arrival.
-            board.ball.as_mut().unwrap().position = point![0.2, side * 0.17];
+            // Modest lane noise must not start another step into the arrival.
+            board.ball.as_mut().unwrap().position = point![2.0, side * 0.17];
             assert_eq!(receive_rolling_ball(&mut board), Status::Success);
             assert!(matches!(board.body_motion,
                 Some(BodyMotion::WalkWithVelocity { velocity, .. })
-                if velocity.x().abs() < 1e-5 && velocity.y() * side > 0.0
-                    && velocity.norm() <= board.parameters.walking.speed.minimum_speed));
+                if velocity == Vector2::zeros()));
         }
         // The middle-sized ball must not make the hold tolerance wider than the foot offset.
         board.field_dimensions.ball_radius = 0.105;
@@ -682,12 +727,78 @@ mod tests {
             .walk_and_stand
             .target_reached_thresholds
             .x = 0.05;
-        board.ball.as_mut().unwrap().position = point![0.2, 0.0];
+        board.ball.as_mut().unwrap().position = point![2.0, 0.0];
         assert_eq!(receive_rolling_ball(&mut board), Status::Success);
         assert!(matches!(board.body_motion,
             Some(BodyMotion::WalkWithVelocity { velocity, .. })
-            if velocity.x().abs() < 1e-5 && velocity.y().abs() > 0.0
-                && velocity.norm() <= board.parameters.walking.speed.minimum_speed));
+            if velocity.x().abs() < 1e-5 && velocity.y().abs() > 0.0));
+    }
+
+    #[test]
+    fn addressed_receiver_stops_translation_during_turns_and_contact() {
+        let mut board = addressed_receiver();
+        for angle in [-1.0, -0.35, 0.35, 1.0] {
+            let rotation = Orientation2::new(angle).as_transform::<Ground>();
+            board.ball.as_mut().unwrap().position = rotation * point![2.0, 0.5];
+            board.ball.as_mut().unwrap().velocity = rotation * vector![-1.0, 0.0];
+            assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                if velocity == Vector2::zeros() && angular_velocity * angle > 0.0));
+        }
+
+        // Brake for contact even when the remaining turn is inside the alignment tolerance.
+        for angle in [-0.15, 0.0, 0.15, std::f32::consts::PI] {
+            let rotation = Orientation2::new(angle).as_transform::<Ground>();
+            board.ball.as_mut().unwrap().position = rotation * point![0.55, 0.19];
+            board.ball.as_mut().unwrap().velocity = rotation * vector![-1.0, 0.0];
+            assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::WalkWithVelocity { velocity, .. })
+                if velocity == Vector2::zeros()));
+        }
+
+        // A ball passing outside the body still needs a sidestep, even near the contact plane.
+        board.ball.as_mut().unwrap().position = point![0.4, 0.5];
+        board.ball.as_mut().unwrap().velocity = vector![-1.0, 0.0];
+        assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+        assert!(matches!(board.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, .. })
+            if velocity.x().abs() < 1e-5 && velocity.y() > 0.0));
+    }
+
+    #[test]
+    fn addressed_receiver_holds_near_stop_and_receding_passes_until_controlled() {
+        let mut board = addressed_receiver();
+        for speed in [-0.31, -0.29, 0.0, 0.29, 1.0] {
+            board.ball.as_mut().unwrap().position = point![0.8, 0.17];
+            board.ball.as_mut().unwrap().velocity = vector![speed, 0.0];
+            assert!(is_settling_pass(&mut board));
+            assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::WalkWithVelocity { velocity, .. })
+                if velocity == Vector2::zeros()));
+        }
+
+        // Controlled traps hand off for an outgoing turn, including below the rolling threshold.
+        board.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::from_parts(
+            vector![0.0, 0.0],
+            std::f32::consts::PI,
+        ));
+        board.parameters.kicking.strategy.maximum_shot_distance = 6.0;
+        for speed in [0.45, 0.29, 0.0] {
+            board.ball.as_mut().unwrap().position = point![-0.4, -0.05];
+            board.ball.as_mut().unwrap().velocity = vector![speed, 0.0];
+            assert!(!is_ready_to_receive_kick(&board));
+            assert!(is_settling_pass(&mut board));
+            assert_eq!(receive_rolling_ball(&mut board), Status::Failure);
+            assert!(
+                super::super::execution::resolve_target(&board).is_some_and(|target| {
+                    let transform = board.world_state.robot.ground_to_field.unwrap();
+                    (transform.inverse() * target).x() < 0.0
+                })
+            );
+        }
     }
 
     #[test]

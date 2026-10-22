@@ -575,6 +575,7 @@ mod tests {
             board.parameters.goalkeeper.player_number = PlayerNumber::One;
             board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
             board.parameters.kicking.kick_activation_distance = 1.3;
+            board.parameters.kicking.approach_ball_standoff = 0.3;
             board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
             board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
             board.parameters.ball.interception.minimum_ball_velocity = 0.3;

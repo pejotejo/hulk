@@ -12,7 +12,7 @@ use crate::{
     action,
     behavior_tree::Node,
     condition,
-    conditions::hulks_is_kicking_team,
+    conditions::{hulks_is_kicking_team, is_close_to_ball},
     kick::{
         RESTART_RECEIVER_EXTRA_DISTANCE,
         execution::execute_ball_action,
@@ -294,6 +294,7 @@ fn wait_for_restart_receiver(blackboard: &mut Blackboard) -> Status {
         || blackboard.last_motion_type == Some(types::motion_type::MotionType::Kick)
         || !blackboard.has_team_message_budget()
         || restart_pass_receiver(blackboard).is_none()
+        || !is_close_to_ball(blackboard)
     {
         return Status::Failure;
     }
@@ -923,6 +924,75 @@ mod tests {
     }
 
     #[test]
+    fn throw_in_taker_approaches_before_waiting_for_receiver() {
+        let tree = sub_state_subtree();
+        let ball = point![-1.5, 4.5];
+        let mut board = restart(SubState::ThrowIn, ball);
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.speed.kicking = 1.8;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board.parameters.voronoi.ball_support_distance = 1.5;
+        board.parameters.kicking.strategy.passing.minimum_distance = 4.0;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.world_state.player_states.two = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: point![-3.0, -0.5].into(),
+                ..crate::test_support::player_state()
+            },
+        });
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(ball - linear_algebra::vector![2.0, 1.0], 0.0).as_transform());
+        assert!(restart_pass_receiver(&board).is_some());
+
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "execute_ball_action"));
+        assert!(!succeeded(&trace, "wait_for_restart_receiver"));
+        assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+        assert!(board.restart_pass_wait_started.is_none());
+
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(ball - linear_algebra::vector![0.6, 0.0], 0.0).as_transform());
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "wait_for_restart_receiver"));
+        assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(board.restart_pass_wait_started, Some(board.world_state.now));
+        board.last_motion_type = Some(MotionType::Stand);
+        board.last_motion_switch_time = board.world_state.now;
+
+        let since = board.world_state.now;
+        for elapsed in [Duration::from_secs(5), Duration::from_secs(6)] {
+            board.world_state.now = since + elapsed;
+            board.world_state.player_states.two.as_mut().unwrap().time = board.world_state.now;
+            let (_, trace) = tree.tick_with_trace(&mut board);
+            assert!(!succeeded(&trace, "wait_for_restart_receiver"));
+            assert_eq!(board.ball_action, Some(BallAction::Dribble));
+            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert_eq!(board.restart_pass_wait_started, Some(since));
+        }
+
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .sub_state = None;
+        board.update_restart_pass();
+        assert!(board.restart_pass_wait_started.is_none());
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .sub_state = Some(SubState::ThrowIn);
+        tree.tick_with_trace(&mut board);
+        assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+        assert_eq!(board.restart_pass_wait_started, Some(board.world_state.now));
+    }
+
+    #[test]
     fn natural_corner_and_blocked_throw_in_stage_one_receiver_before_dribbling() {
         let tree = crate::tree::create_tree();
         for (state, ball, blocked) in [
@@ -981,7 +1051,7 @@ mod tests {
             let passing = &taker.parameters.kicking.strategy.passing;
             assert!(
                 (target - ball).norm() - passing.receiver_standoff
-                    >= passing.minimum_distance + 1.0,
+                    >= passing.minimum_distance + 0.5,
                 "{state:?} receiver must leave enough ball travel after its standoff"
             );
             if !blocked {

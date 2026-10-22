@@ -24,6 +24,8 @@ use crate::{
 
 // shortcut: set-play readiness is unconfirmed; tune after measuring delivery and turning.
 const PREPARATION_TIME: Duration = Duration::from_millis(150);
+// Wind-up and flight can outlast the freshness window of each broadcast.
+const PASS_EXECUTION_TIMEOUT: Duration = Duration::from_secs(6);
 
 pub(crate) fn matches_announced_pass(blackboard: &Blackboard, pass: PassIntent) -> bool {
     let now = blackboard.world_state.now;
@@ -33,7 +35,7 @@ pub(crate) fn matches_announced_pass(blackboard: &Blackboard, pass: PassIntent) 
         .as_ref()
         .is_some_and(|announced| {
             announced.time <= now
-                && now.duration_since(announced.time) < PassIntent::TIMEOUT
+                && now.duration_since(announced.time) < PASS_EXECUTION_TIMEOUT
                 && announced.inner.receiver == pass.receiver
                 && (announced.inner.target - pass.target).norm() <= parameters.target_half_width
         })
@@ -109,8 +111,6 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
         || pass.receiver == blackboard.player_number
         || pass.receiver == blackboard.parameters.goalkeeper.player_number
         || Some(pass.receiver) == blackboard.replacement_goalkeeper_coordinator.keeper()
-        || (blackboard.last_motion_type != Some(MotionType::Kick)
-            && blackboard.ball_action.is_some())
         || blackboard.ball_action.is_some_and(|action| {
             action
                 != super::strategy::BallAction::Pass {
@@ -118,7 +118,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
                 }
         })
         || announced.time > world.now
-        || world.now.duration_since(announced.time) >= PassIntent::TIMEOUT
+        || world.now.duration_since(announced.time) >= PASS_EXECUTION_TIMEOUT
         || !matches_announced_pass(blackboard, pass)
         || ball.age > world.now
         || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
@@ -160,7 +160,14 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
         && (receiver.inner.pose.position() - pass.target).norm()
             <= parameters.receiver_standoff + blackboard.parameters.kicking.kick_activation_distance
         && to_ball.norm() > contact
-        && (receiver.inner.pose.position() - ball.position).norm() > contact
+        && ((receiver.inner.pose.position() - ball.position).norm() > contact
+            || ball.velocity.norm()
+                > 2.0
+                    * blackboard
+                        .parameters
+                        .ball
+                        .interception
+                        .minimum_ball_velocity)
         && ball.velocity.norm()
             > blackboard
                 .parameters
@@ -277,12 +284,6 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     let Some((pass, sender)) = incoming_pass(blackboard) else {
         return Status::Failure;
     };
-    if receive_rolling_ball(blackboard) == Status::Success {
-        return Status::Success;
-    }
-    let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
-        blackboard.projected_ball_position(ball.position, ball.velocity)
-    });
     // Move only from a fresh lane estimate; stationary launches start at the ball, not the body.
     let launch_origin = blackboard
         .ball
@@ -294,32 +295,32 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
         })
         .and_then(|ball| {
             let speed = ball.velocity.norm();
-            if !speed.is_finite() {
-                return None;
-            }
-            if speed
-                > blackboard
+            (speed
+                <= blackboard
                     .parameters
                     .ball
                     .interception
                     .minimum_ball_velocity
-            {
-                return Some(sender);
-            }
-            ((ball.position - sender).norm()
-                <= blackboard.parameters.kicking.kick_activation_distance
-                    + blackboard.parameters.kicking.kick_activation_hysteresis)
+                && (ball.position - sender).norm()
+                    <= blackboard.parameters.kicking.kick_activation_distance
+                        + blackboard.parameters.kicking.kick_activation_hysteresis)
                 .then_some(ball.position)
         });
+    if launch_origin.is_none() && receive_rolling_ball(blackboard) == Status::Success {
+        return Status::Success;
+    }
+    let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
+        blackboard.projected_ball_position(ball.position, ball.velocity)
+    });
     let transform = blackboard.world_state.robot.ground_to_field.unwrap();
-    let parameters = &blackboard.parameters.kicking.strategy.passing;
     if !super::kickoff::own_kickoff(blackboard)
         && let Some(direction) =
             launch_origin.and_then(|origin| (pass.target - origin).try_normalize(f32::EPSILON))
     {
-        let target = pass.target + direction * parameters.receiver_standoff;
-        let offset = target - transform.as_pose().position();
+        let offset = pass.target - transform.as_pose().position();
         let lateral_offset = offset - direction * offset.dot(&direction);
+        // Join the lane without walking longitudinally toward the pending pass.
+        let target = transform.as_pose().position() + lateral_offset;
         let walking = blackboard.parameters.walking.walk_and_stand;
         // Join an inward-shifted announced lane before arrival; measured reception owns it after.
         if (ball - pass.target).dot(&direction) < 0.0
@@ -557,8 +558,7 @@ mod tests {
 
     use crate::{kick::reception::is_ready_to_receive_kick, node::LastBall};
 
-    #[test]
-    fn launched_pass_releases_sender_until_received_missed_or_expired() {
+    fn launched_pass_sender() -> Blackboard {
         let mut sender = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Kick),
@@ -613,7 +613,12 @@ mod tests {
         let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
         map.multi_source_dijkstra(&[(linear_algebra::Pose2::default(), PlayerNumber::Three)]);
         sender.voronoi_map = Some(map);
+        sender
+    }
 
+    #[test]
+    fn launched_pass_releases_sender_until_received_missed_or_expired() {
+        let mut sender = launched_pass_sender();
         assert!(outgoing_pass_in_flight(&sender));
         let mut finishing = sender.clone();
         finishing
@@ -644,9 +649,21 @@ mod tests {
             sender.last_announced_pass.as_ref().unwrap().time,
             announced_at
         );
-        sender.last_motion_type = Some(MotionType::Walk);
         sender.world_state.now = sender.world_state.now + Duration::from_millis(200);
-        assert!(!crate::conditions::is_closest_to_ball(&mut sender));
+        sender.ball_action = Some(super::super::strategy::BallAction::Pass {
+            receiver: PlayerNumber::Two,
+        });
+        for motion in [MotionType::Walk, MotionType::Stand] {
+            sender.last_motion_type = Some(motion);
+            assert!(outgoing_pass_in_flight(&sender));
+            assert!(!crate::conditions::is_closest_to_ball(&mut sender));
+        }
+        let mut arriving = sender.clone();
+        arriving.ball.as_mut().unwrap().position = point![3.2, 0.0];
+        assert!(
+            outgoing_pass_in_flight(&arriving),
+            "a fast arrival still needs its reception intent"
+        );
 
         for case in 0..11 {
             let mut recovery = sender.clone();
@@ -663,7 +680,7 @@ mod tests {
                         .unwrap()
                         .time = recovery.world_state.now + Duration::from_secs(1)
                 }
-                4 => recovery.world_state.now = announced_at + PassIntent::TIMEOUT,
+                4 => recovery.world_state.now = announced_at + PASS_EXECUTION_TIMEOUT,
                 5 => {
                     recovery
                         .world_state
@@ -675,7 +692,10 @@ mod tests {
                         remaining: Duration::from_secs(1),
                     })
                 }
-                6 => recovery.ball.as_mut().unwrap().position = point![3.2, 0.0],
+                6 => {
+                    recovery.ball.as_mut().unwrap().position = point![3.2, 0.0];
+                    recovery.ball.as_mut().unwrap().velocity = vector![0.4, 0.0];
+                }
                 7 => recovery.ball.as_mut().unwrap().position = point![0.3, 0.0],
                 8 => {
                     recovery.last_announced_pass.as_mut().unwrap().inner.target =
@@ -684,13 +704,94 @@ mod tests {
                 9 => recovery.ball_action = Some(super::super::strategy::BallAction::Clear),
                 _ => {
                     recovery.ball_action = Some(super::super::strategy::BallAction::Pass {
-                        receiver: PlayerNumber::Two,
+                        receiver: PlayerNumber::Four,
                     });
                 }
             }
             assert!(!outgoing_pass_in_flight(&recovery), "recovery {case}");
         }
-        sender.world_state.now = announced_at + PassIntent::TIMEOUT;
+        sender.world_state.now = announced_at + PASS_EXECUTION_TIMEOUT;
+        let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
+            message,
+        ))) = sender.try_sending_state_message()
+        else {
+            panic!("expected expired pass cancellation")
+        };
+        assert!(message.pass.is_none());
+        assert!(sender.last_announced_pass.is_none());
+    }
+
+    #[test]
+    fn pass_execution_outlives_peer_freshness_without_extending_announcement() {
+        let mut sender = launched_pass_sender();
+        let announced_at = sender.last_announced_pass.as_ref().unwrap().time;
+        let pass = sender.last_announced_pass.as_ref().unwrap().inner;
+        sender.last_motion_type = Some(MotionType::Walk);
+        sender.ball_action = Some(super::super::strategy::BallAction::Pass {
+            receiver: pass.receiver,
+        });
+        sender.ball.as_mut().unwrap().position = point![2.0, 0.0];
+        for age in [
+            Duration::from_secs(3),
+            Duration::from_secs(4),
+            PASS_EXECUTION_TIMEOUT - Duration::from_millis(1),
+        ] {
+            sender.world_state.now = announced_at + age;
+            sender.ball.as_mut().unwrap().age = sender.world_state.now;
+            sender.world_state.player_states.two.as_mut().unwrap().time = sender.world_state.now;
+            sender.last_sent_hsl_message_time =
+                Some(sender.world_state.now - Duration::from_millis(200));
+            assert!(matches_announced_pass(&sender, pass));
+            assert!(outgoing_pass_in_flight(&sender));
+            let Some(types::messages::OutgoingMessage::Hsl(
+                hsl_network_messages::HulkMessage::State(message),
+            )) = sender.try_sending_state_message()
+            else {
+                panic!("expected in-flight pass broadcast")
+            };
+            assert_eq!(message.pass, Some(pass));
+            assert_eq!(
+                sender.last_announced_pass.as_ref().unwrap().time,
+                announced_at
+            );
+        }
+
+        let mut stale_message = sender.clone();
+        stale_message.last_sent_hsl_message_time =
+            Some(stale_message.world_state.now - Duration::from_secs(3));
+        assert!(!matches_announced_pass(&stale_message, pass));
+        assert!(!outgoing_pass_in_flight(&stale_message));
+
+        let mut receiver = sender.clone();
+        receiver.player_number = PlayerNumber::Two;
+        receiver.last_announced_pass = None;
+        receiver.ball_action = None;
+        receiver.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![3.5, 0.0], 0.0));
+        receiver.world_state.player_states.three = Some(TimeWrapper {
+            time: receiver.world_state.now,
+            inner: PlayerState {
+                pass: Some(pass),
+                ..crate::test_support::player_state()
+            },
+        });
+        assert!(is_pass_receiver(&mut receiver));
+        receiver
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .time = receiver.world_state.now - Duration::from_secs(3);
+        assert!(!is_pass_receiver(&mut receiver));
+
+        sender.world_state.now = announced_at + Duration::from_secs(6);
+        sender.ball.as_mut().unwrap().age = sender.world_state.now;
+        sender.world_state.player_states.two.as_mut().unwrap().time = sender.world_state.now;
+        sender.last_sent_hsl_message_time =
+            Some(sender.world_state.now - Duration::from_millis(200));
+        assert!(!matches_announced_pass(&sender, pass));
+        assert!(!outgoing_pass_in_flight(&sender));
         let Some(types::messages::OutgoingMessage::Hsl(hsl_network_messages::HulkMessage::State(
             message,
         ))) = sender.try_sending_state_message()
@@ -725,6 +826,7 @@ mod tests {
             Some(Isometry2::from_parts(vector![2.0, 0.0], 0.0));
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
         receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        receiver.parameters.ball.interception.minimum_ball_velocity = 0.3;
         receiver.parameters.kicking.kick_activation_distance = 1.3;
         receiver.parameters.kicking.approach_ball_standoff = 0.3;
         receiver.parameters.kicking.strategy.maximum_shot_distance = 6.0;
@@ -780,10 +882,27 @@ mod tests {
             panic!("expected final approach to receiving stance")
         };
         let target = point![1.5, 2.35];
-        let expected =
-            target + (target - sideline.ball.as_ref().unwrap().position).normalize() * 0.5;
         let transform = sideline.world_state.robot.ground_to_field.unwrap();
-        assert!((transform * last.1 - expected).norm() < 1e-5);
+        let direction = (target - sideline.ball.as_ref().unwrap().position).normalize();
+        let displacement = transform * last.1 - transform.as_pose().position();
+        assert!(displacement.dot(&direction).abs() < 1e-5);
+        let expected = target + direction * 0.5;
+        assert!(
+            (transform * last.1 - expected)
+                .dot(&vector![-direction.y(), direction.x()])
+                .abs()
+                < 1e-5
+        );
+
+        for speed in [-0.31, -0.29, 0.0, 0.29, 1.0] {
+            let mut holding = waiting.clone();
+            holding.ball.as_mut().unwrap().position = point![2.8, 0.17];
+            holding.ball.as_mut().unwrap().velocity = vector![speed, 0.0];
+            assert_eq!(prepare_to_receive_pass(&mut holding), Status::Success);
+            assert!(matches!(holding.body_motion,
+                Some(BodyMotion::WalkWithVelocity { velocity, .. })
+                if velocity == Vector2::zeros()));
+        }
 
         assert!(is_pass_receiver(&mut receiver));
         assert!(is_pass_ball_arriving(&mut receiver));

@@ -885,7 +885,8 @@ mod clearance_tests {
         let (_, trace) = tree.tick_with_trace(&mut receiver);
         assert!(succeeded(&trace, "is_pass_ball_arriving"));
         assert!(receiver.last_closest_to_ball);
-        assert!(succeeded(&trace, "receive_rolling_ball"));
+        assert!(!succeeded(&trace, "receive_rolling_ball"));
+        assert!(succeeded(&trace, "execute_ball_action"));
         assert!(!matches!(
             receiver.body_motion,
             Some(BodyMotion::Kick { .. })
@@ -907,12 +908,12 @@ mod clearance_tests {
             Some(BodyMotion::Kick { quick: true, .. })
         ));
 
-        // A receiver facing the sender waits for the stop and lets the normal policy align.
+        // A receiver facing the sender approaches behind the stopped ball before kicking.
         receiver.ball.as_mut().unwrap().velocity = vector![0.2, 0.0];
         tree.tick_with_trace(&mut receiver);
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick { quick: false, .. })
+            Some(BodyMotion::Walk { .. } | BodyMotion::WalkWithVelocity { .. })
         ));
     }
 
@@ -1118,6 +1119,51 @@ mod clearance_tests {
         assert!(!succeeded(&trace, "yield_goalkeeper_clearance"));
         assert!(succeeded(&trace, "is_pass_receiver"));
         assert!(succeeded(&trace, "receive_rolling_ball"));
+
+        let mut field_pass = three_players();
+        field_pass
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![-6.0, 0.0], 0.0);
+        field_pass
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pass = Some(PassIntent {
+            receiver: PlayerNumber::Two,
+            target: point![-4.1, 0.0],
+        });
+        let (_, trace) = tree.tick_with_trace(&mut field_pass);
+        assert!(!succeeded(&trace, "yield_goalkeeper_clearance"));
+        assert!(succeeded(&trace, "is_pass_receiver"));
+        assert!(succeeded(&trace, "receive_rolling_ball"));
+        field_pass
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![-6.0, 1.5], 0.0);
+        let (_, trace) = tree.tick_with_trace(&mut field_pass);
+        assert!(!succeeded(&trace, "yield_goalkeeper_clearance"));
+        assert!(succeeded(&trace, "receive_rolling_ball"));
+        field_pass
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .time = field_pass.world_state.now - PassIntent::TIMEOUT;
+        let (_, trace) = tree.tick_with_trace(&mut field_pass);
+        assert!(succeeded(&trace, "yield_goalkeeper_clearance"));
 
         let mut defender = three_players();
         defender.ball.as_mut().unwrap().position = point![-1.5, 0.0];

@@ -158,7 +158,22 @@ fn plan_with_ball_obstacle(
         parameters.field_border_weight,
     );
     planner.with_goal_support_structures(ground_to_field.inverse(), &field_dimensions);
-    let ball_obstacle = blackboard.world_state.ball.map(|ball| ball.ball_in_ground);
+    let ball_obstacle = blackboard
+        .world_state
+        .ball
+        .map(|ball| ball.ball_in_ground)
+        .or_else(|| {
+            blackboard
+                .ball
+                .as_ref()
+                .filter(|ball| {
+                    ball.age <= blackboard.world_state.now
+                        && blackboard.world_state.now.duration_since(ball.age)
+                            < ball_timeout(&blackboard.parameters, ball.source)
+                })
+                .map(|ball| ground_to_field.inverse() * ball.position)
+        })
+        .filter(|position| position.inner.iter().all(|value| value.is_finite()));
 
     if avoid_ball && let Some(ball_position) = ball_obstacle {
         planner.with_ball(

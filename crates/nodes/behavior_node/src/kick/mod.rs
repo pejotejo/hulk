@@ -26,7 +26,7 @@ use crate::{
     walk::walk_to_ball,
 };
 
-pub(crate) const RESTART_RECEIVER_EXTRA_DISTANCE: f32 = 1.0;
+pub(crate) const RESTART_RECEIVER_EXTRA_DISTANCE: f32 = 0.5;
 
 pub fn kick_subtree() -> Node<Blackboard> {
     switch_motion_type(

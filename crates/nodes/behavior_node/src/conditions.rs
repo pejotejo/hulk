@@ -46,17 +46,12 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
     let transform = world.robot.ground_to_field?;
     let keeper = world.player_states[keeper_number].as_ref()?;
     let field = &blackboard.field_dimensions;
+    let passing = &blackboard.parameters.kicking.strategy.passing;
     let keeper_position = keeper.inner.pose.position();
     if ball.age > world.now
         || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
         || keeper.time > world.now
-        || world.now.duration_since(keeper.time)
-            > blackboard
-                .parameters
-                .kicking
-                .strategy
-                .passing
-                .maximum_receiver_age
+        || world.now.duration_since(keeper.time) > passing.maximum_receiver_age
         || world
             .filtered_game_controller_state
             .as_ref()
@@ -78,25 +73,47 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
     {
         return None;
     }
-    if keeper.inner.pass.is_some_and(|pass| {
-        pass.receiver == blackboard.player_number
-            && world.now.duration_since(keeper.time) < hsl_network_messages::PassIntent::TIMEOUT
-            && pass.target.inner.iter().all(|value| value.is_finite())
-            && pass.target.x().abs() < field.length / 2.0
-            && pass.target.y().abs() < field.width / 2.0
-            && (pass.target - keeper_position).norm()
-                <= blackboard
-                    .parameters
-                    .kicking
-                    .strategy
-                    .passing
-                    .maximum_distance
-                    + blackboard
-                        .parameters
-                        .kicking
-                        .strategy
-                        .passing
-                        .receiver_standoff
+    // An addressed pass has an explicit source; do not infer a keeper clearance instead.
+    if world.player_states.iter().any(|(number, state)| {
+        let Some(sender) = state.as_ref() else {
+            return false;
+        };
+        let sender_to_ball = ball.position - sender.inner.pose.position();
+        let follows_field_pass =
+            ball.velocity
+                .try_normalize(f32::EPSILON)
+                .is_some_and(|direction| {
+                    sender_to_ball.dot(&direction)
+                        >= -blackboard.parameters.kicking.kick_activation_distance
+                });
+        number != blackboard.player_number
+            && (number == keeper_number || follows_field_pass)
+            && sender.time <= world.now
+            && world.now.duration_since(sender.time) < hsl_network_messages::PassIntent::TIMEOUT
+            && !world
+                .filtered_game_controller_state
+                .as_ref()
+                .is_some_and(|game| game.penalties[number].is_some())
+            && sender
+                .inner
+                .pose
+                .position()
+                .inner
+                .iter()
+                .all(|value| value.is_finite())
+            && sender.inner.pass.is_some_and(|pass| {
+                pass.receiver == blackboard.player_number
+                    && (number == keeper_number
+                        || ball
+                            .velocity
+                            .dot(&(pass.target - sender.inner.pose.position()))
+                            > 0.0)
+                    && pass.target.inner.iter().all(|value| value.is_finite())
+                    && pass.target.x().abs() < field.length / 2.0
+                    && pass.target.y().abs() < field.width / 2.0
+                    && (pass.target - sender.inner.pose.position()).norm()
+                        <= passing.maximum_distance + passing.receiver_standoff
+            })
     }) {
         return None;
     }

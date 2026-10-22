@@ -535,7 +535,7 @@ mod tests {
             + 2.0 * board.parameters.walking.path_planning.robot_radius
             + 0.05
             + board.parameters.kicking.strategy.passing.receiver_standoff
-            + 1.0;
+            + 0.5;
         assert!(right_position.y().abs() >= minimum_y - 1e-5);
         let right_stance = kickoff_receiving_pose(&board).unwrap();
         board
