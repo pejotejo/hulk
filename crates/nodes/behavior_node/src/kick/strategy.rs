@@ -1038,6 +1038,25 @@ mod tests {
             execute_ball_action(&mut board);
             assert!(matches!(board.ball_action, Some(BallAction::Pass { .. })));
             assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+
+            let mut crowded = board.clone();
+            let closer = point![0.9, 0.0];
+            crowded
+                .world_state
+                .player_states
+                .two
+                .as_mut()
+                .unwrap()
+                .inner
+                .pose = closer.into();
+            crowded.world_state.obstacles[0].position = transform.inverse() * closer;
+            select_ball_action(&mut crowded);
+            execute_ball_action(&mut crowded);
+            assert!(
+                !matches!(crowded.ball_action, Some(BallAction::Pass { .. })),
+                "announced pass must not preserve a point-blank target before launch"
+            );
+
             board.ball.as_mut().unwrap().position = Point2::origin();
             board.last_motion_type = None;
 

@@ -77,7 +77,7 @@
       passing: {
         // Provisional regular-kick reach; calibrate at target_speed before deployment.
         maximum_distance: 8.0,
-        minimum_distance: 3.0,
+        minimum_distance: 4.0,
         minimum_progress: 0.25,
         receiver_standoff: 0.5,
         target_half_width: 0.3,
