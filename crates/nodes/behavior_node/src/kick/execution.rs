@@ -23,6 +23,69 @@ use super::{
     strategy::BallAction,
 };
 
+pub fn finish_close_goal(blackboard: &mut Blackboard) -> Status {
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(ball) = kick_ball_position_in_ground(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    let position = transform * ball;
+    let field = blackboard.field_dimensions;
+    let goal_x = field.length / 2.0;
+    let half_width = field.goal_inner_width / 2.0 - field.ball_radius;
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
+        || blackboard.parameters.kicking.strategy.validate().is_err()
+        || !position.inner.iter().all(|value| value.is_finite())
+        || !field.length.is_finite()
+        || field.length <= 0.0
+        || !field.goal_box_area_length.is_finite()
+        || field.goal_box_area_length <= 0.0
+        || !half_width.is_finite()
+        || half_width <= 0.0
+        || !(goal_x - field.goal_box_area_length..goal_x).contains(&position.x())
+        || position.y().abs() >= half_width
+        || ball.x() <= 0.0
+        || ball.coords().norm() > blackboard.parameters.kicking.kick_activation_distance
+        || (transform * vector![1.0, 0.0]).x() <= 0.0
+        || (blackboard.last_motion_type != Some(MotionType::Kick)
+            && !is_allowed_to_start_kick(blackboard))
+    {
+        return Status::Failure;
+    }
+    let target = goal_openings(
+        position,
+        transform,
+        &blackboard.world_state.obstacles,
+        &field,
+        blackboard.parameters.kicking.strategy.obstacle_clearance,
+    )
+    .into_iter()
+    .max_by(|a, b| {
+        LineSegment(position, a.0)
+            .angle(LineSegment(position, a.1))
+            .total_cmp(&LineSegment(position, b.0).angle(LineSegment(position, b.1)))
+    })
+    .map_or(point![goal_x, 0.0], |opening| opening.center());
+    // At the goal mouth, contest a blocked shot instead of waiting for a perfect corridor.
+    if super::kick(blackboard) == Status::Failure {
+        return Status::Failure;
+    }
+    super::apply_kick_target(blackboard, target);
+    if let Some(BodyMotion::Kick {
+        quick,
+        strong,
+        target_speed,
+        ..
+    }) = &mut blackboard.body_motion
+    {
+        *quick = true;
+        *strong = blackboard.parameters.kicking.allow_strong_kicks;
+        *target_speed = blackboard.parameters.kicking.target_speed;
+    }
+    Status::Success
+}
+
 pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
     let Some(transform) = blackboard.world_state.robot.ground_to_field else {
         return Status::Failure;
@@ -49,10 +112,20 @@ pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
     {
         return Status::Failure;
     }
-    if super::strategy::select_ball_action(blackboard) == Status::Success
-        && !matches!(blackboard.ball_action, Some(BallAction::Dribble))
-    {
-        return execute_ball_action(blackboard);
+    if super::strategy::select_ball_action(blackboard) == Status::Success {
+        let ready_pass = match blackboard.ball_action {
+            Some(BallAction::Pass { receiver }) => resolve_target(blackboard)
+                .is_some_and(|target| pass_is_announced(blackboard, receiver, target)),
+            _ => false,
+        };
+        if ready_pass
+            || matches!(
+                blackboard.ball_action,
+                Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter | BallAction::Clear)
+            )
+        {
+            return execute_ball_action(blackboard);
+        }
     }
     // A ball inside the holder's obstacle has no open corridor; poke it out of their control.
     if super::kick(blackboard) == Status::Failure {
@@ -150,7 +223,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
                     ))));
     let can_switch = is_allowed_to_start_kick(blackboard);
     let close_to_ball = is_close_to_ball(blackboard);
-    if (((was_kicking || (!receiving && ball.x() >= 0.0)) && close_to_ball)
+    if ((ball.x() >= 0.0 && (was_kicking || !receiving) && close_to_ball)
         || (receiving && ready_to_receive)
         || (was_kicking && !can_switch))
         && (was_kicking || can_switch)
@@ -473,6 +546,24 @@ mod tests {
         board.last_motion_type = Some(MotionType::StandUp);
         execute_ball_action(&mut board);
         assert!(matches!(board.body_motion, Some(BodyMotion::Stand)));
+
+        board.last_motion_type = Some(MotionType::Kick);
+        board.last_motion_switch_time = board.world_state.now;
+        board.walking_velocity_limits.angular_velocity_limit = 2.0;
+        board.parameters.control.allow_switch.kick = std::time::Duration::from_millis(500);
+        board.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![-3.8, 0.0], 0.0));
+        board.ball.as_mut().unwrap().position = point![-4.3, 0.0];
+        board.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        execute_ball_action(&mut board);
+        assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+        board.world_state.now = board.world_state.now + std::time::Duration::from_millis(501);
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                if velocity == Vector2::zeros() && angular_velocity.abs() > 0.0
+        ));
     }
 
     #[test]

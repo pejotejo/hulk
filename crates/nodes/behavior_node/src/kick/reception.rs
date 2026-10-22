@@ -228,9 +228,16 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     }
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
+    let pass_receiver = super::passing::is_pass_receiver(blackboard);
     let settle = blackboard.player_number != blackboard.parameters.goalkeeper.player_number
+        && pass_receiver
         && !is_receiver_under_pressure(blackboard);
     if settle && position.coords().dot(&velocity) >= 0.0 {
+        return Status::Failure;
+    }
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
+        && !should_block_ball(position, velocity, goal)
+    {
         return Status::Failure;
     }
     if !settle {
@@ -277,7 +284,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         blocking_target(
             position,
             velocity,
-            (!super::passing::is_pass_receiver(blackboard)).then_some(goal),
+            (!pass_receiver).then_some(goal),
             standoff,
             limits,
             walk_speed,
@@ -368,8 +375,12 @@ fn blocking_target(
     walk_speed: f32,
     orientation: Orientation2<Ground>,
 ) -> Option<Point2<Ground>> {
-    if !(position.coords().dot(&velocity) < 0.0
-        || own_goal.is_some_and(|goal| should_block_ball(position, velocity, goal)))
+    if !position
+        .inner
+        .iter()
+        .chain(velocity.inner.iter())
+        .all(|value| value.is_finite())
+        || velocity.norm_squared() <= f32::EPSILON
     {
         return None;
     }
@@ -938,6 +949,117 @@ mod tests {
         assert!(target.x() < position.x());
         assert!(target.x() > -4.5);
         assert!(target.y().abs() < 1e-6);
+    }
+
+    #[test]
+    fn gets_ahead_of_a_reachable_ball_moving_away_from_own_goal() {
+        let position = point![1.0, 0.0];
+        let velocity = vector![0.4, 0.0];
+        let limits = WalkingVelocityLimits {
+            forward_velocity_limits: [-0.8, 1.8],
+            lateral_velocity_limit: 1.0,
+            angular_velocity_limit: 2.0,
+        };
+        let orientation = Orientation2::from_vector(-velocity);
+        let target = blocking_target(
+            position,
+            velocity,
+            Some(point![-4.5, 0.0]),
+            0.3,
+            limits,
+            1.8,
+            orientation,
+        )
+        .unwrap();
+        let time = (target.x() - position.x() - 0.3) / velocity.x();
+        assert!((0.0..=MAXIMUM_INTERCEPTION_TIME).contains(&time));
+        assert!(travel_time(target, orientation, limits, 1.8) <= time + 1e-5);
+        assert!(target.x() > (position + velocity * time).x());
+        assert!(target.y().abs() < 1e-6);
+
+        assert!(
+            blocking_target(
+                position,
+                vector![2.0, 0.0],
+                Some(point![-4.5, 0.0]),
+                0.3,
+                limits,
+                1.8,
+                orientation,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn striker_meets_predicted_path_even_with_opponent_at_the_ball() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            player_number: PlayerNumber::Two,
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![2.0, 0.7],
+                velocity: vector![-0.5, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            walking_velocity_limits: WalkingVelocityLimits {
+                forward_velocity_limits: [-0.8, 1.8],
+                lateral_velocity_limit: 1.0,
+                angular_velocity_limit: 2.0,
+            },
+            ..Default::default()
+        };
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        board.parameters.kicking.strategy.pressure_distance = 0.8;
+        board.parameters.kicking.receiving_opponent_distance = 1.0;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.speed.kicking = 1.8;
+        for contested in [false, true] {
+            board.world_state.obstacles = if contested {
+                vec![Obstacle::robot(point![2.1, 0.8], 0.2, 0.2)]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                crate::conditions::opponent_near_ball(&board, 0.8),
+                contested
+            );
+            assert!(!is_receiver_under_pressure(&board));
+            assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+            let Some(BodyMotion::Walk {
+                ref path, speed, ..
+            }) = board.body_motion
+            else {
+                panic!("expected active interception, not a passive trap")
+            };
+            let types::path::PathSegment::LineSegment(segment) = path.last_segment() else {
+                panic!("expected final approach to predicted contact")
+            };
+            let target = segment.1;
+            let ball = board.ball.as_ref().unwrap();
+            let transform = board.world_state.robot.ground_to_field.unwrap().inverse();
+            let position = transform * ball.position;
+            let velocity = transform * ball.velocity;
+            let time = (target.x() - position.x() + 0.3) / velocity.x();
+            assert!(time > 0.0 && time < MAXIMUM_INTERCEPTION_TIME);
+            assert!(target.x() > 0.0 && target.x() < position.x() - 0.3);
+            assert!((target + vector![0.3, 0.0] - position - velocity * time).norm() < 1e-5);
+            assert!(
+                travel_time(
+                    target,
+                    Orientation2::identity(),
+                    board.walking_velocity_limits,
+                    speed
+                ) <= time + 1e-5
+            );
+        }
     }
 
     #[test]

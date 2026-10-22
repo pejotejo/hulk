@@ -153,6 +153,18 @@ impl Blackboard {
         if cancelling_pass {
             send_interval = Duration::ZERO;
         }
+        // Refresh the owner's pose once so teammates can recompute ball ownership promptly.
+        if self.last_closest_to_ball
+            && self
+                .closest_to_ball_entered_area_since
+                .is_some_and(|since| {
+                    self.last_sent_hsl_message_time
+                        .is_none_or(|last| last < since)
+                })
+        {
+            send_interval =
+                send_interval.min(self.parameters.network.silence_interval_between_messages);
+        }
         if !announcing_pass
             && !keeper_claim_changed
             && !is_cooldown_elapsed(now, self.last_sent_hsl_message_time, send_interval)
@@ -271,6 +283,44 @@ fn is_cooldown_elapsed(now: Time, last: Option<Time>, cooldown: Duration) -> boo
 mod tests {
     use super::*;
     use types::filtered_game_state::FilteredGameState;
+
+    #[test]
+    fn new_ball_owner_refreshes_state_once_with_silence_and_budget_limits() {
+        let mut board = Blackboard::default();
+        board.world_state.robot.primary_state = PrimaryState::Playing;
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.network.silence_interval_between_messages = Duration::from_secs(1);
+        board
+            .parameters
+            .network
+            .remaining_amount_of_messages_to_stop_sending = 20;
+        board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
+            remaining_time_in_half: Duration::from_secs(600),
+            remaining_number_of_messages: 100,
+            ..crate::test_support::filtered_game_controller_state()
+        });
+        board.last_sent_hsl_message_time = Some(board.world_state.now);
+        board.world_state.now = board.world_state.now + Duration::from_millis(500);
+        board.closest_to_ball_entered_area_since = Some(board.world_state.now);
+        board.last_closest_to_ball = true;
+        assert!(board.try_sending_state_message().is_none());
+
+        board.world_state.now = board.world_state.now + Duration::from_millis(600);
+        let mut reserved = board.clone();
+        reserved
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .remaining_number_of_messages = 20;
+        assert!(reserved.try_sending_state_message().is_none());
+        let mut supporter = board.clone();
+        supporter.last_closest_to_ball = false;
+        assert!(supporter.try_sending_state_message().is_none());
+        assert!(board.try_sending_state_message().is_some());
+        board.world_state.now = board.world_state.now + Duration::from_millis(1100);
+        assert!(board.try_sending_state_message().is_none());
+    }
 
     #[test]
     fn restart_receivers_update_before_expiry_without_spending_reserved_messages() {

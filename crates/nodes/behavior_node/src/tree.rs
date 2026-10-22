@@ -16,7 +16,7 @@ use crate::{
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
-        execution::{challenge_opponent_ball, execute_ball_action},
+        execution::{challenge_opponent_ball, execute_ball_action, finish_close_goal},
         kick,
         kickoff::kickoff_subtree,
         passing::{
@@ -209,6 +209,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
             sequence!(
                 negation!(condition!(is_in_sub_state)),
                 selection!(
+                    action!(finish_close_goal),
                     action!(challenge_opponent_ball),
                     action!(receive_rolling_ball),
                     action!(block_opponent_with_ball),
@@ -481,6 +482,108 @@ mod clearance_tests {
                 "protected case {case}"
             );
         }
+    }
+
+    #[test]
+    fn striker_finishes_at_goal_mouth_even_when_the_keeper_blocks_every_corridor() {
+        let tree = striker_subtree();
+        let mut board = three_players();
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![6.0, 0.0], 0.0).as_transform());
+        board.ball.as_mut().unwrap().position = point![6.6, 0.0];
+        board.ball.as_mut().unwrap().velocity = vector![0.1, 0.0];
+        board.world_state.obstacles = vec![Obstacle::robot(point![0.85, 0.0], 0.2, 0.2)];
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "finish_close_goal"));
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick { quick: true, strong: true, soft: false,
+                ball_velocity, target_speed: 3.4, .. })
+                if ball_velocity == vector![0.1, 0.0]
+        ));
+        assert_eq!(board.kick_target, Some(point![1.0, 0.0]));
+
+        board.world_state.obstacles = vec![Obstacle::robot(point![1.0, -0.3], 0.1, 0.1)];
+        tree.tick_with_trace(&mut board);
+        assert!(
+            board.kick_target.unwrap().y() > 0.0,
+            "use the open goal side"
+        );
+
+        for case in 0..4 {
+            let mut protected = board.clone();
+            match case {
+                0 => {
+                    protected.ball.as_mut().unwrap().position = point![4.6, 0.0];
+                    protected.world_state.robot.ground_to_field =
+                        Some(Pose2::new(point![4.0, 0.0], 0.0).as_transform());
+                }
+                1 => protected.ball.as_mut().unwrap().position = point![6.6, 1.5],
+                2 => {
+                    protected.last_motion_type = Some(MotionType::StandUp);
+                    protected.last_motion_switch_time = protected.world_state.now;
+                    protected.parameters.control.allow_switch.stand_up = Duration::from_secs(1);
+                }
+                _ => {
+                    protected
+                        .world_state
+                        .filtered_game_controller_state
+                        .as_mut()
+                        .unwrap()
+                        .sub_state = Some(SubState::IndirectFreeKick);
+                }
+            }
+            let (_, trace) = tree.tick_with_trace(&mut protected);
+            assert!(
+                !succeeded(&trace, "finish_close_goal"),
+                "protected case {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn contested_ball_does_not_wait_for_a_pass_announcement() {
+        let mut board = three_players();
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .remaining_number_of_messages = 1200;
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.ball.as_mut().unwrap().position = point![0.6, 0.0];
+        board.ball.as_mut().unwrap().velocity = vector![0.1, 0.0];
+        board
+            .world_state
+            .player_states
+            .three
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = Pose2::new(point![3.0, -3.0], 0.0);
+        board.world_state.obstacles = vec![
+            Obstacle::robot(point![0.6, 0.75], 0.1, 0.1),
+            Obstacle::robot(point![6.5, 0.0], 1.0, 1.0),
+        ];
+        board.parameters.kicking.strategy.pressure_distance = 0.8;
+        assert_eq!(select_ball_action(&mut board), Status::Success);
+        assert_eq!(
+            board.ball_action,
+            Some(BallAction::Pass {
+                receiver: PlayerNumber::Three
+            })
+        );
+        assert!(board.last_announced_pass.is_none());
+        let (_, trace) = striker_subtree().tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "challenge_opponent_ball"));
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                quick: true,
+                soft: false,
+                ..
+            })
+        ));
     }
 
     #[test]

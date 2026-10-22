@@ -10,7 +10,7 @@ use types::{
     motion_type::MotionType,
     obstacles::ObstacleKind,
     parameters::VoronoiParameters,
-    path::{Path, direct_path},
+    path::{Path, direct_path, traits::PathProgress},
 };
 use voronoi::{Ownership, VoronoiGrid};
 
@@ -19,7 +19,9 @@ use crate::{
     actions::stand,
     behavior_tree::Node,
     condition,
-    conditions::{enemy_obstacles, hulks_is_kicking_team, opponent_near_ball},
+    conditions::{
+        enemy_obstacles, goalkeeper_clearance_direction, hulks_is_kicking_team, opponent_near_ball,
+    },
     kick::{
         execution::execute_ball_action,
         kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
@@ -251,9 +253,12 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
 }
 
 pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
-    if blackboard.last_motion_type == Some(MotionType::Kick)
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
+        || blackboard.last_motion_type == Some(MotionType::Kick)
         || (blackboard.last_motion_type != Some(MotionType::Walk)
             && !is_allowed_to_switch(blackboard))
+        || crate::kick::passing::is_pass_receiver(blackboard)
+        || goalkeeper_clearance_direction(blackboard).is_some()
         || !opponent_near_ball(
             blackboard,
             blackboard.parameters.kicking.strategy.pressure_distance,
@@ -267,42 +272,49 @@ pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
     ) else {
         return Status::Failure;
     };
-    // A striker behind the attacker should approach from our goal side.
-    if transform.translation().x() <= ball.position.x() + blackboard.field_dimensions.ball_radius {
-        return Status::Failure;
-    }
     let Some(toward_goal) = (point![-blackboard.field_dimensions.length / 2.0, 0.0]
         - ball.position)
         .try_normalize(f32::EPSILON)
     else {
         return Status::Failure;
     };
-    let standoff = blackboard.parameters.kicking.approach_ball_standoff.max(
-        blackboard.parameters.walking.path_planning.robot_radius
-            + blackboard
-                .parameters
-                .walking
-                .path_planning
-                .ball_obstacle_radius
-                .max(blackboard.field_dimensions.ball_radius)
-            + 0.05,
-    );
-    let target = transform.inverse() * (ball.position + toward_goal * standoff);
+    let target = transform.inverse()
+        * (ball.position + toward_goal * blackboard.parameters.kicking.approach_ball_standoff);
     let ball = transform.inverse() * ball.position;
+    if !ball
+        .inner
+        .iter()
+        .chain(target.inner.iter())
+        .all(|value| value.is_finite())
+    {
+        return Status::Failure;
+    }
+    // Get goal-side within tackle range so the next touch can face away from our goal.
     let walking = blackboard.parameters.walking.walk_and_stand;
     blackboard.ball_action = None;
     blackboard.kick_target = None;
-    walk_to(
-        blackboard,
-        Pose2::from_parts(target, Orientation2::from_vector(ball - target)),
-        blackboard.parameters.walking.speed.blocking,
-        OrientationMode::LookAt {
+    let path = plan_interception(blackboard, target, transform);
+    let forward = path.forward(Point2::origin());
+    if forward.x() < 0.0 {
+        blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+            velocity: Vector2::zeros(),
+            angular_velocity: blackboard
+                .walking_velocity_limits
+                .scale_angular_axis(Orientation2::from_vector(forward).angle()),
+        });
+        return Status::Success;
+    }
+    blackboard.body_motion = Some(BodyMotion::Walk {
+        path,
+        orientation_mode: OrientationMode::LookAt {
             target: ball,
             tolerance: walking.orientation_tolerance,
         },
-        walking.normal_distance_to_be_aligned,
-        walking.hysteresis,
-    )
+        target_orientation: Orientation2::from_vector(ball - target),
+        distance_to_be_aligned: walking.normal_distance_to_be_aligned,
+        speed: blackboard.parameters.walking.speed.kicking,
+    });
+    Status::Success
 }
 
 pub fn walk_to_ball_subtree() -> Node<Blackboard> {
@@ -872,48 +884,70 @@ mod ball_support_tests {
     }
 
     #[test]
-    fn approaches_contested_ball_from_own_goal_side() {
+    fn approaches_contested_ball_from_either_side_at_tackle_distance() {
         use crate::node::LastBall;
         use types::{
             field_dimensions::Side,
             obstacles::{Obstacle, ObstacleKind},
-            path::PathSegment,
+            path::traits::EndPoints,
             world_state::BallSource,
         };
         let mut blackboard = Blackboard {
+            player_number: PlayerNumber::Two,
             field_dimensions: FieldDimensions::SPL_2025,
             ..Default::default()
         };
+        blackboard.parameters.goalkeeper.player_number = PlayerNumber::One;
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.ball = Some(LastBall {
-            position: point![-1.0, 0.0],
+            position: point![2.0, 0.0],
             velocity: Default::default(),
             age: Default::default(),
             field_side: Side::Left,
             source: BallSource::Own,
         });
         blackboard.parameters.kicking.strategy.pressure_distance = 0.8;
+        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.kick_activation_distance = 1.3;
         blackboard.parameters.walking.path_planning.robot_radius = 0.4;
-        blackboard.world_state.obstacles = vec![Obstacle {
-            kind: ObstacleKind::Robot,
-            position: point![-0.9, 0.1],
-            radius_at_foot_height: 0.2,
-            radius_at_hip_height: 0.2,
-        }];
-        assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Success);
-        let Some(BodyMotion::Walk {
-            path,
-            orientation_mode: OrientationMode::LookAt { target, .. },
-            ..
-        }) = &blackboard.body_motion
-        else {
-            panic!("expected goal-side approach")
-        };
-        let PathSegment::LineSegment(segment) = path.last_segment() else {
-            panic!("expected path to goal-side position")
-        };
-        assert!(segment.1.x() < -1.4);
-        assert_eq!(*target, point![-1.0, 0.0]);
+        blackboard
+            .parameters
+            .walking
+            .path_planning
+            .ball_obstacle_radius = 0.5;
+        blackboard.parameters.walking.speed.kicking = 1.8;
+        let opponent_in_field: Point2<Field> = point![2.2, 0.0];
+        for transform in [
+            Isometry2::identity(),
+            Isometry2::from_parts(linear_algebra::vector![3.5, 0.0], std::f32::consts::PI),
+        ] {
+            blackboard.world_state.robot.ground_to_field = Some(transform);
+            blackboard.world_state.obstacles = vec![Obstacle {
+                kind: ObstacleKind::Robot,
+                position: transform.inverse() * opponent_in_field,
+                radius_at_foot_height: 0.2,
+                radius_at_hip_height: 0.2,
+            }];
+            assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Success);
+            let Some(BodyMotion::Walk {
+                path,
+                orientation_mode: OrientationMode::LookAt { target, .. },
+                target_orientation,
+                speed,
+                ..
+            }) = &blackboard.body_motion
+            else {
+                panic!("expected direct pressure on holder")
+            };
+            let ball = transform.inverse() * point![2.0, 0.0];
+            let endpoint = path.end_point();
+            assert!((transform * endpoint).x() < 2.0);
+            assert!((endpoint - ball).norm() < 1.3);
+            assert!((endpoint - blackboard.world_state.obstacles[0].position).norm() >= 0.6);
+            assert!((transform * target_orientation.as_unit_vector()).x() > 0.0);
+            approx::assert_relative_eq!(*target, ball);
+            assert_eq!(*speed, 1.8);
+        }
         let opponent = blackboard.world_state.obstacles.pop().unwrap();
         assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Failure);
         blackboard.world_state.obstacles.push(opponent);
@@ -921,10 +955,13 @@ mod ball_support_tests {
         assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Failure);
         blackboard.last_motion_type = Some(MotionType::Walk);
         blackboard.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
-            linear_algebra::vector![-1.5, 0.0],
+            linear_algebra::vector![3.5, 0.0],
             0.0,
         ));
-        assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Failure);
+        blackboard.world_state.obstacles[0].position = point![-1.3, 0.0];
+        assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Success);
+        assert!(matches!(blackboard.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, .. }) if velocity == Vector2::zeros()));
     }
 
     #[test]

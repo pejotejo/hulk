@@ -388,6 +388,15 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     } else {
         raw_is_closest
             && (is_ball_interception_candidate(blackboard)
+                || blackboard.ball.as_ref().is_some_and(|ball| {
+                    ball.age <= now
+                        && now.duration_since(ball.age)
+                            < ball_timeout(&blackboard.parameters, ball.source)
+                        && opponent_near_ball(
+                            blackboard,
+                            blackboard.parameters.kicking.strategy.pressure_distance,
+                        )
+                })
                 || blackboard
                     .closest_to_ball_entered_area_since
                     .is_some_and(|since| now.duration_since(since) >= parameters.enter_duration))
@@ -697,6 +706,89 @@ mod tests {
         assert!(is_closest_to_ball(&mut board));
         board.world_state.now = board.world_state.now + Duration::from_millis(150);
         assert!(!is_closest_to_ball(&mut board));
+    }
+
+    #[test]
+    fn fresh_opponent_possession_skips_entry_dwell_only_for_elected_owner() {
+        let poses = [
+            (PlayerNumber::Two, linear_algebra::Pose2::default()),
+            (PlayerNumber::Three, point![-2.0, 2.0].into()),
+        ];
+        let mut owners = Vec::new();
+        for (player, pose) in poses {
+            let mut board = Blackboard {
+                player_number: player,
+                field_dimensions: types::field_dimensions::FieldDimensions::SPL_2025,
+                ..Default::default()
+            };
+            board.world_state.now = board.world_state.now + Duration::from_secs(10);
+            board.world_state.robot.ground_to_field = Some(pose.as_transform());
+            board.parameters.goalkeeper.player_number = PlayerNumber::One;
+            board.parameters.ball.last_ball_timeout = Duration::from_millis(500);
+            board.parameters.ball.team_ball_timeout = Duration::from_secs(1);
+            board.parameters.ball.closest_to_ball.enter_duration = Duration::from_millis(300);
+            board.parameters.kicking.strategy.pressure_distance = 0.8;
+            board.parameters.voronoi.grid_resolution = 0.2;
+            board.parameters.voronoi.padding = 0.5;
+            board
+                .parameters
+                .kicking
+                .strategy
+                .passing
+                .maximum_receiver_age = Duration::from_secs(3);
+            board.ball = Some(LastBall {
+                position: point![1.2, 0.0],
+                velocity: Default::default(),
+                age: board.world_state.now,
+                field_side: Side::Left,
+                source: BallSource::Own,
+            });
+            for (peer, peer_pose) in poses {
+                if peer != player {
+                    board.world_state.player_states[peer] = Some(TimeWrapper {
+                        time: board.world_state.now,
+                        inner: PlayerState {
+                            pose: peer_pose,
+                            ..crate::test_support::player_state()
+                        },
+                    });
+                }
+            }
+            board.world_state.obstacles = vec![Obstacle::robot(
+                pose.as_transform::<Ground>().inverse() * point![1.3, 0.0],
+                0.2,
+                0.2,
+            )];
+            crate::voronoi::calculate_voronoi_grid(&mut board);
+            assert_eq!(
+                board
+                    .voronoi_map
+                    .as_ref()
+                    .unwrap()
+                    .ownership_at(point![1.2, 0.0]),
+                Some(Ownership::Blocked)
+            );
+            for source in [BallSource::Own, BallSource::Team] {
+                for future in [false, true] {
+                    let mut invalid = board.clone();
+                    let ball = invalid.ball.as_mut().unwrap();
+                    ball.source = source;
+                    ball.age = if future {
+                        invalid.world_state.now + Duration::from_millis(1)
+                    } else {
+                        invalid.world_state.now - ball_timeout(&invalid.parameters, source)
+                    };
+                    assert!(!is_closest_to_ball(&mut invalid));
+                }
+            }
+            let mut uncontested = board.clone();
+            uncontested.world_state.obstacles.clear();
+            assert!(!is_closest_to_ball(&mut uncontested));
+            if is_closest_to_ball(&mut board) {
+                owners.push(player);
+            }
+        }
+        assert_eq!(owners, vec![PlayerNumber::Two]);
     }
 
     #[test]
