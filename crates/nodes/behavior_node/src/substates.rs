@@ -14,6 +14,7 @@ use crate::{
     condition,
     conditions::hulks_is_kicking_team,
     kick::{
+        RESTART_RECEIVER_EXTRA_DISTANCE,
         execution::execute_ball_action,
         geometry::pass_openings,
         strategy::{BallAction, select_ball_action},
@@ -197,13 +198,15 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
         })
         .cloned()
         .collect();
+    let mut passing = parameters.passing.clone();
+    passing.minimum_distance += RESTART_RECEIVER_EXTRA_DISTANCE;
     !pass_openings(
         ball.position,
         receiver,
         transform,
         &obstacles,
         &blackboard.field_dimensions,
-        &parameters.passing,
+        &passing,
         parameters.obstacle_clearance,
     )
     .is_empty()
@@ -258,6 +261,7 @@ pub(crate) fn restart_pass_receiver(
     for (forward, inward) in [(backward, 1.0), (backward + 1.0, 1.0), (backward, 2.0)] {
         let distance = distance.max(
             (parameters.passing.minimum_distance
+                + RESTART_RECEIVER_EXTRA_DISTANCE
                 + parameters.passing.receiver_standoff
                 + parameters.passing.target_half_width)
                 / forward.hypot(inward),
@@ -976,9 +980,16 @@ mod tests {
             assert!(target.y().abs() + 0.4 < 4.5);
             let passing = &taker.parameters.kicking.strategy.passing;
             assert!(
-                (target - ball).norm() - passing.receiver_standoff >= passing.minimum_distance,
+                (target - ball).norm() - passing.receiver_standoff
+                    >= passing.minimum_distance + 1.0,
                 "{state:?} receiver must leave enough ball travel after its standoff"
             );
+            if !blocked {
+                let too_close = ball
+                    + (target - ball).normalize()
+                        * (passing.minimum_distance + passing.receiver_standoff + 0.1);
+                assert!(!restart_pass_is_open(&taker, too_close));
+            }
             let mut closed_lane = taker.clone();
             closed_lane.world_state.obstacles.push(Obstacle::robot(
                 taker_pose.as_transform().inverse() * (ball + (target - ball) * 0.5),

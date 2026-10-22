@@ -1000,6 +1000,15 @@ mod tests {
         for sub_state in [None, Some(SubState::ThrowIn)] {
             let mut board = passing_blackboard();
             board.parameters.kicking.strategy.passing.minimum_distance = 1.4;
+            board
+                .world_state
+                .player_states
+                .two
+                .as_mut()
+                .unwrap()
+                .inner
+                .pose = point![3.0, 0.0].into();
+            board.world_state.obstacles[0].position = point![3.0, 0.0];
             board.last_sent_hsl_message_time = Some(board.world_state.now);
             let game = board
                 .world_state

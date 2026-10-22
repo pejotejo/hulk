@@ -21,7 +21,9 @@ use crate::{
     walk::walk_to_kickoff_pose,
 };
 
-use super::{execution::execute_ball_action, strategy::BallAction};
+use super::{
+    RESTART_RECEIVER_EXTRA_DISTANCE, execution::execute_ball_action, strategy::BallAction,
+};
 
 pub(crate) fn kickoff_kicker(blackboard: &Blackboard) -> PlayerNumber {
     if blackboard.parameters.kickoff.pass_to_left {
@@ -61,7 +63,8 @@ pub fn kickoff_receiver_position(blackboard: &Blackboard) -> Point2<Field> {
             .kicking
             .strategy
             .passing
-            .receiver_standoff;
+            .receiver_standoff
+        + RESTART_RECEIVER_EXTRA_DISTANCE;
     kickoff_support_position(
         blackboard,
         point![
@@ -526,11 +529,13 @@ mod tests {
         board.field_dimensions.width = 9.0;
         board.field_dimensions.center_circle_diameter = 3.0;
         board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.kicking.strategy.passing.maximum_distance = 8.0;
         let right_position = kickoff_receiver_position(&board);
         let minimum_y = board.field_dimensions.center_circle_diameter / 2.0
             + 2.0 * board.parameters.walking.path_planning.robot_radius
             + 0.05
-            + board.parameters.kicking.strategy.passing.receiver_standoff;
+            + board.parameters.kicking.strategy.passing.receiver_standoff
+            + 1.0;
         assert!(right_position.y().abs() >= minimum_y - 1e-5);
         let right_stance = kickoff_receiving_pose(&board).unwrap();
         board
