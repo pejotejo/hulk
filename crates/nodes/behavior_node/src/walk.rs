@@ -58,7 +58,7 @@ pub(crate) fn adaptive_blocking_velocity(
     let parameters = &blackboard.parameters;
     let body_half_width = parameters.walking.path_planning.robot_radius / 2.0;
     let near_front = ball.x() >= 0.0
-        && ball.coords().norm() <= parameters.kicking.kick_activation_distance
+        && ball.coords().norm() <= 2.0 * parameters.kicking.approach_ball_standoff
         && ball.y().abs() <= body_half_width + blackboard.field_dimensions.ball_radius;
     let speed = velocity.norm();
     let closing_speed = parameters.walking.speed.minimum_speed.max(0.0);
@@ -633,24 +633,29 @@ mod ball_support_tests {
         };
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.parameters.walking.speed.minimum_speed = 0.2;
-        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
         board.walking_velocity_limits.forward_velocity_limits = [-0.8, 1.8];
-        board.walking_velocity_limits.lateral_velocity_limit = 1.5;
+        board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.walking_velocity_limits.angular_velocity_limit = 2.0;
         let desired = linear_algebra::vector![2.0, 4.0];
         let close = adaptive_blocking_velocity(&board, desired, point![0.5, 0.1]);
         approx::assert_relative_eq!(close.norm(), 0.2);
         approx::assert_relative_eq!(close.x() / close.y(), 0.5);
-        for ball in [point![3.0, 0.1], point![0.5, 0.8], point![-0.5, 0.1]] {
+        for ball in [
+            point![3.0, 0.1],
+            point![1.0, 0.1],
+            point![0.5, 0.8],
+            point![-0.5, 0.1],
+        ] {
             let fast = adaptive_blocking_velocity(&board, desired, ball);
-            approx::assert_relative_eq!(fast, linear_algebra::vector![0.75, 1.5]);
+            approx::assert_relative_eq!(fast, linear_algebra::vector![0.5, 1.0]);
         }
         let backward = adaptive_blocking_velocity(
             &board,
             linear_algebra::vector![-2.0, 4.0],
             point![3.0, 0.1],
         );
-        approx::assert_relative_eq!(backward, linear_algebra::vector![-0.75, 1.5]);
+        approx::assert_relative_eq!(backward, linear_algebra::vector![-0.5, 1.0]);
         assert_eq!(
             adaptive_blocking_velocity(&board, Vector2::zeros(), point![0.5, 0.0]),
             Vector2::zeros()
