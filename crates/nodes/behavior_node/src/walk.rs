@@ -24,9 +24,10 @@ use crate::{
         execution::execute_ball_action,
         kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
     },
-    node::Blackboard,
+    node::{Blackboard, ball_timeout},
     selection, sequence, subtree,
     switch_motion_type::{is_allowed_to_switch, is_last_motion_type, switch_motion_type},
+    voronoi::collect_sites,
 };
 
 pub(crate) fn adaptive_blocking_velocity(
@@ -447,6 +448,7 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
         blackboard.ball.as_ref().map(|ball| ball.position),
         &blackboard.field_dimensions,
         &blackboard.parameters.voronoi,
+        close_ball_supporter(blackboard, map) == Some(blackboard.world_state.robot.player_number),
     ) {
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;
@@ -484,12 +486,60 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
     }
 }
 
+fn close_ball_supporter(blackboard: &Blackboard, map: &VoronoiGrid) -> Option<PlayerNumber> {
+    let world = &blackboard.world_state;
+    let ball = blackboard.ball.as_ref()?;
+    if blackboard.kickoff_started.is_some()
+        || world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| game.sub_state.is_some())
+        || ball.age > world.now
+        || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+        || !ball.position.inner.iter().all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
+    let striker = match map.ownership_at(projected) {
+        Some(Ownership::Robot(number)) => number,
+        Some(Ownership::Blocked) => match map.nearest_non_blocked_ownership(projected)? {
+            Ownership::Robot(number) => number,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let fielders: Vec<_> = collect_sites(blackboard, world.robot.ground_to_field?.as_pose())
+        .into_iter()
+        .filter(|(_, number)| {
+            *number != blackboard.parameters.goalkeeper.player_number
+                && map
+                    .cells()
+                    .any(|(_, ownership)| ownership == Ownership::Robot(*number))
+        })
+        .collect();
+    if fielders.len() < 3 {
+        return None;
+    }
+    fielders
+        .into_iter()
+        .filter(|(_, number)| *number != striker)
+        .min_by(|(left_pose, left_number), (right_pose, right_number)| {
+            (left_pose.position() - ball.position)
+                .norm_squared()
+                .total_cmp(&(right_pose.position() - ball.position).norm_squared())
+                .then_with(|| left_number.cmp(right_number))
+        })
+        .map(|(_, number)| number)
+}
+
 fn target_player_position(
     map: &VoronoiGrid,
     player: PlayerNumber,
     ball_position: Option<Point2<Field>>,
     field_dimensions: &FieldDimensions,
     parameters: &VoronoiParameters,
+    close_support: bool,
 ) -> Option<Point2<Field>> {
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
@@ -555,12 +605,20 @@ fn target_player_position(
             / centroid_sigma;
 
         let score = forward_term + ball_term - centroid_penalty;
-        if best_target.is_none_or(|(best_score, _)| score > best_score) {
-            best_target = Some((score, point));
+        let support_priority = if close_support {
+            -support_distance_error.abs()
+        } else {
+            0.0
+        };
+        if best_target.is_none_or(|(best_support_priority, best_score, _)| {
+            support_priority > best_support_priority
+                || (support_priority == best_support_priority && score > best_score)
+        }) {
+            best_target = Some((support_priority, score, point));
         }
     }
 
-    best_target.map(|(_, point)| point)
+    best_target.map(|(_, _, point)| point)
 }
 
 #[cfg(test)]
@@ -782,6 +840,7 @@ mod ball_support_tests {
             Some(ball),
             &FieldDimensions::SPL_2025,
             &parameters,
+            false,
         )
         .unwrap();
         parameters.ball_weight = 3.0;
@@ -791,9 +850,192 @@ mod ball_support_tests {
             Some(ball),
             &FieldDimensions::SPL_2025,
             &parameters,
+            false,
         )
         .unwrap();
         assert!((after - ball).norm() < (before - ball).norm());
         assert!(((after - ball).norm() - parameters.ball_support_distance).abs() < 0.5);
+    }
+
+    #[test]
+    fn one_fresh_supporter_closes_toward_ball_without_leaving_its_cell_or_claiming_striker() {
+        use std::time::Duration;
+
+        use crate::{
+            conditions::is_closest_to_ball, node::LastBall, voronoi::calculate_voronoi_grid,
+        };
+        use hsl_network_messages::SubState;
+        use types::{
+            field_dimensions::Side,
+            filtered_game_controller_state::FilteredGameControllerState,
+            path::traits::EndPoints,
+            time_wrapper::TimeWrapper,
+            world_state::{BallSource, PlayerState},
+        };
+
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions {
+                length: 14.0,
+                width: 9.0,
+                ..FieldDimensions::SPL_2025
+            },
+            ..Default::default()
+        };
+        board.world_state.now = board.world_state.now + Duration::from_secs(10);
+        board.world_state.filtered_game_controller_state =
+            Some(FilteredGameControllerState::default());
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
+        board
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(3);
+        board.parameters.voronoi = VoronoiParameters {
+            grid_resolution: 0.2,
+            padding: 0.5,
+            forward_weight: 0.2,
+            ball_weight: 2.5,
+            ball_support_distance: 1.5,
+            ball_support_sigma: 0.5,
+            centroid_anchor_weight: 0.6,
+            centroid_anchor_sigma: 1.0,
+        };
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.speed.kicking = 1.8;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        let ball = point![6.0, 0.0];
+        board.ball = Some(LastBall {
+            position: ball,
+            velocity: Vector2::zeros(),
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        for (number, position) in [
+            (PlayerNumber::One, point![-6.7, 0.0]),
+            (PlayerNumber::Two, point![1.0, 0.0]),
+            (PlayerNumber::Three, point![5.8, 0.0]),
+            (PlayerNumber::Four, point![-5.0, -3.0]),
+            (PlayerNumber::Five, point![-4.0, 3.0]),
+        ] {
+            board.world_state.player_states[number] = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PlayerState {
+                    pose: position.into(),
+                    ..Default::default()
+                },
+            });
+        }
+        let mut targets = Vec::new();
+        for number in [PlayerNumber::Two, PlayerNumber::Four, PlayerNumber::Five] {
+            let mut supporter = board.clone();
+            let transform = supporter.world_state.player_states[number]
+                .as_ref()
+                .unwrap()
+                .inner
+                .pose
+                .as_transform();
+            supporter.world_state.robot.player_number = number;
+            supporter.world_state.robot.ground_to_field = Some(transform);
+            assert_eq!(calculate_voronoi_grid(&mut supporter), Status::Success);
+            let map = supporter.voronoi_map.as_ref().unwrap();
+            assert_eq!(
+                close_ball_supporter(&supporter, map),
+                Some(PlayerNumber::Two)
+            );
+            let normal = target_player_position(
+                map,
+                number,
+                Some(ball),
+                &supporter.field_dimensions,
+                &supporter.parameters.voronoi,
+                false,
+            )
+            .unwrap();
+            assert_eq!(walk_to_voronoi_position(&mut supporter), Status::Success);
+            assert!(!is_closest_to_ball(&mut supporter));
+            let Some(BodyMotion::Walk { path, .. }) = &supporter.body_motion else {
+                panic!("support must walk without kicking")
+            };
+            let target = transform * path.end_point();
+            assert_eq!(
+                supporter.voronoi_map.as_ref().unwrap().ownership_at(target),
+                Some(Ownership::Robot(number))
+            );
+            if number == PlayerNumber::Two {
+                assert!((normal - ball).norm() > 4.0);
+                assert!((target - ball).norm() < 3.0);
+            } else {
+                approx::assert_relative_eq!(target, normal);
+                assert!((target - ball).norm() > 3.0);
+            }
+            targets.push(target);
+
+            if number != PlayerNumber::Four {
+                continue;
+            }
+            supporter.kickoff_started = Some(supporter.world_state.now);
+            assert_eq!(
+                close_ball_supporter(&supporter, supporter.voronoi_map.as_ref().unwrap()),
+                None
+            );
+            supporter.kickoff_started = None;
+            for state in [SubState::CornerKick, SubState::ThrowIn, SubState::GoalKick] {
+                supporter
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_mut()
+                    .unwrap()
+                    .sub_state = Some(state);
+                assert_eq!(
+                    close_ball_supporter(&supporter, supporter.voronoi_map.as_ref().unwrap()),
+                    None
+                );
+            }
+        }
+        for (index, target) in targets.iter().enumerate() {
+            for other in &targets[index + 1..] {
+                assert!(
+                    (*target - *other).norm()
+                        > 2.0 * board.parameters.walking.path_planning.robot_radius
+                );
+            }
+        }
+        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.world_state.robot.ground_to_field = Some(
+            board
+                .world_state
+                .player_states
+                .two
+                .as_ref()
+                .unwrap()
+                .inner
+                .pose
+                .as_transform(),
+        );
+        board.world_state.player_states.four = None;
+        board.world_state.player_states.five = None;
+        calculate_voronoi_grid(&mut board);
+        assert_eq!(
+            close_ball_supporter(&board, board.voronoi_map.as_ref().unwrap()),
+            None
+        );
+        let normal = target_player_position(
+            board.voronoi_map.as_ref().unwrap(),
+            PlayerNumber::Two,
+            Some(ball),
+            &board.field_dimensions,
+            &board.parameters.voronoi,
+            false,
+        )
+        .unwrap();
+        assert_eq!(walk_to_voronoi_position(&mut board), Status::Success);
+        let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+            panic!("three-player supporter must retain normal formation")
+        };
+        let target = board.world_state.robot.ground_to_field.unwrap() * path.end_point();
+        approx::assert_relative_eq!(target, normal);
     }
 }

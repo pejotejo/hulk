@@ -72,7 +72,7 @@ fn calculate_voronoi_grid_from_sites(
     Status::Success
 }
 
-fn collect_sites(
+pub(crate) fn collect_sites(
     blackboard: &Blackboard,
     robot_pose: Pose2<Field>,
 ) -> Vec<(Pose2<Field>, PlayerNumber)> {
