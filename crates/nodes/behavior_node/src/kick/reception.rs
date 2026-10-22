@@ -12,15 +12,13 @@ use types::{
 };
 
 use crate::{
-    conditions::{goalkeeper_clearance_direction, opponent_near_position},
+    conditions::{goalkeeper_clearance_direction, opponent_ball_holder, opponent_near_position},
     kick::kick_ball_in_ground,
-    node::{Blackboard, ball_timeout},
+    node::{Blackboard, MAXIMUM_BALL_PREDICTION_TIME, ball_prediction_time, ball_timeout},
     switch_motion_type::is_allowed_to_switch,
     walk::plan_interception,
 };
 
-// shortcut: short constant-velocity prediction; add calibrated friction when available.
-const MAXIMUM_INTERCEPTION_TIME: f32 = 6.0;
 const INTERCEPTION_TIME_STEP: f32 = 0.1;
 
 pub(crate) fn is_receiving_ball(blackboard: &Blackboard) -> bool {
@@ -131,6 +129,9 @@ fn controlled_ball_at_feet(
 }
 
 fn rolling_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vector2<Ground>)> {
+    if opponent_ball_holder(blackboard).is_some() {
+        return None;
+    }
     let transform = blackboard.world_state.robot.ground_to_field?;
     let (position, velocity) = kick_ball_in_ground(blackboard, &transform)?;
     let now = blackboard.world_state.now;
@@ -276,10 +277,10 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
             RobotDimensions::ROBOT_TO_LEFT_PELVIS.y() * ball_in_receiving_frame.y().signum();
         // Put a foot in the incoming line instead of centering the gap between the legs.
         let contact = orientation.as_transform::<Ground>() * vector![standoff, foot_offset];
-        let time = ((contact - position.coords()).dot(&velocity) / velocity.norm_squared())
-            .min(MAXIMUM_INTERCEPTION_TIME);
         // Hold the incoming line; advancing into the arrival makes a calm trap bounce away.
-        Some(position + velocity * time - contact)
+        let offset = position.coords() - contact;
+        let direction = velocity.normalize();
+        Some((offset - direction * offset.dot(&direction)).as_point())
     } else {
         blocking_target(
             position,
@@ -325,7 +326,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: crate::walk::adaptive_blocking_velocity(
                 blackboard,
-                forward * walk_speed.min(target.coords().norm() / 0.25),
+                forward * walk_speed.min(target.coords().norm() / 0.35),
                 position,
             ),
             angular_velocity: limits.scale_angular_axis(orientation.angle()),
@@ -353,7 +354,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         },
         target_orientation: kick_orientation.unwrap_or_else(|| Orientation2::from_vector(forward)),
         distance_to_be_aligned: walking.normal_distance_to_be_aligned,
-        speed: walk_speed,
+        speed: walk_speed.min(target.coords().norm() / 0.35),
     });
     Status::Success
 }
@@ -386,8 +387,9 @@ fn blocking_target(
     }
     // Arrive behind the contact point facing the outgoing kick, avoiding a late turn.
     let contact_offset = -orientation.as_unit_vector() * standoff;
-    for step in 1..=(MAXIMUM_INTERCEPTION_TIME / INTERCEPTION_TIME_STEP) as u32 {
-        let time = step as f32 * INTERCEPTION_TIME_STEP;
+    let horizon = ball_prediction_time(velocity.norm(), MAXIMUM_BALL_PREDICTION_TIME);
+    for step in 1..=(horizon / INTERCEPTION_TIME_STEP).ceil() as u32 {
+        let time = (step as f32 * INTERCEPTION_TIME_STEP).min(horizon);
         let target = position + velocity * time + contact_offset;
         if travel_time(target, orientation, limits, walk_speed) <= time {
             return Some(target);
@@ -402,9 +404,9 @@ fn blocking_target(
             return Some(position + to_goal * fraction.min(0.9));
         }
     }
-    let time = (-position.coords().dot(&velocity) / velocity.norm_squared())
-        .clamp(0.0, MAXIMUM_INTERCEPTION_TIME);
-    (time > 0.0).then(|| position + velocity * time + contact_offset)
+    let time = (-position.coords().dot(&velocity) / velocity.norm_squared()).clamp(0.0, horizon);
+    (time > 0.0 || velocity.norm() < walk_speed)
+        .then(|| position + velocity * time + contact_offset)
 }
 
 fn travel_time(
@@ -929,6 +931,28 @@ mod tests {
     }
 
     #[test]
+    fn fast_distant_ball_cannot_pull_reception_target_beyond_two_meters() {
+        let position = point![6.0, 2.0];
+        for speed in [4.0, 20.0] {
+            let target = blocking_target(
+                position,
+                vector![-speed, 0.0],
+                None,
+                0.3,
+                WalkingVelocityLimits::default(),
+                1.0,
+                Orientation2::identity(),
+            )
+            .unwrap();
+            approx::assert_relative_eq!(
+                target + vector![0.3, 0.0],
+                point![4.0, 2.0],
+                epsilon = 1e-5
+            );
+        }
+    }
+
+    #[test]
     fn gets_goal_side_of_a_slow_receding_ball_when_reachable() {
         let position = point![-1.0, 0.0];
         let limits = WalkingVelocityLimits {
@@ -952,7 +976,7 @@ mod tests {
     }
 
     #[test]
-    fn gets_ahead_of_a_reachable_ball_moving_away_from_own_goal() {
+    fn pursues_present_ball_when_meeting_it_would_require_a_long_forecast() {
         let position = point![1.0, 0.0];
         let velocity = vector![0.4, 0.0];
         let limits = WalkingVelocityLimits {
@@ -971,11 +995,7 @@ mod tests {
             orientation,
         )
         .unwrap();
-        let time = (target.x() - position.x() - 0.3) / velocity.x();
-        assert!((0.0..=MAXIMUM_INTERCEPTION_TIME).contains(&time));
-        assert!(travel_time(target, orientation, limits, 1.8) <= time + 1e-5);
-        assert!(target.x() > (position + velocity * time).x());
-        assert!(target.y().abs() < 1e-6);
+        approx::assert_relative_eq!(target, position + vector![0.3, 0.0], epsilon = 1e-5);
 
         assert!(
             blocking_target(
@@ -1048,7 +1068,7 @@ mod tests {
             let position = transform * ball.position;
             let velocity = transform * ball.velocity;
             let time = (target.x() - position.x() + 0.3) / velocity.x();
-            assert!(time > 0.0 && time < MAXIMUM_INTERCEPTION_TIME);
+            assert!(time > 0.0 && time <= MAXIMUM_BALL_PREDICTION_TIME);
             assert!(target.x() > 0.0 && target.x() < position.x() - 0.3);
             assert!((target + vector![0.3, 0.0] - position - velocity * time).norm() < 1e-5);
             assert!(

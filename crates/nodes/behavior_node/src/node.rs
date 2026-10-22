@@ -109,6 +109,17 @@ pub struct Blackboard {
 }
 
 const PROJECTION_CUTOFF_DISTANCE: f32 = 0.75;
+pub(crate) const MAXIMUM_BALL_PREDICTION_TIME: f32 = 1.5;
+
+pub(crate) fn ball_prediction_time(speed: f32, requested_time: f32) -> f32 {
+    if !speed.is_finite() || speed <= 0.0 || !requested_time.is_finite() || requested_time <= 0.0 {
+        return 0.0;
+    }
+    // Replan from observations before a brief velocity error becomes a distant target.
+    requested_time
+        .min(MAXIMUM_BALL_PREDICTION_TIME)
+        .min(2.0 / speed)
+}
 
 impl Blackboard {
     pub fn update_restart_pass(&mut self) {
@@ -170,24 +181,37 @@ impl Blackboard {
         position: Point2<Field>,
         velocity: Vector2<Field>,
     ) -> Point2<Field> {
+        if self
+            .world_state
+            .robot
+            .ground_to_field
+            .is_some_and(|transform| {
+                (position - transform.as_pose().position()).norm() <= PROJECTION_CUTOFF_DISTANCE
+            })
+        {
+            return position;
+        }
+        self.ball_pursuit_position(position, velocity)
+    }
+
+    pub(crate) fn ball_pursuit_position(
+        &self,
+        position: Point2<Field>,
+        velocity: Vector2<Field>,
+    ) -> Point2<Field> {
         let lookahead = self.parameters.ball.pursuit_lookahead;
         let field = &self.field_dimensions;
         if lookahead.is_zero()
             || velocity.norm_squared() == 0.0
-            || self
-                .world_state
-                .robot
-                .ground_to_field
-                .is_some_and(|transform| {
-                    (position - transform.as_pose().position()).norm() <= PROJECTION_CUTOFF_DISTANCE
-                })
+            || crate::conditions::opponent_ball_holder(self).is_some()
             || position.x().abs() >= field.length / 2.0
             || position.y().abs() >= field.width / 2.0
         {
             return position;
         }
-        // shortcut: constant velocity ignores ball deceleration; calibrate after simulator trials.
-        let projected = position + velocity * lookahead.as_secs_f32();
+        // shortcut: bounded linear prediction; use measured friction when behavior has it.
+        let projected =
+            position + velocity * ball_prediction_time(velocity.norm(), lookahead.as_secs_f32());
         if !projected.x().is_finite() || !projected.y().is_finite() {
             return position;
         }
@@ -730,5 +754,58 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             .publish_if_subscribed(|| async { blackboard.clone() })
             .await?;
         motion_command_pub.publish(&motion_command).await?;
+    }
+}
+
+#[cfg(test)]
+mod prediction_tests {
+    use super::*;
+    use linear_algebra::vector;
+
+    #[test]
+    fn prediction_limits_velocity_errors_on_large_fields() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions {
+                length: 22.0,
+                width: 14.0,
+                ball_radius: 0.105,
+                ..FieldDimensions::SPL_2025
+            },
+            ..Default::default()
+        };
+        board.parameters.ball.pursuit_lookahead = Duration::from_secs(20);
+        let position = point![6.0, 4.0];
+        for velocity in [vector![20.0, 20.0], vector![-20.0, -20.0]] {
+            let projected = board.projected_ball_position(position, velocity);
+            assert!((projected - position).norm() <= 2.0 + 1e-5);
+            assert!((projected - position).dot(&velocity) > 0.0);
+        }
+        let edge = board.projected_ball_position(point![10.8, 6.8], vector![2.0, 2.0]);
+        approx::assert_relative_eq!(edge, point![10.895, 6.895], epsilon = 1e-5);
+        for velocity in [vector![f32::NAN, 1.0], vector![f32::INFINITY, 1.0]] {
+            assert_eq!(board.projected_ball_position(position, velocity), position);
+        }
+        assert_eq!(ball_prediction_time(0.5, 20.0), 1.5);
+        assert_eq!(ball_prediction_time(20.0, 20.0), 0.1);
+    }
+
+    #[test]
+    fn ownership_prediction_is_independent_of_close_pursuit_cutoff() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ..Default::default()
+        };
+        board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        let position = point![1.0, 0.0];
+        let velocity = vector![-1.0, 0.0];
+        let expected = point![0.5, 0.0];
+        for robot in [point![0.5, 0.0], point![-1.0, 0.0]] {
+            board.world_state.robot.ground_to_field =
+                Some(Isometry2::from_parts(robot.coords(), 0.0));
+            assert_eq!(board.ball_pursuit_position(position, velocity), expected);
+        }
+        board.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![0.5, 0.0], 0.0));
+        assert_eq!(board.projected_ball_position(position, velocity), position);
     }
 }

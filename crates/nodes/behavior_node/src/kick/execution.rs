@@ -1,5 +1,6 @@
 use coordinate_systems::{Field, Ground};
 use geometry::{line::Line2, line_segment::LineSegment};
+use hsl_network_messages::{SubState, Team};
 use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point, vector};
 use types::{
     behavior_tree::Status,
@@ -195,7 +196,11 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         blackboard.ball_action,
         Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter | BallAction::Clear)
     ) || (matches!(blackboard.ball_action, Some(BallAction::Pass { .. }))
-        && super::kickoff::own_kickoff(blackboard));
+        && (super::kickoff::own_kickoff(blackboard)
+            || (target - ball).norm()
+                >= kicking
+                    .strong_kick_min_target_distance
+                    .max(blackboard.field_dimensions.penalty_area_width)));
     let strong = kicking.allow_strong_kicks && force_strong;
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
     let target_speed = if blackboard.ball_action == Some(BallAction::Dribble) {
@@ -210,17 +215,25 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     let urgent = (field_ball.x() < -field.length / 2.0 + field.penalty_area_length
         && field_ball.y().abs() < field.penalty_area_width / 2.0)
         || crate::conditions::opponent_near_ball(blackboard, kicking.strategy.pressure_distance);
-    let quick = (receiving
-        && ready_to_receive
-        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number)
-        || (!controlled
-            && (kicking.quick
-                || urgent
-                || (was_kicking
-                    && matches!(
-                        blackboard.last_motion_command,
-                        Some(MotionCommand::Kick { quick: true, .. })
-                    ))));
+    let own_goal_kick = blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()
+        .is_some_and(|game| {
+            game.kicking_team == Some(Team::Hulks) && game.sub_state == Some(SubState::GoalKick)
+        });
+    let quick = !own_goal_kick
+        && ((receiving
+            && ready_to_receive
+            && blackboard.player_number != blackboard.parameters.goalkeeper.player_number)
+            || (!controlled
+                && (kicking.quick
+                    || urgent
+                    || (was_kicking
+                        && matches!(
+                            blackboard.last_motion_command,
+                            Some(MotionCommand::Kick { quick: true, .. })
+                        )))));
     let can_switch = is_allowed_to_start_kick(blackboard);
     let close_to_ball = is_close_to_ball(blackboard);
     if ((ball.x() >= 0.0 && (was_kicking || !receiving) && close_to_ball)
@@ -459,12 +472,17 @@ pub(crate) fn goalward_target(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use hsl_network_messages::{PassIntent, PlayerNumber};
+
     use super::*;
     use crate::node::LastBall;
     use types::{
         field_dimensions::{FieldDimensions, Side},
         obstacles::Obstacle,
-        world_state::BallSource,
+        time_wrapper::TimeWrapper,
+        world_state::{BallSource, PlayerState},
     };
 
     #[test]
@@ -543,6 +561,25 @@ mod tests {
             })
         ));
 
+        board.world_state.filtered_game_controller_state = Some(
+            types::filtered_game_controller_state::FilteredGameControllerState {
+                kicking_team: Some(Team::Hulks),
+                sub_state: Some(SubState::GoalKick),
+                ..crate::test_support::filtered_game_controller_state()
+            },
+        );
+        board.ball_action = Some(BallAction::ShootAtGoalCenter);
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                quick: false,
+                strong: true,
+                ..
+            })
+        ));
+        board.world_state.filtered_game_controller_state = None;
+
         board.last_motion_type = Some(MotionType::StandUp);
         execute_ball_action(&mut board);
         assert!(matches!(board.body_motion, Some(BodyMotion::Stand)));
@@ -564,6 +601,69 @@ mod tests {
             Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
                 if velocity == Vector2::zeros() && angular_velocity.abs() > 0.0
         ));
+    }
+
+    #[test]
+    fn long_large_field_passes_are_strong_while_short_passes_stay_controlled() {
+        let mut board = Blackboard {
+            player_number: PlayerNumber::Two,
+            field_dimensions: FieldDimensions {
+                length: 22.0,
+                width: 14.0,
+                penalty_area_width: 7.0,
+                ..FieldDimensions::SPL_2025
+            },
+            last_motion_type: Some(MotionType::Walk),
+            ..Default::default()
+        };
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        let passing = &mut board.parameters.kicking.strategy.passing;
+        passing.maximum_distance = 12.0;
+        passing.minimum_distance = 4.0;
+        passing.receiver_standoff = 0.5;
+        passing.target_half_width = 0.3;
+        passing.maximum_receiver_age = Duration::from_secs(3);
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.world_state.filtered_game_controller_state = Some(
+            types::filtered_game_controller_state::FilteredGameControllerState {
+                remaining_number_of_messages: 1000,
+                ..crate::test_support::filtered_game_controller_state()
+            },
+        );
+        board.ball = Some(LastBall {
+            position: point![0.5, 0.0],
+            velocity: Vector2::zeros(),
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        for (travel, expected_strong) in [(5.0, false), (8.0, true)] {
+            board.world_state.player_states.three = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PlayerState {
+                    pose: Pose2::new(point![travel + 1.0, 0.0], 0.0),
+                    ..crate::test_support::player_state()
+                },
+            });
+            board.ball_action = Some(BallAction::Pass {
+                receiver: PlayerNumber::Three,
+            });
+            board.last_announced_pass = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PassIntent {
+                    receiver: PlayerNumber::Three,
+                    target: resolve_target(&board).unwrap(),
+                },
+            });
+            board.last_sent_hsl_message_time = Some(board.world_state.now);
+            assert_eq!(execute_ball_action(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::Kick { strong, quick: false, soft: false, .. })
+                    if strong == expected_strong));
+        }
     }
 
     #[test]

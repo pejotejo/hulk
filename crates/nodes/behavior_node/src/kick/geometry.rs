@@ -96,7 +96,16 @@ pub fn travel_openings(
     .collect()
 }
 
-/// Visible reception regions on the ball-facing side of the receiver's current pose.
+/// Ball-center inset leaving room for the receiver's standoff.
+pub fn pass_reception_margin(
+    field: &FieldDimensions,
+    parameters: &PassingParameters,
+    clearance: f32,
+) -> f32 {
+    field.ball_radius + clearance + parameters.receiver_standoff
+}
+
+/// Visible reception regions within reach of the receiver, with room to stop in-field.
 /// Keep every obstacle, including the receiver, in the finite corridor check.
 pub fn pass_openings(
     ball: Point2<Field>,
@@ -107,57 +116,103 @@ pub fn pass_openings(
     parameters: &PassingParameters,
     clearance: f32,
 ) -> Vec<LineSegment<Field>> {
+    let margin = field.ball_radius + clearance;
+    let reception_margin = pass_reception_margin(field, parameters, clearance);
+    let half_length = field.length / 2.0;
+    let half_width = field.width / 2.0;
     let delta = receiver - ball;
     let distance = delta.norm();
-    let travel = distance - parameters.receiver_standoff;
     if parameters.validate().is_err()
+        || !ball
+            .inner
+            .iter()
+            .chain(receiver.inner.iter())
+            .all(|v| v.is_finite())
         || !distance.is_finite()
-        || travel <= f32::EPSILON
+        || distance <= parameters.receiver_standoff
+        || !half_length.is_finite()
+        || !half_width.is_finite()
+        || !reception_margin.is_finite()
+        || margin < 0.0
+        || half_length <= reception_margin
+        || half_width <= reception_margin
+        || ball.x().abs() > half_length + BALL_FIELD_BOUNDARY_TOLERANCE
+        || ball.y().abs() > half_width + BALL_FIELD_BOUNDARY_TOLERANCE
+    {
+        return Vec::new();
+    }
+    let center = receiver - delta / distance * parameters.receiver_standoff;
+    let center = point![
+        center.x().clamp(
+            -half_length + reception_margin,
+            half_length - reception_margin
+        ),
+        center.y().clamp(
+            -half_width + reception_margin,
+            half_width - reception_margin
+        )
+    ];
+    let travel = (center - ball).norm();
+    if travel <= f32::EPSILON
         || travel < parameters.minimum_distance
         || travel >= parameters.maximum_distance
     {
         return Vec::new();
     }
-    let direction = delta / distance;
-    let center = ball + direction * travel;
+    let direction = (center - ball) / travel;
     let lateral = vector![-direction.y(), direction.x()];
     let half_width = parameters
         .target_half_width
         .min((parameters.maximum_distance.powi(2) - travel.powi(2)).sqrt());
-    let mut lower = -half_width;
-    let mut upper = half_width;
-    let margin = field.ball_radius + clearance;
-    // Clip the region to field bounds; receiver eligibility owns the progress policy.
-    for (coordinate, axis, minimum, maximum) in [
+    // An inset target must remain reachable under the receiver's announced-pass acceptance.
+    let reach = parameters.receiver_standoff + 2.0 * parameters.target_half_width;
+    let offset = receiver - center;
+    let lateral_reach_squared = reach.powi(2) - offset.dot(&direction).powi(2);
+    if lateral_reach_squared <= 0.0 {
+        return Vec::new();
+    }
+    let lateral_reach = lateral_reach_squared.sqrt();
+    let mut lower = (-half_width).max(offset.dot(&lateral) - lateral_reach);
+    let mut upper = half_width.min(offset.dot(&lateral) + lateral_reach);
+    // shortcut: reserve 20% travel (at least standoff) until kick stopping ranges are calibrated.
+    let runway_scale = 1.0 + 0.2_f32.max(parameters.receiver_standoff / travel);
+    // Only targets and overshoot endpoints use insets; boundary restarts can enter from the line.
+    for (center, lateral, inset) in [
+        (center, lateral, reception_margin),
         (
-            center.x(),
-            lateral.x(),
-            -field.length / 2.0 + margin,
-            field.length / 2.0 - margin,
-        ),
-        (
-            center.y(),
-            lateral.y(),
-            -field.width / 2.0 + margin,
-            field.width / 2.0 - margin,
+            ball + (center - ball) * runway_scale,
+            lateral * runway_scale,
+            margin,
         ),
     ] {
-        if minimum > maximum {
-            return Vec::new();
-        }
-        if axis.abs() <= f32::EPSILON {
-            if !(minimum..=maximum).contains(&coordinate) {
+        for (coordinate, axis, minimum, maximum) in [
+            (
+                center.x(),
+                lateral.x(),
+                -field.length / 2.0 + inset,
+                field.length / 2.0 - inset,
+            ),
+            (
+                center.y(),
+                lateral.y(),
+                -field.width / 2.0 + inset,
+                field.width / 2.0 - inset,
+            ),
+        ] {
+            if axis.abs() <= f32::EPSILON {
+                if !(minimum..=maximum).contains(&coordinate) {
+                    return Vec::new();
+                }
+            } else {
+                let first = (minimum - coordinate) / axis;
+                let second = (maximum - coordinate) / axis;
+                lower = lower.max(first.min(second));
+                upper = upper.min(first.max(second));
+            }
+            if lower >= upper {
                 return Vec::new();
             }
-        } else {
-            let first = (minimum - coordinate) / axis;
-            let second = (maximum - coordinate) / axis;
-            lower = lower.max(first.min(second));
-            upper = upper.min(first.max(second));
         }
-    }
-    if lower >= upper {
-        return Vec::new();
     }
     visible_segments(
         ball,
@@ -234,8 +289,9 @@ mod tests {
             assert!(openings[0].length() < 2.0 * parameters.target_half_width);
             for target in [openings[0].0, openings[0].center(), openings[0].1] {
                 assert!((target - ball).norm() <= parameters.maximum_distance + 1e-6);
-                assert!(target.x().abs() <= field.length / 2.0 - 0.1 + 1e-6);
-                assert!(target.y().abs() <= field.width / 2.0 - 0.1 + 1e-6);
+                let margin = pass_reception_margin(&field, &parameters, 0.05);
+                assert!(target.x().abs() <= field.length / 2.0 - margin + 1e-6);
+                assert!(target.y().abs() <= field.width / 2.0 - margin + 1e-6);
             }
         }
         for receiver in [point![-2.0, 0.0], point![0.0, -2.0]] {
@@ -273,6 +329,101 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sideline_passes_move_inward_and_reserve_runway_without_blocking_restarts() {
+        let field = FieldDimensions {
+            length: 22.0,
+            width: 14.0,
+            ball_radius: 0.11,
+            ..FieldDimensions::SPL_2025
+        };
+        let parameters = PassingParameters {
+            maximum_distance: 12.0,
+            minimum_distance: 4.0,
+            receiver_standoff: 0.5,
+            target_half_width: 0.3,
+            ..Default::default()
+        };
+        let margin = pass_reception_margin(&field, &parameters, 0.05);
+        for side in [-1.0, 1.0] {
+            for (ball, receiver) in [
+                (point![-5.0, side * 6.9], point![6.0, side * 6.9]),
+                (point![0.0, side * 7.0], point![5.0, side * 4.0]),
+                (point![11.0, side * 7.0], point![7.0, side * 4.0]),
+                (point![0.0, 0.0], point![-0.3, side * 5.0]),
+            ] {
+                let openings = pass_openings(
+                    ball,
+                    receiver,
+                    Default::default(),
+                    &[],
+                    &field,
+                    &parameters,
+                    0.05,
+                );
+                assert!(!openings.is_empty());
+                for opening in openings {
+                    for target in [opening.0, opening.center(), opening.1] {
+                        assert!(target.x().abs() <= field.length / 2.0 - margin + 1e-6);
+                        assert!(target.y().abs() <= field.width / 2.0 - margin + 1e-6);
+                        assert!(
+                            (target - receiver).norm()
+                                <= parameters.receiver_standoff
+                                    + 2.0 * parameters.target_half_width
+                                    + 1e-6
+                        );
+                        let travel = (target - ball).norm();
+                        let overshoot = target
+                            + (target - ball) / travel
+                                * parameters.receiver_standoff.max(0.2 * travel);
+                        assert!(overshoot.x().abs() <= field.length / 2.0 - 0.16 + 1e-6);
+                        assert!(overshoot.y().abs() <= field.width / 2.0 - 0.16 + 1e-6);
+                    }
+                }
+            }
+            assert!(
+                pass_openings(
+                    point![-4.0, 0.0],
+                    point![2.5, side * 6.8],
+                    Default::default(),
+                    &[],
+                    &field,
+                    &parameters,
+                    0.05,
+                )
+                .is_empty()
+            );
+        }
+
+        // Beyond-target obstacles remain outside the finite delivery corridor.
+        let ball = point![0.0, 0.0];
+        let receiver = point![5.0, 0.0];
+        assert!(
+            !pass_openings(
+                ball,
+                receiver,
+                Default::default(),
+                &[Obstacle::robot(point![5.5, 0.0], 0.2, 0.2)],
+                &field,
+                &parameters,
+                0.05,
+            )
+            .is_empty()
+        );
+        assert!(
+            pass_openings(
+                ball,
+                receiver,
+                Default::default(),
+                &[Obstacle::robot(point![2.0, 0.0], 1.0, 1.0)],
+                &field,
+                &parameters,
+                0.05,
+            )
+            .is_empty()
+        );
     }
 
     #[test]

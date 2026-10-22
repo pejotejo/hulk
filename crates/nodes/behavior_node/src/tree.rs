@@ -37,7 +37,7 @@ use crate::{
     },
     search::leuchtturm,
     selection, sequence,
-    substates::{is_in_sub_state, is_sub_state, sub_state_subtree},
+    substates::{is_in_sub_state, is_opponent_restart_striker, is_sub_state, sub_state_subtree},
     subtree,
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
@@ -172,6 +172,18 @@ fn playing_subtree() -> Node<Blackboard> {
         sequence!(
             negation!(condition!(has_ball_position)),
             subtree!(search_subtree)
+        ),
+        sequence!(
+            condition!(is_in_sub_state),
+            negation!(condition!(hulks_is_kicking_team)),
+            action!(calculate_voronoi_grid_without_goalkeeper),
+            selection!(
+                sequence!(
+                    condition!(is_opponent_restart_striker),
+                    subtree!(striker_subtree),
+                ),
+                subtree!(supporter_subtree),
+            ),
         ),
         sequence!(
             selection!(
@@ -587,6 +599,74 @@ mod clearance_tests {
     }
 
     #[test]
+    fn opponent_restarts_elect_one_fielder_even_when_keeper_owns_the_blocked_ball() {
+        for state in [
+            SubState::ThrowIn,
+            SubState::IndirectFreeKick,
+            SubState::DirectFreeKick,
+            SubState::GoalKick,
+            SubState::CornerKick,
+            SubState::PenaltyKick,
+        ] {
+            let mut board = three_players();
+            let ball = point![-5.5, 0.0];
+            board.ball.as_mut().unwrap().position = ball;
+            board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+            board.last_ball = board.ball.clone();
+            for (number, y) in [(PlayerNumber::Two, -1.0), (PlayerNumber::Three, 1.0)] {
+                board.world_state.player_states[number]
+                    .as_mut()
+                    .unwrap()
+                    .inner
+                    .pose = point![-3.6, y].into();
+            }
+            let game = board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap();
+            game.kicking_team = Some(Team::Opponent);
+            game.sub_state = Some(state);
+            let exclusion_radius = board.field_dimensions.center_circle_diameter / 2.0;
+            board.world_state.rule_obstacles =
+                vec![RuleObstacle::Circle(Circle::new(ball, exclusion_radius))];
+            board.parameters.substates.blocking_distance_offset = 0.6;
+            for number in [PlayerNumber::Two, PlayerNumber::Three] {
+                let mut player = board.clone();
+                player.player_number = number;
+                let transform = player.world_state.player_states[number]
+                    .as_ref()
+                    .unwrap()
+                    .inner
+                    .pose
+                    .as_transform();
+                player.world_state.robot.ground_to_field = Some(transform);
+                let (_, trace) = create_tree().tick_with_trace(&mut player);
+                let elected = number == PlayerNumber::Two;
+                assert_eq!(
+                    succeeded(&trace, "is_opponent_restart_striker"),
+                    elected,
+                    "{state:?}"
+                );
+                assert_eq!(player.last_closest_to_ball, elected);
+                assert!(!matches!(player.body_motion, Some(BodyMotion::Kick { .. })));
+                if elected {
+                    assert!(succeeded(&trace, "walk_to_block_position"), "{state:?}");
+                    let target = transform * player.walk_position.unwrap();
+                    assert!(
+                        (target - ball).norm()
+                            >= exclusion_radius
+                                + player.parameters.walking.path_planning.robot_radius
+                                - 1e-5
+                    );
+                    assert!(!player.path_obstacles_output.is_empty());
+                }
+                assert_eq!(player.world_state.rule_obstacles.len(), 1);
+            }
+        }
+    }
+
+    #[test]
     fn losing_team_packets_keeps_goalkeeper_defending_until_confirmed_alone() {
         let mut keeper = three_players();
         keeper.player_number = PlayerNumber::One;
@@ -688,6 +768,19 @@ mod clearance_tests {
             .sub_state = Some(SubState::ThrowIn);
         passer.ball.as_mut().unwrap().position = point![-3.0, 4.5];
         assert!(crate::substates::restart_pass_receiver(&passer).is_none());
+        passer
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .kicking_team = Some(Team::Opponent);
+        assert!(is_opponent_restart_striker(&mut passer));
+        passer
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .kicking_team = Some(Team::Hulks);
         passer.replacement_goalkeeper_coordinator = Default::default();
         assert!(crate::substates::restart_pass_receiver(&passer).is_some());
 

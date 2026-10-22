@@ -117,7 +117,7 @@ pub fn apply_kick_target(
 }
 
 pub fn kick_strength_subtree() -> Node<Blackboard> {
-    // A long clearance must not inherit a preceding interception's weaker flag.
+    // Shots and long clearances must not inherit a preceding interception's weaker flag.
     selection!(
         sequence!(
             condition!(is_target_in_strong_kick_range),
@@ -136,7 +136,10 @@ pub fn is_target_in_strong_kick_range(blackboard: &mut Blackboard) -> bool {
     if let Some(target_position) = blackboard.kick_target
         && let Some(BodyMotion::Kick { ball_position, .. }) = &blackboard.body_motion
     {
-        (target_position - *ball_position).norm()
+        matches!(
+            blackboard.ball_action,
+            Some(strategy::BallAction::Shoot { .. } | strategy::BallAction::ShootAtGoalCenter)
+        ) || (target_position - *ball_position).norm()
             >= blackboard
                 .parameters
                 .kicking
@@ -483,5 +486,44 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn legacy_goal_shots_use_strong_kicks_even_at_short_range() {
+        let mut board = Blackboard {
+            kick_target: Some(point![1.0, 0.0]),
+            last_motion_type: Some(MotionType::Kick),
+            body_motion: Some(BodyMotion::Kick {
+                ball_position: point![0.5, 0.0],
+                ball_velocity: Vector2::zeros(),
+                kick_direction: Default::default(),
+                target_speed: 3.4,
+                strong: false,
+                soft: false,
+                quick: false,
+            }),
+            ..Default::default()
+        };
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        for action in [
+            strategy::BallAction::ShootAtGoalCenter,
+            strategy::BallAction::Shoot {
+                opening: LineSegment(point![1.0, -0.5], point![1.0, 0.5]),
+            },
+        ] {
+            board.ball_action = Some(action);
+            disable_strong_kick(&mut board);
+            assert_eq!(
+                kick_strength_subtree().tick_with_trace(&mut board).0,
+                Status::Success
+            );
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick { strong: true, .. })
+            ));
+        }
+        board.ball_action = Some(strategy::BallAction::Dribble);
+        assert!(!is_target_in_strong_kick_range(&mut board));
     }
 }

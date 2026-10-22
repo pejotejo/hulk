@@ -16,7 +16,9 @@ use crate::{
     action,
     behavior_tree::Node,
     condition,
-    conditions::{hulks_is_kicking_team, is_closest_to_ball, opponent_near_ball},
+    conditions::{
+        hulks_is_kicking_team, is_closest_to_ball, opponent_near_ball, opponent_shot_direction,
+    },
     head::look_at_ball_subtree,
     kick::{
         apply_kick_target, disable_strong_kick,
@@ -30,7 +32,7 @@ use crate::{
     selection, sequence,
     substates::{is_in_sub_state, is_sub_state},
     subtree,
-    switch_motion_type::switch_motion_type,
+    switch_motion_type::{is_allowed_to_switch, switch_motion_type},
     tree::striker_subtree,
     voronoi::calculate_voronoi_grid,
     walk::{
@@ -48,7 +50,10 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
             ),
             sequence!(
                 condition!(is_in_sub_state),
-                negation!(condition!(hulks_is_kicking_team)),
+                selection!(
+                    negation!(condition!(hulks_is_kicking_team)),
+                    condition!(is_sub_state, SubState::GoalKick),
+                ),
                 subtree!(goalkeeper_sub_state_subtree)
             ),
             sequence!(
@@ -96,6 +101,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                 )
             ),
             subtree!(goalkeeper_shot_block_position_subtree),
+            subtree!(goalkeeper_pre_shot_block_position_subtree),
             sequence!(
                 condition!(is_own_corner_cutback),
                 subtree!(goalkeeper_center_position_subtree),
@@ -195,13 +201,20 @@ fn is_goalkeeper_kick_approach_obstructed(
 }
 
 fn walk_to_goalkeeper_clearance_ball(blackboard: &mut Blackboard) -> Status {
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(target) = goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose()) else {
+        return Status::Failure;
+    };
+    walk_to_goalkeeper_ball(blackboard, target)
+}
+
+fn walk_to_goalkeeper_ball(blackboard: &mut Blackboard, target: Point2<Field>) -> Status {
     let (Some(ball), Some(transform)) = (
         blackboard.ball.as_ref(),
         blackboard.world_state.robot.ground_to_field,
     ) else {
-        return Status::Failure;
-    };
-    let Some(target) = goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose()) else {
         return Status::Failure;
     };
     let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
@@ -217,6 +230,27 @@ fn walk_to_goalkeeper_clearance_ball(blackboard: &mut Blackboard) -> Status {
         walking.normal_distance_to_be_aligned,
         walking.hysteresis,
     )
+}
+
+fn execute_goalkeeper_goal_kick(blackboard: &mut Blackboard) -> Status {
+    let status = execute_ball_action(blackboard);
+    if !matches!(blackboard.body_motion, Some(BodyMotion::Kick { .. })) {
+        return status;
+    }
+    let (Some(transform), Some(target)) = (
+        blackboard.world_state.robot.ground_to_field,
+        blackboard.kick_target,
+    ) else {
+        return status;
+    };
+    let target = transform * target;
+    if !is_goalkeeper_kick_approach_obstructed(blackboard, target) {
+        return status;
+    }
+    if blackboard.last_motion_type != Some(MotionType::Walk) && !is_allowed_to_switch(blackboard) {
+        return crate::actions::stand(blackboard);
+    }
+    walk_to_goalkeeper_ball(blackboard, target)
 }
 
 fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
@@ -235,6 +269,7 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
             condition!(is_sub_state, SubState::CornerKick),
             selection!(
                 subtree!(goalkeeper_shot_block_position_subtree),
+                subtree!(goalkeeper_pre_shot_block_position_subtree),
                 subtree!(goalkeeper_center_position_subtree)
             )
         ),
@@ -247,6 +282,7 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
             ),
             selection!(
                 subtree!(goalkeeper_shot_block_position_subtree),
+                subtree!(goalkeeper_pre_shot_block_position_subtree),
                 sequence!(
                     condition!(is_ball_near_own_goal),
                     subtree!(goalkeeper_active_defense_position_subtree)
@@ -258,7 +294,8 @@ fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
             condition!(is_sub_state, SubState::GoalKick),
             action!(calculate_voronoi_grid),
             condition!(is_closest_to_ball),
-            subtree!(striker_subtree),
+            action!(select_ball_action),
+            action!(execute_goalkeeper_goal_kick),
         ),
         subtree!(goalkeeper_default_position_subtree),
     )
@@ -271,6 +308,14 @@ pub(crate) fn goalkeeper_shot_block_position_subtree() -> Node<Blackboard> {
             action!(set_goalkeeper_shot_block_position),
             action!(walk_to_goalkeeper_shot_block_position)
         ),
+        Node::Failure,
+    )
+}
+
+fn goalkeeper_pre_shot_block_position_subtree() -> Node<Blackboard> {
+    switch_motion_type(
+        MotionType::Walk,
+        action!(walk_to_goalkeeper_pre_shot_block_position),
         Node::Failure,
     )
 }
@@ -413,6 +458,14 @@ fn goalkeeper_shot_block_position(blackboard: &Blackboard) -> Option<Point2<Fiel
     if !is_interception_velocity_towards_own_half(blackboard, ball.velocity) {
         return None;
     }
+    goalkeeper_block_position_for_direction(blackboard, ball.velocity)
+}
+
+fn goalkeeper_block_position_for_direction(
+    blackboard: &Blackboard,
+    direction: Vector2<Field>,
+) -> Option<Point2<Field>> {
+    let ball = blackboard.ball.as_ref()?;
     let dimensions = blackboard.field_dimensions;
     let parameters = &blackboard.parameters.goalkeeper;
     let goal_x = -dimensions.length / 2.0;
@@ -420,13 +473,27 @@ fn goalkeeper_shot_block_position(blackboard: &Blackboard) -> Option<Point2<Fiel
     let goal_half_width = dimensions.goal_inner_width / 2.0;
     let target_y = shot_y_at_defense_line(
         ball.position,
-        ball.velocity,
+        direction,
         goal_x,
         defense_x,
         goal_half_width + dimensions.goal_post_diameter / 2.0 + dimensions.ball_radius,
     )?;
     let maximum_y = (goal_half_width - parameters.distance_to_goalpost).max(0.0);
     Some(point!(defense_x, target_y.clamp(-maximum_y, maximum_y)))
+}
+
+fn walk_to_goalkeeper_pre_shot_block_position(blackboard: &mut Blackboard) -> Status {
+    let (Some(direction), Some(transform)) = (
+        opponent_shot_direction(blackboard),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return Status::Failure;
+    };
+    let Some(position) = goalkeeper_block_position_for_direction(blackboard, direction) else {
+        return Status::Failure;
+    };
+    blackboard.walk_position = Some(transform.inverse() * position);
+    walk_to_block_position(blackboard)
 }
 
 fn set_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status {
@@ -702,7 +769,12 @@ fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
 }
 
 fn is_goalkeeper_under_pressure(blackboard: &Blackboard) -> bool {
-    opponent_near_ball(blackboard, 5.0)
+    let field = &blackboard.field_dimensions;
+    let distance = 0.85
+        * field
+            .penalty_area_length
+            .min(field.penalty_area_width / 2.0);
+    opponent_near_ball(blackboard, distance)
 }
 
 fn try_goalkeeper_pass(blackboard: &mut Blackboard) -> Status {
@@ -1192,13 +1264,9 @@ mod tests {
     }
 
     #[test]
-    fn clears_unpressured_penalty_area_balls_with_three_or_five_players_and_own_restarts() {
+    fn clears_unpressured_penalty_area_balls_with_three_or_five_players() {
         for players in [3, 5] {
-            for sub_state in [
-                None,
-                Some(SubState::GoalKick),
-                Some(SubState::DirectFreeKick),
-            ] {
+            for sub_state in [None, Some(SubState::DirectFreeKick)] {
                 for allow_strong_kicks in [false, true] {
                     let mut board = clearance_board();
                     board.parameters.kicking.allow_strong_kicks = allow_strong_kicks;
@@ -1274,12 +1342,35 @@ mod tests {
     }
 
     #[test]
+    fn keeper_pressure_radius_fits_penalty_dimensions() {
+        let mut board = clearance_board();
+        let transform = board.world_state.robot.ground_to_field.unwrap();
+        let ball = board.ball.as_ref().unwrap().position;
+        for (length, width) in [(1.65, 4.0), (3.5, 7.0), (3.5, 5.0)] {
+            board.field_dimensions.penalty_area_length = length;
+            board.field_dimensions.penalty_area_width = width;
+            let radius = 0.85 * length.min(width / 2.0);
+            for direction in [vector![1.0, 0.0], vector![0.0, 1.0]] {
+                for (offset, pressured) in [(-0.01, true), (0.01, false)] {
+                    board.world_state.obstacles = vec![Obstacle::robot(
+                        transform.inverse() * (ball + direction * (radius + 0.2 + offset)),
+                        0.2,
+                        0.2,
+                    )];
+                    assert_eq!(super::is_goalkeeper_under_pressure(&board), pressured);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn calm_keeper_announces_a_controlled_pass_and_clears_when_pressure_arrives() {
         let mut board = clearance_board();
         board.field_dimensions.length = 14.0;
         board.field_dimensions.width = 9.0;
         board.field_dimensions.penalty_area_length = 3.0;
         board.field_dimensions.penalty_area_width = 6.0;
+        board.field_dimensions.goal_box_area_length = 1.0;
         let transform = Isometry2::from_parts(vector![-6.7, 0.0], 0.0);
         board.world_state.robot.ground_to_field = Some(transform);
         board.world_state.robot.primary_state = PrimaryState::Playing;
@@ -1363,7 +1454,7 @@ mod tests {
         ));
 
         board.last_motion_type = Some(MotionType::Kick);
-        board.world_state.obstacles[0].position = transform.inverse() * (ball + vector![3.7, 3.5]);
+        board.world_state.obstacles[0].position = transform.inverse() * (ball + vector![1.5, 1.5]);
         assert!(super::is_goalkeeper_under_pressure(&board));
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(matches!(

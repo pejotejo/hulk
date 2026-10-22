@@ -21,6 +21,7 @@ use crate::{
     condition,
     conditions::{
         enemy_obstacles, goalkeeper_clearance_direction, hulks_is_kicking_team, opponent_near_ball,
+        opponent_shot_direction,
     },
     kick::{
         execution::execute_ball_action,
@@ -67,6 +68,20 @@ pub(crate) fn adaptive_blocking_velocity(
     if near_front && speed > closing_speed {
         // Small steps near the body reduce leg opening while blocking a frontal ball.
         velocity *= closing_speed / speed;
+    }
+    if velocity.x() * ball.x() > 0.0
+        && let Some(toward_ball) = ball.coords().try_normalize(f32::EPSILON)
+    {
+        let clearance = parameters
+            .kicking
+            .approach_ball_standoff
+            .max(body_half_width + blackboard.field_dimensions.ball_radius);
+        let maximum_closing_speed = ((ball.coords().norm() - clearance) / 0.35).max(0.0);
+        let closing_speed = velocity.dot(&toward_ball);
+        if closing_speed > maximum_closing_speed {
+            // Direct velocity commands bypass the path follower's arrival braking.
+            velocity *= maximum_closing_speed / closing_speed;
+        }
     }
     velocity
 }
@@ -272,10 +287,10 @@ pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
     ) else {
         return Status::Failure;
     };
-    let Some(toward_goal) = (point![-blackboard.field_dimensions.length / 2.0, 0.0]
-        - ball.position)
-        .try_normalize(f32::EPSILON)
-    else {
+    let Some(toward_goal) = opponent_shot_direction(blackboard).or_else(|| {
+        (point![-blackboard.field_dimensions.length / 2.0, 0.0] - ball.position)
+            .try_normalize(f32::EPSILON)
+    }) else {
         return Status::Failure;
     };
     let target = transform.inverse()
@@ -777,6 +792,23 @@ mod ball_support_tests {
             adaptive_blocking_velocity(&board, desired, point![f32::NAN, 0.0]),
             Vector2::zeros()
         );
+
+        for distance in [0.31, 0.3, 0.2] {
+            let ball = point![distance, 0.0];
+            let velocity =
+                adaptive_blocking_velocity(&board, linear_algebra::vector![1.8, 0.0], ball);
+            assert!(velocity.x() * 0.35 <= (distance - 0.3).max(0.0) + 1e-5);
+            let retreat =
+                adaptive_blocking_velocity(&board, linear_algebra::vector![-0.4, 0.0], ball);
+            assert_eq!(retreat.x(), -0.2);
+        }
+        // Keep the small sideways correction that puts an addressed pass on a foot.
+        let correction = adaptive_blocking_velocity(
+            &board,
+            linear_algebra::vector![0.0, 0.1],
+            point![0.2, 0.17],
+        );
+        assert!(correction.y() > 0.0);
     }
 
     #[test]

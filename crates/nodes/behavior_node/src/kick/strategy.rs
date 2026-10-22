@@ -67,6 +67,11 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         return None;
     }
 
+    let restart = world
+        .filtered_game_controller_state
+        .as_ref()
+        .filter(|game| game.kicking_team == Some(Team::Hulks))
+        .and_then(|game| game.sub_state);
     let was_clearing = matches!(previous, Some(BallAction::Clear));
     let own_goal = LineSegment(
         point![-goal_x, -field.goal_inner_width / 2.0],
@@ -81,7 +86,9 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
                 0.0
             },
     );
-    let can_clear = under_pressure
+    // Our goal kick is a deliberate restart, including when retaining an old Clear intent.
+    let can_clear = restart != Some(SubState::GoalKick)
+        && under_pressure
         && travel_openings(
             ball,
             ground_to_field,
@@ -104,11 +111,6 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
     }
 
     let pass = choose_pass(blackboard, ball, ground_to_field);
-    let restart = world
-        .filtered_game_controller_state
-        .as_ref()
-        .filter(|game| game.kicking_team == Some(Team::Hulks))
-        .and_then(|game| game.sub_state);
     let keeping_pass = matches!(pass, Some(BallAction::Pass { receiver })
         if is_executing_announced_pass(blackboard, receiver));
     if pass.is_some()
@@ -1274,7 +1276,7 @@ mod tests {
         );
         let projected =
             blackboard.projected_ball_position(position, linear_algebra::vector![20.0, -20.0]);
-        assert_eq!(projected, point![4.45, -2.95]);
+        assert!((projected - position).norm() <= 2.0 + 1e-6);
         let outside = point![4.6, 0.0];
         assert_eq!(
             blackboard.projected_ball_position(outside, -velocity),
@@ -1682,6 +1684,46 @@ mod tests {
         board.world_state.obstacles.clear();
         assert_eq!(select_ball_action(&mut board), Status::Success);
         assert_eq!(board.ball_action, Some(BallAction::Dribble));
+    }
+
+    #[test]
+    fn own_goal_kicks_choose_deliberate_passes_instead_of_emergency_clearances() {
+        let mut board = passing_blackboard();
+        board.ball.as_mut().unwrap().position = point![-3.8, 0.0];
+        board
+            .world_state
+            .player_states
+            .two
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = point![-1.5, 0.0].into();
+        let game = board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap();
+        game.kicking_team = Some(Team::Hulks);
+        game.sub_state = Some(SubState::GoalKick);
+        for opponent in [point![0.0, 2.0], point![-3.8, 0.7]] {
+            board.world_state.obstacles = vec![Obstacle::robot(opponent, 0.2, 0.2)];
+            board.ball_action = Some(BallAction::Clear);
+            select_ball_action(&mut board);
+            assert_eq!(
+                board.ball_action,
+                Some(BallAction::Pass {
+                    receiver: PlayerNumber::Two
+                })
+            );
+        }
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .kicking_team = Some(Team::Opponent);
+        select_ball_action(&mut board);
+        assert_eq!(board.ball_action, Some(BallAction::Clear));
     }
 
     #[test]

@@ -274,7 +274,7 @@ pub fn is_pass_ball_arriving(blackboard: &mut Blackboard) -> bool {
 }
 
 pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
-    let Some((_, sender)) = incoming_pass(blackboard) else {
+    let Some((pass, sender)) = incoming_pass(blackboard) else {
         return Status::Failure;
     };
     if receive_rolling_ball(blackboard) == Status::Success {
@@ -283,6 +283,76 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
         blackboard.projected_ball_position(ball.position, ball.velocity)
     });
+    // Move only from a fresh lane estimate; stationary launches start at the ball, not the body.
+    let launch_origin = blackboard
+        .ball
+        .as_ref()
+        .filter(|ball| {
+            ball.age <= blackboard.world_state.now
+                && blackboard.world_state.now.duration_since(ball.age)
+                    < ball_timeout(&blackboard.parameters, ball.source)
+        })
+        .and_then(|ball| {
+            let speed = ball.velocity.norm();
+            if !speed.is_finite() {
+                return None;
+            }
+            if speed
+                > blackboard
+                    .parameters
+                    .ball
+                    .interception
+                    .minimum_ball_velocity
+            {
+                return Some(sender);
+            }
+            ((ball.position - sender).norm()
+                <= blackboard.parameters.kicking.kick_activation_distance
+                    + blackboard.parameters.kicking.kick_activation_hysteresis)
+                .then_some(ball.position)
+        });
+    let transform = blackboard.world_state.robot.ground_to_field.unwrap();
+    let parameters = &blackboard.parameters.kicking.strategy.passing;
+    if !super::kickoff::own_kickoff(blackboard)
+        && let Some(direction) =
+            launch_origin.and_then(|origin| (pass.target - origin).try_normalize(f32::EPSILON))
+    {
+        let target = pass.target + direction * parameters.receiver_standoff;
+        let offset = target - transform.as_pose().position();
+        let lateral_offset = offset - direction * offset.dot(&direction);
+        let walking = blackboard.parameters.walking.walk_and_stand;
+        // Join an inward-shifted announced lane before arrival; measured reception owns it after.
+        if (ball - pass.target).dot(&direction) < 0.0
+            && target.x().abs()
+                < blackboard.field_dimensions.length / 2.0 - blackboard.field_dimensions.ball_radius
+            && target.y().abs()
+                < blackboard.field_dimensions.width / 2.0 - blackboard.field_dimensions.ball_radius
+            && lateral_offset.norm()
+                > walking
+                    .target_reached_thresholds
+                    .x
+                    .max(blackboard.field_dimensions.ball_radius)
+        {
+            if blackboard.last_motion_type != Some(MotionType::Walk)
+                && !is_allowed_to_switch(blackboard)
+            {
+                return stand(blackboard);
+            }
+            let target = transform.inverse() * target;
+            let ball = transform.inverse() * ball;
+            return walk_to(
+                blackboard,
+                linear_algebra::Pose2::from_parts(target, Orientation2::from_vector(ball - target)),
+                blackboard.parameters.walking.speed.kicking,
+                types::motion_command::OrientationMode::LookAt {
+                    target: ball,
+                    tolerance: walking.orientation_tolerance,
+                },
+                walking.normal_distance_to_be_aligned,
+                walking.hysteresis,
+            );
+        }
+    }
     let status = hold_and_face_ball(blackboard, ball);
     if matches!(blackboard.body_motion, Some(BodyMotion::Stand)) {
         // Keep an addressed receiver ready without introducing the Stand-to-Walk dwell.
@@ -691,6 +761,29 @@ mod tests {
             Status::Success
         );
         assert!(matches!(waiting.body_motion, Some(BodyMotion::Stand)));
+
+        let mut sideline = waiting.clone();
+        sideline.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+            vector![2.0, 2.9],
+            std::f32::consts::PI,
+        ));
+        sideline.ball.as_mut().unwrap().position = point![0.2, 2.8];
+        let sender = sideline.world_state.player_states.three.as_mut().unwrap();
+        sender.inner.pose = point![0.0, 2.8].into();
+        sender.inner.pass.as_mut().unwrap().target = point![1.5, 2.35];
+        assert!(is_pass_receiver(&mut sideline));
+        assert_eq!(prepare_to_receive_pass(&mut sideline), Status::Success);
+        let Some(BodyMotion::Walk { ref path, .. }) = sideline.body_motion else {
+            panic!("receiver must join the announced inward lane before launch")
+        };
+        let types::path::PathSegment::LineSegment(last) = path.last_segment() else {
+            panic!("expected final approach to receiving stance")
+        };
+        let target = point![1.5, 2.35];
+        let expected =
+            target + (target - sideline.ball.as_ref().unwrap().position).normalize() * 0.5;
+        let transform = sideline.world_state.robot.ground_to_field.unwrap();
+        assert!((transform * last.1 - expected).norm() < 1e-5);
 
         assert!(is_pass_receiver(&mut receiver));
         assert!(is_pass_ball_arriving(&mut receiver));

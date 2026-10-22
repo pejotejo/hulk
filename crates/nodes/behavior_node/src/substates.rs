@@ -112,6 +112,24 @@ fn restart_players(blackboard: &Blackboard) -> Vec<(PlayerNumber, Point2<Field>)
         .collect()
 }
 
+pub fn is_opponent_restart_striker(blackboard: &mut Blackboard) -> bool {
+    let Some(ball) = blackboard.ball.as_ref() else {
+        return false;
+    };
+    // Rule exclusion zones can cover the ball; elect a fielder independently of ownership there.
+    let striker = restart_players(blackboard)
+        .into_iter()
+        .min_by(|(a_number, a), (b_number, b)| {
+            (a - ball.position)
+                .norm_squared()
+                .total_cmp(&(b - ball.position).norm_squared())
+                .then_with(|| a_number.cmp(b_number))
+        })
+        .map(|(number, _)| number);
+    blackboard.last_closest_to_ball = striker == Some(blackboard.player_number);
+    blackboard.last_closest_to_ball
+}
+
 pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Field>) -> bool {
     let (Some(ball), Some(transform)) = (
         &blackboard.ball,
@@ -530,6 +548,51 @@ mod tests {
                 ),
                 "{state:?}"
             );
+        }
+    }
+
+    #[test]
+    fn keeper_goal_kicks_select_a_pass_or_deliberate_shot_before_emergency_clearance() {
+        for receiver in [None, Some(PlayerNumber::Two)] {
+            let mut board = restart(SubState::GoalKick, point![-3.5, 0.0]);
+            board.player_number = PlayerNumber::One;
+            board
+                .parameters
+                .goalkeeper
+                .kick_away_ball_maximum_robot_distance = 1.5;
+            board.parameters.kicking.strategy.pressure_distance = 1.0;
+            board.parameters.kicking.strategy.clear_goal_distance = 5.0;
+            let transform = board.world_state.robot.ground_to_field.unwrap();
+            board.world_state.obstacles = vec![Obstacle::robot(
+                transform.inverse() * point![-3.5, 0.6],
+                0.2,
+                0.2,
+            )];
+            if let Some(receiver) = receiver {
+                board.world_state.player_states[receiver] = Some(TimeWrapper {
+                    time: board.world_state.now,
+                    inner: PlayerState {
+                        pose: point![-1.5, 0.0].into(),
+                        ..crate::test_support::player_state()
+                    },
+                });
+            }
+            let tree = crate::goalkeeper::goalkeeper_subtree();
+            let (_, trace) = tree.tick_with_trace(&mut board);
+            assert!(!succeeded(&trace, "is_goalkeeper_kick_away_needed"));
+            if let Some(receiver) = receiver {
+                assert_eq!(board.ball_action, Some(BallAction::Pass { receiver }));
+                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+                assert!(board.try_sending_state_message().is_some());
+                board.world_state.now = board.world_state.now + Duration::from_millis(150);
+                tree.tick_with_trace(&mut board);
+            } else {
+                assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
+            }
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick { quick: false, .. })
+            ));
         }
     }
 

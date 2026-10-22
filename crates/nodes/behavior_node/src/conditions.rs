@@ -143,6 +143,64 @@ pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool
     opponent_near_position(blackboard, ball.position, distance)
 }
 
+pub(crate) fn opponent_ball_holder(blackboard: &Blackboard) -> Option<Point2<Field>> {
+    let world = &blackboard.world_state;
+    let ball = blackboard.ball.as_ref()?;
+    let transform = world.robot.ground_to_field?;
+    let tracks = world.humanoid_tracks.as_ref()?;
+    if ball.age > world.now
+        || world.now.duration_since(ball.age) > Duration::from_millis(250)
+        || world.now.duration_since(ball.age) >= ball_timeout(&blackboard.parameters, ball.source)
+        || tracks.time > world.now
+        || world.now.duration_since(tracks.time) > Duration::from_millis(250)
+        || !ball.velocity.norm().is_finite()
+        || ball.velocity.norm()
+            > (2.0
+                * blackboard
+                    .parameters
+                    .ball
+                    .interception
+                    .minimum_ball_velocity)
+                .max(0.5)
+    {
+        return None;
+    }
+    world
+        .obstacles
+        .iter()
+        .filter(|obstacle| matches!(obstacle.kind, ObstacleKind::Robot | ObstacleKind::Unknown))
+        .filter_map(|obstacle| {
+            let track = tracked_humanoid(blackboard, obstacle)?;
+            if track.role != HumanoidRole::Opponent
+                || track.remote_only
+                || !track.robot_probability.is_finite()
+                || track.robot_probability < 0.5
+                || !track.time_since_detection.is_some_and(|age| {
+                    age + world.now.duration_since(tracks.time) <= Duration::from_millis(500)
+                })
+            {
+                return None;
+            }
+            let position = transform * track.position_in_ground;
+            let distance = (ball.position - position).norm();
+            (distance
+                <= blackboard.parameters.kicking.approach_ball_standoff
+                    + obstacle.radius_at_foot_height
+                    + blackboard.field_dimensions.ball_radius)
+                .then_some((distance, position))
+        })
+        .min_by(|(a, _), (b, _)| a.total_cmp(b))
+        .map(|(_, position)| position)
+}
+
+pub(crate) fn opponent_shot_direction(blackboard: &Blackboard) -> Option<Vector2<Field>> {
+    let holder = opponent_ball_holder(blackboard)?;
+    let direction = (blackboard.ball.as_ref()?.position - holder)
+        .try_normalize(blackboard.field_dimensions.ball_radius)?;
+    // Tracks have no yaw: holder-to-ball geometry is only a forward-shot hint.
+    (direction.x() < -0.5).then_some(direction)
+}
+
 pub(crate) fn opponent_near_position(
     blackboard: &Blackboard,
     target: Point2<Field>,
@@ -355,7 +413,8 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
 
     let raw_is_closest = is_finishing_striker_kick(blackboard)
         || if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
-            let projected = blackboard.projected_ball_position(ball.position, ball.velocity);
+            // Ownership must not depend on each robot's close-range pursuit cutoff.
+            let projected = blackboard.ball_pursuit_position(ball.position, ball.velocity);
             let ownership_at_ball = voronoi_map.ownership_at(projected);
             match ownership_at_ball {
                 Some(Ownership::Robot(player_number)) if player_number == own_player_number => true,
@@ -587,12 +646,18 @@ mod tests {
     use crate::node::LastBall;
     use hsl_network_messages::{Penalty, PlayerNumber};
     use types::{
-        field_dimensions::Side,
+        behavior_tree::{NodeTrace, Status},
+        field_dimensions::{FieldDimensions, Side},
         multivariate_normal_distribution::MultivariateNormalDistribution,
         time_wrapper::TimeWrapper,
         tracked_objects::TrackedObjects,
         world_state::{BallSource, PlayerState},
     };
+
+    fn succeeded(trace: &NodeTrace, name: &str) -> bool {
+        (trace.name == name && trace.status == Status::Success)
+            || trace.children.iter().any(|child| succeeded(child, name))
+    }
 
     #[test]
     fn fresh_opponent_tracks_identify_pressure_and_predict_closing_robots() {
@@ -665,6 +730,184 @@ mod tests {
         board.world_state.humanoid_tracks.as_mut().unwrap().time = board.world_state.now;
         board.parameters.obstacle_source = ObstacleSource::Legacy;
         assert!(opponent_near_position(&board, target, 1.5));
+    }
+
+    #[test]
+    fn shot_hint_requires_fresh_observed_opponent_and_forward_holder_geometry() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ..Default::default()
+        };
+        board.world_state.now = board.world_state.now + Duration::from_secs(10);
+        let transform = linear_algebra::Isometry2::from_parts(vector![0.5, -0.7], 0.8);
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.parameters.obstacle_source = ObstacleSource::ObjectFilters;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        board.ball = Some(LastBall {
+            position: point![1.3, 0.1],
+            velocity: vector![-0.4, 0.0],
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        let holder = point![1.6, 0.0];
+        board.world_state.obstacles = vec![Obstacle::robot(transform.inverse() * holder, 0.2, 0.2)];
+        board.world_state.humanoid_tracks = Some(TrackedObjects {
+            time: board.world_state.now,
+            ground_to_odometry: Default::default(),
+            ground_to_field: Some(transform),
+            tracks: vec![HumanoidTrack {
+                id: 1,
+                existence: 1.0,
+                status: TrackStatus::Confirmed,
+                robot_probability: 1.0,
+                human_probability: 0.0,
+                role: HumanoidRole::Opponent,
+                teammate_probabilities: vec![],
+                remote_only: false,
+                detection_probability: 1.0,
+                time_since_detection: Some(Duration::ZERO),
+                state: MultivariateNormalDistribution {
+                    mean: nalgebra::SVector::zeros(),
+                    covariance: nalgebra::SMatrix::identity(),
+                },
+                position_in_ground: transform.inverse() * holder,
+                velocity_in_ground: Vector2::zeros(),
+                position_in_field: Some(holder),
+            }],
+        });
+        let ball = board.ball.as_ref().unwrap();
+        approx::assert_relative_eq!(
+            opponent_shot_direction(&board).unwrap(),
+            (ball.position - holder).normalize(),
+            epsilon = 1e-5
+        );
+        assert_eq!(
+            board.ball_pursuit_position(ball.position, ball.velocity),
+            ball.position
+        );
+
+        let mut keeper = board.clone();
+        keeper.field_dimensions.length = 22.0;
+        keeper.field_dimensions.width = 14.0;
+        keeper.field_dimensions.goal_inner_width = 2.4;
+        keeper.field_dimensions.ball_radius = 0.105;
+        keeper.parameters.goalkeeper.player_number = PlayerNumber::One;
+        keeper.parameters.goalkeeper.x_offset = 0.3;
+        keeper.parameters.goalkeeper.distance_to_goalpost = 0.15;
+        keeper.player_number = PlayerNumber::One;
+        keeper.last_motion_type = Some(MotionType::Walk);
+        keeper.ball.as_mut().unwrap().position = point![1.3, -0.02];
+        keeper.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        keeper.last_ball = keeper.ball.clone();
+        let tree = crate::goalkeeper::goalkeeper_subtree();
+        let (status, trace) = tree.tick_with_trace(&mut keeper);
+        assert_eq!(status, Status::Success);
+        assert!(succeeded(
+            &trace,
+            "walk_to_goalkeeper_pre_shot_block_position"
+        ));
+        assert!(!succeeded(&trace, "set_goalkeeper_shot_block_position"));
+        let anticipated = transform * keeper.walk_position.unwrap();
+        approx::assert_relative_eq!(anticipated, point![-10.7, -0.82], epsilon = 1e-4);
+
+        keeper.ball.as_mut().unwrap().velocity = vector![-3.0, 0.1];
+        keeper.last_ball = keeper.ball.clone();
+        let (status, trace) = tree.tick_with_trace(&mut keeper);
+        assert_eq!(status, Status::Success);
+        assert!(succeeded(&trace, "set_goalkeeper_shot_block_position"));
+        assert!(!succeeded(
+            &trace,
+            "walk_to_goalkeeper_pre_shot_block_position"
+        ));
+        let measured = transform * keeper.walk_position.unwrap();
+        approx::assert_relative_eq!(measured, point![-10.7, 0.38], epsilon = 1e-4);
+
+        for role in [
+            HumanoidRole::Human,
+            HumanoidRole::Teammate(PlayerNumber::Two),
+        ] {
+            let mut invalid = board.clone();
+            invalid.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].role = role;
+            assert!(opponent_shot_direction(&invalid).is_none());
+            assert!(opponent_ball_holder(&invalid).is_none());
+        }
+        for age in [Duration::from_millis(501), Duration::from_secs(1)] {
+            let mut invalid = board.clone();
+            invalid.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].time_since_detection =
+                Some(age);
+            assert!(opponent_shot_direction(&invalid).is_none());
+        }
+        for time in [
+            board.world_state.now - Duration::from_millis(251),
+            board.world_state.now + Duration::from_millis(1),
+        ] {
+            let mut invalid = board.clone();
+            invalid.world_state.humanoid_tracks.as_mut().unwrap().time = time;
+            assert!(opponent_shot_direction(&invalid).is_none());
+        }
+        let mut invalid = board.clone();
+        invalid.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].remote_only = true;
+        assert!(opponent_shot_direction(&invalid).is_none());
+        invalid = board.clone();
+        invalid.parameters.obstacle_source = ObstacleSource::Legacy;
+        assert!(opponent_shot_direction(&invalid).is_none());
+        for age in [Duration::from_millis(251), Duration::from_secs(1)] {
+            let mut invalid = board.clone();
+            invalid.ball.as_mut().unwrap().age = invalid.world_state.now - age;
+            assert!(opponent_shot_direction(&invalid).is_none());
+        }
+        board.ball.as_mut().unwrap().velocity = vector![-3.0, 0.0];
+        assert!(opponent_ball_holder(&board).is_none());
+        board.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        board.ball.as_mut().unwrap().position = point![1.9, 0.1];
+        assert!(opponent_ball_holder(&board).is_some());
+        assert!(opponent_shot_direction(&board).is_none());
+    }
+
+    #[test]
+    fn near_and_distant_robots_elect_the_same_interceptor() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ..Default::default()
+        };
+        let sites = [
+            (
+                linear_algebra::Pose2::new(point![0.0, 0.0], 0.0),
+                PlayerNumber::Two,
+            ),
+            (
+                linear_algebra::Pose2::new(point![0.9, 0.0], 0.0),
+                PlayerNumber::Three,
+            ),
+        ];
+        let mut map = voronoi::VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.1);
+        map.multi_source_dijkstra(&sites);
+        board.voronoi_map = Some(map);
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.ball = Some(LastBall {
+            position: point![1.2, 0.0],
+            velocity: vector![-2.0, 0.0],
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        let mut owners = Vec::new();
+        for (pose, player) in sites {
+            let mut peer = board.clone();
+            peer.player_number = player;
+            peer.world_state.robot.ground_to_field = Some(pose.as_transform());
+            if is_closest_to_ball(&mut peer) {
+                owners.push(player);
+            }
+        }
+        assert_eq!(owners, vec![PlayerNumber::Two]);
     }
 
     #[test]
