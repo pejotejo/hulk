@@ -496,6 +496,9 @@ mod runtime_tests {
                             },
                             pose: linear_algebra::Pose2::zero(),
                             ball_position: None,
+                            pass: None,
+                            pose_age: None,
+                            replacement_goalkeeper_claim: false,
                         })))
                         .await
                         .unwrap();

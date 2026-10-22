@@ -429,7 +429,7 @@ mod tests {
             types::filtered_game_controller_state::FilteredGameControllerState {
                 remaining_number_of_messages: 100,
                 remaining_time_in_half: Duration::from_millis(4800),
-                ..Default::default()
+                ..crate::test_support::filtered_game_controller_state()
             },
         );
         blackboard
@@ -452,7 +452,7 @@ mod tests {
             time: blackboard.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![2.0, 0.0], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.0, 0.0], 0.2, 0.25)];
@@ -547,7 +547,7 @@ mod tests {
             time: board.world_state.now,
             inner: PlayerState {
                 pose: receiver.into(),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         board.world_state.obstacles = vec![
@@ -578,7 +578,7 @@ mod tests {
             board.parameters.ball.interception.minimum_ball_velocity = 0.3;
             board.parameters.walking.path_planning.robot_radius = 0.4;
             board.last_motion_type = Some(types::motion_type::MotionType::Walk);
-            board.world_state.robot.player_number = PlayerNumber::Three;
+            board.player_number = PlayerNumber::Three;
             let transform = Pose2::new(point![-0.45, -2.35], 0.45_f32.atan2(0.05)).as_transform();
             board.world_state.robot.ground_to_field = Some(transform);
             board.world_state.fall_detection = Some(FallDetection {
@@ -594,7 +594,7 @@ mod tests {
                     receiver: PlayerNumber::Three,
                     target: point![-0.4, -1.85],
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             };
             let keeper = point![6.7, 0.0];
             board.world_state.obstacles =
@@ -755,7 +755,7 @@ mod tests {
             time: board.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![1.0, -1.0], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         execute_ball_action(&mut board);
@@ -895,9 +895,7 @@ mod tests {
                 b.parameters.kicking.strategy.passing.minimum_distance = 1.6
             }),
             ("missing", |b| b.world_state.player_states.two = None),
-            ("self", |b| {
-                b.world_state.robot.player_number = PlayerNumber::Two
-            }),
+            ("self", |b| b.player_number = PlayerNumber::Two),
             ("stale", |b| {
                 b.world_state.now = b.world_state.now + Duration::from_millis(500)
             }),
@@ -906,8 +904,7 @@ mod tests {
                     b.world_state.now + Duration::from_nanos(1)
             }),
             ("penalized", |b| {
-                let mut game =
-                    types::filtered_game_controller_state::FilteredGameControllerState::default();
+                let mut game = crate::test_support::filtered_game_controller_state();
                 game.penalties.two = Some(Penalty::PickUp {
                     remaining: Duration::from_secs(1),
                 });
@@ -1039,13 +1036,14 @@ mod tests {
 
             // The remaining distance shrinks during an already announced kick.
             board.last_motion_type = Some(types::motion_type::MotionType::Kick);
-            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-                board.body_motion.clone().unwrap(),
-                types::motion_command::HeadMotion::Center {
-                    image_region_target: Default::default(),
-                },
-            );
-            if let types::motion_command::MotionCommand::Kick { quick, .. } =
+            board.last_motion_command =
+                Some(types::motion_command::MotionCommand::from_partial_motions(
+                    board.body_motion.clone().unwrap(),
+                    types::motion_command::HeadMotion::Center {
+                        image_region_target: types::motion_command::ImageRegion::Center,
+                    },
+                ));
+            if let Some(types::motion_command::MotionCommand::Kick { quick, .. }) =
                 &mut board.last_motion_command
             {
                 *quick = true;
@@ -1125,7 +1123,7 @@ mod tests {
     #[test]
     fn receiver_prepares_for_stationary_ball_then_claims_arrival_and_expires_intent() {
         let mut receiver = passing_blackboard();
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
         receiver.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::from_parts(
             linear_algebra::vector![2.0, 0.0],
@@ -1140,7 +1138,7 @@ mod tests {
                     receiver: PlayerNumber::Two,
                     target: point![1.5, 0.0],
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         receiver.world_state.fall_detection = Some(FallDetection {
@@ -1154,7 +1152,7 @@ mod tests {
         receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         receiver.world_state.ball = Some(BallState {
             ball_in_ground: point![-2.0, 0.0],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         let tree = create_tree();
         assert!(is_pass_receiver(&mut receiver));
@@ -1307,7 +1305,7 @@ mod tests {
             time: blackboard.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![1.9, -1.0], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         };
         blackboard.world_state.player_states.four = Some(fourth);
@@ -1404,7 +1402,7 @@ mod tests {
             time: board.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![-3.8, 0.7], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         assert_eq!(select_ball_action(&mut board), Status::Success);
@@ -1619,10 +1617,11 @@ mod tests {
             }
             let target = board.kick_target;
             board.last_motion_type = Some(types::motion_type::MotionType::Kick);
-            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-                board.body_motion.clone().unwrap(),
-                types::motion_command::HeadMotion::LookAround,
-            );
+            board.last_motion_command =
+                Some(types::motion_command::MotionCommand::from_partial_motions(
+                    board.body_motion.clone().unwrap(),
+                    types::motion_command::HeadMotion::LookAround,
+                ));
             board.kick_target = None;
             board.body_motion = None;
             tree.tick_with_trace(&mut board);
@@ -1773,7 +1772,7 @@ mod tests {
         blackboard.world_state.ball = Some(BallState {
             ball_in_ground: point![-0.55, 0.2],
             ball_in_field: point![-0.55, 0.2],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.parameters.kicking.kick_activation_distance = 1.0;
         blackboard.parameters.kicking.approach_ball_standoff = 0.3;
@@ -1814,7 +1813,7 @@ mod tests {
             ball_in_ground: observed,
             ball_in_field: point![2.0, 0.0],
             ball_in_ground_velocity: velocity,
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(
             transform.inverse() * point![3.5, 0.0],
@@ -1883,7 +1882,7 @@ mod tests {
         blackboard.world_state.ball = Some(BallState {
             ball_in_ground: transform.inverse() * point![-3.8, 0.0],
             ball_in_field: point![-3.8, 0.0],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.world_state.obstacles = vec![Obstacle::robot(
             transform.inverse() * point![-3.8, 0.7],
@@ -1909,20 +1908,21 @@ mod tests {
             .parameters
             .kicking
             .strong_kick_min_target_distance = 0.1;
-        blackboard.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-            BodyMotion::Kick {
-                ball_position: point![0.51, -0.06],
-                ball_velocity: Default::default(),
-                target_speed: 1.0,
-                soft: false,
-                quick: false,
-                kick_direction: Default::default(),
-                strong: true,
-            },
-            types::motion_command::HeadMotion::Center {
-                image_region_target: Default::default(),
-            },
-        );
+        blackboard.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                BodyMotion::Kick {
+                    ball_position: point![0.51, -0.06],
+                    ball_velocity: Default::default(),
+                    target_speed: 1.0,
+                    soft: false,
+                    quick: false,
+                    kick_direction: Default::default(),
+                    strong: true,
+                },
+                types::motion_command::HeadMotion::Center {
+                    image_region_target: types::motion_command::ImageRegion::Center,
+                },
+            ));
         tree.tick_with_trace(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
         assert!(matches!(

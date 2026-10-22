@@ -394,7 +394,7 @@ mod tests {
         });
         board.world_state.ball = Some(BallState {
             ball_in_ground_velocity: vector![-1.5, 0.0],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         board.visual_kick_ball_position = Some(BallPosition {
             position: point![0.4, 0.1],

@@ -150,8 +150,7 @@ fn is_own_kickoff(blackboard: &mut Blackboard) -> bool {
     let active = own_kickoff(blackboard)
         && !receiving_ball
         && blackboard.has_team_message_budget()
-        && blackboard.player_number
-            != blackboard.parameters.goalkeeper.player_number
+        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number
         && blackboard.parameters.goalkeeper.player_number != kickoff_kicker(blackboard)
         && player_pose(
             blackboard,
@@ -312,8 +311,7 @@ pub(super) fn kickoff_pass_target(
 }
 
 fn is_striker_with_receiver(blackboard: &mut Blackboard) -> bool {
-    blackboard.player_number == kickoff_kicker(blackboard)
-        && blackboard.has_team_message_budget()
+    blackboard.player_number == kickoff_kicker(blackboard) && blackboard.has_team_message_budget()
 }
 
 fn is_other_field_player(blackboard: &mut Blackboard) -> bool {
@@ -325,8 +323,7 @@ fn is_other_field_player(blackboard: &mut Blackboard) -> bool {
 
 fn is_kickoff_receiver(blackboard: &mut Blackboard) -> bool {
     Some(blackboard.player_number) == kickoff_receiver(blackboard)
-        && blackboard.player_number
-            != blackboard.parameters.goalkeeper.player_number
+        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number
 }
 
 fn select_kickoff_pass(blackboard: &mut Blackboard) -> Status {
@@ -385,7 +382,7 @@ mod tests {
         path::PathSegment,
         primary_state::PrimaryState,
         time_wrapper::TimeWrapper,
-        world_state::{BallSource, BallState, PlayerState},
+        world_state::{BallSource, PlayerState},
     };
 
     use crate::node::LastBall;
@@ -421,7 +418,7 @@ mod tests {
             kicking_team: Some(Team::Hulks),
             remaining_number_of_messages: 100,
             remaining_time_in_half: Duration::from_secs(1200),
-            ..Default::default()
+            ..crate::test_support::filtered_game_controller_state()
         });
         board.parameters.kickoff.standard_positions.four.position = point![-2.5, -1.5];
         board.parameters.kickoff.standard_positions.five.position = point![-2.5, 1.5];
@@ -458,7 +455,7 @@ mod tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
         }
@@ -589,7 +586,7 @@ mod tests {
         let mut board = blackboard();
         board.world_state.player_states.two = Some(TimeWrapper {
             time: board.world_state.now,
-            inner: PlayerState::default(),
+            inner: crate::test_support::player_state(),
         });
         board.player_number = PlayerNumber::Five;
         board.parameters.ball.last_ball_timeout = Duration::from_millis(500);
@@ -641,7 +638,7 @@ mod tests {
             time: striker.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![-3.0, -0.5], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         striker.update_kickoff();
@@ -651,7 +648,7 @@ mod tests {
             Some(Pose2::new(point![-3.0, -0.5], 0.0).as_transform());
         receiver.world_state.player_states.two = Some(TimeWrapper {
             time: receiver.world_state.now,
-            inner: PlayerState::default(),
+            inner: crate::test_support::player_state(),
         });
         receiver.ball = None;
         assert_eq!(kickoff_receiver(&striker), Some(PlayerNumber::Three));
@@ -745,12 +742,14 @@ mod tests {
             ball_is_free: true,
             kick_off: false,
         };
-        striker.world_state.ball = Some(BallState::default());
+        striker.world_state.ball = Some(types::world_state::BallState::new_at_center(
+            Default::default(),
+        ));
         striker.world_state.player_states.three = Some(TimeWrapper {
             time: striker.world_state.now,
             inner: PlayerState {
                 pose,
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         striker.parameters.kicking.kick_activation_distance = 1.3;
@@ -767,9 +766,9 @@ mod tests {
             receiving_pose.orientation().angle() - 0.16,
         );
         receiver.world_state.robot.ground_to_field = Some(settled_pose.as_transform());
-        receiver.last_motion_command = MotionCommand::Stand {
+        receiver.last_motion_command = Some(MotionCommand::Stand {
             head: HeadMotion::LookAround,
-        };
+        });
         assert_eq!(tree.tick_with_trace(&mut receiver).0, Status::Success);
         assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
         striker
@@ -893,7 +892,7 @@ mod tests {
                         time: board.world_state.now,
                         inner: PlayerState {
                             pose: Pose2::new(position, 0.0),
-                            ..Default::default()
+                            ..crate::test_support::player_state()
                         },
                     });
                 }
@@ -1050,7 +1049,9 @@ mod tests {
         let mut board = blackboard();
         board.player_number = PlayerNumber::Two;
         board.world_state.robot.primary_state = PrimaryState::Playing;
-        board.world_state.ball = Some(BallState::default());
+        board.world_state.ball = Some(types::world_state::BallState::new_at_center(
+            Default::default(),
+        ));
         board.parameters.control.is_simple = true;
         board.parameters.kicking.kick_activation_distance = 1.3;
         board.parameters.kicking.strategy.maximum_shot_distance = 6.0;

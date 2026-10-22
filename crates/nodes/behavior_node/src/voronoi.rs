@@ -120,9 +120,8 @@ mod tests {
 
     use hsl_network_messages::Penalty;
     use types::{
-        field_dimensions::FieldDimensions,
-        filtered_game_controller_state::FilteredGameControllerState, obstacles::Obstacle,
-        time_wrapper::TimeWrapper, world_state::PlayerState,
+        field_dimensions::FieldDimensions, obstacles::Obstacle, time_wrapper::TimeWrapper,
+        world_state::PlayerState,
     };
     use voronoi::Ownership;
 
@@ -159,7 +158,7 @@ mod tests {
                     time: board.world_state.now,
                     inner: PlayerState {
                         pose: peer_pose,
-                        ..Default::default()
+                        ..crate::test_support::player_state()
                     },
                 });
                 board.world_state.obstacles.push(Obstacle::robot(
@@ -191,8 +190,10 @@ mod tests {
 
     #[test]
     fn ownership_sites_exclude_stale_future_nonfinite_and_penalized_players() {
-        let mut board = Blackboard::default();
-        board.player_number = PlayerNumber::Two;
+        let mut board = Blackboard {
+            player_number: PlayerNumber::Two,
+            ..Default::default()
+        };
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board
             .parameters
@@ -202,7 +203,7 @@ mod tests {
             .maximum_receiver_age = Duration::from_secs(3);
         board.world_state.player_states.three = Some(TimeWrapper {
             time: board.world_state.now,
-            inner: PlayerState::default(),
+            inner: crate::test_support::player_state(),
         });
         assert_eq!(collect_sites(&board, Pose2::default()).len(), 2);
         for case in 0..4 {
@@ -218,7 +219,7 @@ mod tests {
                 1 => peer.time = board.world_state.now + Duration::from_secs(1),
                 2 => peer.inner.pose = point![f32::NAN, 0.0].into(),
                 _ => {
-                    let mut game = FilteredGameControllerState::default();
+                    let mut game = crate::test_support::filtered_game_controller_state();
                     game.penalties.three = Some(Penalty::PickUp {
                         remaining: Duration::from_secs(1),
                     });

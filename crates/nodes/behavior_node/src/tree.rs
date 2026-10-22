@@ -306,7 +306,7 @@ mod clearance_tests {
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board.world_state.robot.primary_state = PrimaryState::Playing;
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-3.6, 0.0], 0.0).as_transform());
         board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
@@ -315,7 +315,7 @@ mod clearance_tests {
                 kick_off: false,
             },
             kicking_team: Some(Team::Hulks),
-            ..Default::default()
+            ..crate::test_support::filtered_game_controller_state()
         });
         board.world_state.fall_detection = Some(FallDetection {
             time: board.world_state.now,
@@ -331,7 +331,7 @@ mod clearance_tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose: Pose2::new(position, 0.0),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
         }
@@ -426,10 +426,11 @@ mod clearance_tests {
             *target_speed = 0.5;
             *strong = true;
         }
-        board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-            previous,
-            board.head_motion.unwrap(),
-        );
+        board.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                previous,
+                board.head_motion.unwrap(),
+            ));
         board.last_motion_type = Some(MotionType::Kick);
         tree.tick_with_trace(&mut board);
         assert!(matches!(
@@ -485,7 +486,7 @@ mod clearance_tests {
     #[test]
     fn losing_team_packets_keeps_goalkeeper_defending_until_confirmed_alone() {
         let mut keeper = three_players();
-        keeper.world_state.robot.player_number = PlayerNumber::One;
+        keeper.player_number = PlayerNumber::One;
         keeper.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-6.7, 0.0], 0.0).as_transform());
         keeper.world_state.player_states = types::players::Players::new(None);
@@ -555,7 +556,7 @@ mod clearance_tests {
         assert!(!board.voronoi_inputs.contains(&cover_pose));
 
         let mut passer = board.clone();
-        passer.world_state.robot.player_number = PlayerNumber::Three;
+        passer.player_number = PlayerNumber::Three;
         passer.world_state.robot.ground_to_field = Some(
             passer
                 .world_state
@@ -669,7 +670,7 @@ mod clearance_tests {
         assert!(!matches!(sender.body_motion, Some(BodyMotion::Kick { .. })));
 
         let mut receiver = sender.clone();
-        receiver.world_state.robot.player_number = PlayerNumber::Three;
+        receiver.player_number = PlayerNumber::Three;
         receiver.world_state.robot.ground_to_field =
             Some(Pose2::new(point![3.5, 0.0], std::f32::consts::PI).as_transform());
         receiver
@@ -740,7 +741,7 @@ mod clearance_tests {
             )
             .y() < 0.0
         );
-        keeper.world_state.robot.player_number = PlayerNumber::One;
+        keeper.player_number = PlayerNumber::One;
         let keeper_transform = keeper
             .world_state
             .player_states
@@ -774,10 +775,11 @@ mod clearance_tests {
             *strong = false;
         }
         keeper.last_motion_type = Some(MotionType::Kick);
-        keeper.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-            previous,
-            keeper.head_motion.unwrap(),
-        );
+        keeper.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                previous,
+                keeper.head_motion.unwrap(),
+            ));
         tree.tick_with_trace(&mut keeper);
         assert!(matches!(
             keeper.body_motion,
@@ -803,7 +805,7 @@ mod clearance_tests {
                 .inner
                 .pose
                 .as_transform();
-            preparing.world_state.robot.player_number = number;
+            preparing.player_number = number;
             preparing.world_state.robot.ground_to_field = Some(transform);
             preparing.world_state.obstacles = vec![Obstacle::robot(
                 transform.inverse() * point![-2.5, 2.5],
@@ -878,7 +880,7 @@ mod clearance_tests {
 
         // The third robot is already clear and must not chase the projected ball.
         let mut third = three_players();
-        third.world_state.robot.player_number = PlayerNumber::Three;
+        third.player_number = PlayerNumber::Three;
         third.world_state.robot.ground_to_field = Some(
             third
                 .world_state

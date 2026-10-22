@@ -31,7 +31,7 @@ pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     };
     let forward = transform * vector![1.0, 0.0];
-    if blackboard.world_state.robot.player_number == blackboard.parameters.goalkeeper.player_number
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
         || blackboard.parameters.kicking.strategy.validate().is_err()
         || !ball.inner.iter().all(|value| value.is_finite())
         || ball.x() <= 0.0
@@ -139,15 +139,14 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         || crate::conditions::opponent_near_ball(blackboard, kicking.strategy.pressure_distance);
     let quick = (receiving
         && ready_to_receive
-        && blackboard.world_state.robot.player_number
-            != blackboard.parameters.goalkeeper.player_number)
+        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number)
         || (!controlled
             && (kicking.quick
                 || urgent
                 || (was_kicking
                     && matches!(
                         blackboard.last_motion_command,
-                        MotionCommand::Kick { quick: true, .. }
+                        Some(MotionCommand::Kick { quick: true, .. })
                     ))));
     let can_switch = is_allowed_to_start_kick(blackboard);
     let close_to_ball = is_close_to_ball(blackboard);
@@ -532,14 +531,14 @@ mod tests {
             blackboard.body_motion,
             Some(BodyMotion::Kick { quick: true, .. })
         ));
-        blackboard.last_motion_command = MotionCommand::from_partial_motions(
+        blackboard.last_motion_command = Some(MotionCommand::from_partial_motions(
             blackboard.body_motion.clone().unwrap(),
             types::motion_command::HeadMotion::Center {
-                image_region_target: Default::default(),
+                image_region_target: types::motion_command::ImageRegion::Center,
             },
-        );
+        ));
         blackboard.last_motion_type = Some(MotionType::Kick);
-        if let MotionCommand::Kick { strong, .. } = &mut blackboard.last_motion_command {
+        if let Some(MotionCommand::Kick { strong, .. }) = &mut blackboard.last_motion_command {
             *strong = false;
         }
         blackboard.parameters.kicking.quick = false;
@@ -584,7 +583,7 @@ mod tests {
         blackboard.last_motion_type = Some(MotionType::Kick);
         assert!(matches!(
             blackboard.last_motion_command,
-            MotionCommand::Kick { quick: true, .. }
+            Some(MotionCommand::Kick { quick: true, .. })
         ));
         execute_ball_action(&mut blackboard);
         assert!(matches!(

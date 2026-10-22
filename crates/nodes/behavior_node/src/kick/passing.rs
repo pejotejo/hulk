@@ -503,7 +503,7 @@ mod tests {
             types::filtered_game_controller_state::FilteredGameControllerState {
                 remaining_time_in_half: Duration::from_secs(100),
                 remaining_number_of_messages: 10_000,
-                ..Default::default()
+                ..crate::test_support::filtered_game_controller_state()
             },
         );
         sender.parameters.goalkeeper.player_number = PlayerNumber::One;
@@ -529,7 +529,7 @@ mod tests {
             time: sender.world_state.now,
             inner: PlayerState {
                 pose: point![3.5, 0.0].into(),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         sender.last_announced_pass = Some(TimeWrapper {
@@ -673,7 +673,7 @@ mod tests {
                     receiver: PlayerNumber::Two,
                     target: point![1.5, -1.0],
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
 
@@ -792,7 +792,7 @@ mod tests {
             time: receiver.world_state.now,
             inner: PlayerState {
                 pose: point![-4.2, 0.0].into(),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         receiver.world_state.player_states.three = Some(TimeWrapper {
@@ -803,7 +803,7 @@ mod tests {
                     receiver: PlayerNumber::Two,
                     target: point![-2.0, 0.0],
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
 

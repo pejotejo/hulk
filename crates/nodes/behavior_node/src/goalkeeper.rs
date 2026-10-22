@@ -785,7 +785,7 @@ mod tests {
             last_motion_type: Some(MotionType::Walk),
             ..Default::default()
         };
-        board.world_state.robot.player_number = PlayerNumber::One;
+        board.player_number = PlayerNumber::One;
         board.world_state.robot.ground_to_field =
             Some(Isometry2::from_parts(vector![-4.2, 0.0], 0.0));
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
@@ -885,7 +885,7 @@ mod tests {
                 board.parameters.walking.speed.velocity_fade_distance = 3.0;
                 board.world_state.ball = Some(BallState {
                     ball_in_ground: transform.inverse() * ball.position,
-                    ..Default::default()
+                    ..types::world_state::BallState::new_at_center(Default::default())
                 });
                 let post = point![-7.025, side * 1.25];
                 board.world_state.obstacles = vec![
@@ -1082,7 +1082,7 @@ mod tests {
                     Some(FilteredGameControllerState {
                         sub_state,
                         kicking_team: Some(kicking_team),
-                        ..Default::default()
+                        ..crate::test_support::filtered_game_controller_state()
                     });
                 board.ball = Some(LastBall {
                     position,
@@ -1129,7 +1129,7 @@ mod tests {
                         Some(FilteredGameControllerState {
                             sub_state,
                             kicking_team: Some(Team::Hulks),
-                            ..Default::default()
+                            ..crate::test_support::filtered_game_controller_state()
                         });
                     let ball = board.ball.as_ref().unwrap().position;
                     for (index, number) in [
@@ -1150,7 +1150,7 @@ mod tests {
                                     ball + vector![0.15 * (index + 1) as f32, 0.0],
                                     0.0,
                                 ),
-                                ..Default::default()
+                                ..crate::test_support::player_state()
                             },
                         });
                     }
@@ -1207,7 +1207,7 @@ mod tests {
             board.last_ball = board.ball.clone();
             board.world_state.ball = Some(BallState {
                 ball_in_ground: transform.inverse() * ball,
-                ..Default::default()
+                ..types::world_state::BallState::new_at_center(Default::default())
             });
             if angle != 0.0 {
                 assert!((transform.inverse() * ball).x() > 0.0);

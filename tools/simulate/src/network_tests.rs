@@ -132,6 +132,9 @@ async fn real_udp_game_controller_returns_penalties_and_team_messages() {
             pose: linear_algebra::Pose2::zero(),
             ball_position: None,
             head_yaw: 0.0,
+            pass: None,
+            pose_age: None,
+            replacement_goalkeeper_claim: false,
         }))
         .unwrap();
         loop {

@@ -451,7 +451,7 @@ mod tests {
             },
             remaining_number_of_messages: 1000,
             remaining_time_in_half: Duration::from_secs(100),
-            ..Default::default()
+            ..crate::test_support::filtered_game_controller_state()
         });
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.voronoi.grid_resolution = 0.25;
@@ -499,7 +499,7 @@ mod tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose: Pose2::new(receiver, 0.0),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             let tree = sub_state_subtree();
@@ -581,7 +581,7 @@ mod tests {
                 time: taker.world_state.now,
                 inner: PlayerState {
                     pose,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             let tree = crate::tree::create_tree();
@@ -609,7 +609,7 @@ mod tests {
                 inner: PlayerState {
                     pose: message.pose,
                     pass: message.pass,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             receiver.ball_action = None;
@@ -646,10 +646,10 @@ mod tests {
 
             let transform = taker.world_state.robot.ground_to_field.unwrap();
             let target = transform * taker.kick_target.unwrap();
-            taker.last_motion_command = MotionCommand::from_partial_motions(
+            taker.last_motion_command = Some(MotionCommand::from_partial_motions(
                 taker.body_motion.clone().unwrap(),
                 taker.head_motion.unwrap(),
-            );
+            ));
             taker.last_motion_type = Some(MotionType::Kick);
             taker.last_motion_switch_time = taker.world_state.now;
             // GameController releases the restart on the first small ball movement.
@@ -729,7 +729,7 @@ mod tests {
                 time: receiver.world_state.now,
                 inner: PlayerState {
                     pose: taker_pose,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             let tree = crate::tree::create_tree();
@@ -776,7 +776,7 @@ mod tests {
                 time: receiver.world_state.now,
                 inner: PlayerState {
                     pose,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             // The receiver's older report agrees with its current obstacle position.
@@ -818,7 +818,7 @@ mod tests {
             time: board.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![4.0, 2.0], 0.0),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         assert_eq!(select_ball_action(&mut board), Status::Success);
@@ -889,7 +889,7 @@ mod tests {
                 time: taker.world_state.now,
                 inner: PlayerState {
                     pose: Pose2::new(receiver_position, 0.0),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             let obstacle = (ball + receiver_position.coords()) / 2.0;
@@ -968,7 +968,7 @@ mod tests {
                 time: receiver.world_state.now,
                 inner: PlayerState {
                     pose: taker_pose,
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             let transform = receiver.world_state.robot.ground_to_field.unwrap();
@@ -1094,7 +1094,7 @@ mod tests {
                     time: board.world_state.now,
                     inner: PlayerState {
                         pose: Pose2::new(position, 0.0),
-                        ..Default::default()
+                        ..crate::test_support::player_state()
                     },
                 });
             }
@@ -1154,7 +1154,7 @@ mod tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose: Pose2::new(position, 0.0),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
         }

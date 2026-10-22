@@ -299,7 +299,7 @@ mod tests {
             remaining_number_of_messages: 100,
             kicking_team: Some(Team::Hulks),
             sub_state: Some(SubState::CornerKick),
-            ..Default::default()
+            ..crate::test_support::filtered_game_controller_state()
         });
         assert!(
             state_message_send_interval(

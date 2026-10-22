@@ -43,8 +43,7 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return false;
     };
-    if blackboard.player_number != blackboard.parameters.goalkeeper.player_number
-    {
+    if blackboard.player_number != blackboard.parameters.goalkeeper.player_number {
         let controlled = controlled_ball_at_feet(blackboard, position, velocity)
             && super::execution::resolve_target(blackboard).is_some_and(|target| {
                 let transform = blackboard.world_state.robot.ground_to_field.unwrap();
@@ -229,8 +228,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     }
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
-    let settle = blackboard.player_number
-        != blackboard.parameters.goalkeeper.player_number
+    let settle = blackboard.player_number != blackboard.parameters.goalkeeper.player_number
         && !is_receiver_under_pressure(blackboard);
     if settle && position.coords().dot(&velocity) >= 0.0 {
         return Status::Failure;
@@ -485,7 +483,7 @@ mod tests {
                     receiver: PlayerNumber::Two,
                     target: Point2::origin(),
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         assert!(super::super::passing::is_pass_receiver(&mut blackboard));
@@ -634,7 +632,7 @@ mod tests {
                     receiver: PlayerNumber::Two,
                     target: Point2::origin(),
                 }),
-                ..Default::default()
+                ..crate::test_support::player_state()
             },
         });
         for side in [-1.0, 1.0] {
@@ -711,10 +709,11 @@ mod tests {
                     ball_position, ball_velocity, .. })
                 if ball_position == point![1.7, 0.05] && ball_velocity == vector![-2.0, 0.0]));
             assert!(board.ball_action.is_none());
-            board.last_motion_command = Some(types::motion_command::MotionCommand::from_partial_motions(
-                board.body_motion.clone().unwrap(),
-                board.head_motion.unwrap(),
-            ));
+            board.last_motion_command =
+                Some(types::motion_command::MotionCommand::from_partial_motions(
+                    board.body_motion.clone().unwrap(),
+                    board.head_motion.unwrap(),
+                ));
             board.last_motion_type = Some(MotionType::Kick);
         }
         for (position, velocity) in [
@@ -814,7 +813,7 @@ mod tests {
         blackboard.world_state.ball = Some(BallState {
             ball_in_ground: point![1.0, 0.15],
             ball_in_ground_velocity: vector![-2.0, 0.0],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.parameters.kicking.strategy.maximum_shot_distance = 6.0;
         blackboard.parameters.control.allow_switch.walk = Duration::from_secs(1);
@@ -833,10 +832,11 @@ mod tests {
         assert!(blackboard.kick_target.unwrap().x() > 1.0);
         assert!(blackboard.ball_action.is_some());
 
-        blackboard.last_motion_command = Some(types::motion_command::MotionCommand::from_partial_motions(
-            blackboard.body_motion.clone().unwrap(),
-            blackboard.head_motion.unwrap(),
-        ));
+        blackboard.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                blackboard.body_motion.clone().unwrap(),
+                blackboard.head_motion.unwrap(),
+            ));
         blackboard.last_motion_type = Some(MotionType::Kick);
         blackboard.ball.as_mut().unwrap().velocity = vector![-0.2, 0.0];
         blackboard
@@ -1092,7 +1092,7 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.world_state.ball = Some(BallState {
             ball_in_ground_velocity: vector![-0.5, 0.0],
-            ..Default::default()
+            ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
         assert!(is_receiving_ball(&blackboard));

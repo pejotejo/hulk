@@ -105,7 +105,7 @@ fn plan_with_ball_obstacle(
     );
     let target_in_field = ground_to_field * target_in_ground;
     let own_goal_x = -field_dimensions.length / 2.0;
-    let keeper_defending = blackboard.world_state.robot.player_number
+    let keeper_defending = blackboard.player_number
         == blackboard.parameters.goalkeeper.player_number
         && (own_goal_x..=own_goal_x + field_dimensions.goal_box_area_length)
             .contains(&target_in_field.x())
@@ -542,7 +542,7 @@ fn field_player_positioning(
                 .then_with(|| left_number.cmp(right_number))
         })
         .map(|(_, number)| *number)?;
-    let player = world.robot.player_number;
+    let player = blackboard.player_number;
     if player == supporter {
         return Some(PlayerPositioning::CloseSupport);
     }
@@ -622,7 +622,7 @@ fn opponent_pass_screen(
             (*position - holder).norm() > 2.0 * pressure_distance
                 && (*position - goal).norm_squared() < (holder - goal).norm_squared()
                 && map.ownership_at(holder + (*position - holder) * 0.5)
-                    == Some(Ownership::Robot(blackboard.world_state.robot.player_number))
+                    == Some(Ownership::Robot(blackboard.player_number))
         })
         .min_by(|(left, _), (right, _)| {
             (*left - goal)
@@ -798,7 +798,7 @@ mod ball_support_tests {
                     };
                     board.world_state.robot.ground_to_field = Some(transform);
                     board.parameters.goalkeeper.player_number = PlayerNumber::One;
-                    board.world_state.robot.player_number = PlayerNumber::One;
+                    board.player_number = PlayerNumber::One;
                     board.parameters.goalkeeper.distance_to_goalpost = 0.15;
                     board
                         .parameters
@@ -855,7 +855,7 @@ mod ball_support_tests {
                         epsilon = 1e-5
                     );
 
-                    board.world_state.robot.player_number = PlayerNumber::Two;
+                    board.player_number = PlayerNumber::Two;
                     let fielder_path = plan(&mut board, target, transform);
                     assert!((fielder_path.end_point() - target).norm() > 0.15);
                     approx::assert_relative_eq!(
@@ -973,7 +973,6 @@ mod ball_support_tests {
         use hsl_network_messages::SubState;
         use types::{
             field_dimensions::Side,
-            filtered_game_controller_state::FilteredGameControllerState,
             obstacles::Obstacle,
             path::traits::EndPoints,
             time_wrapper::TimeWrapper,
@@ -990,7 +989,7 @@ mod ball_support_tests {
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board.world_state.filtered_game_controller_state =
-            Some(FilteredGameControllerState::default());
+            Some(crate::test_support::filtered_game_controller_state());
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
         board
@@ -1032,7 +1031,7 @@ mod ball_support_tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose: position.into(),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
         }
@@ -1045,7 +1044,7 @@ mod ball_support_tests {
                 .inner
                 .pose
                 .as_transform();
-            supporter.world_state.robot.player_number = number;
+            supporter.player_number = number;
             supporter.world_state.robot.ground_to_field = Some(transform);
             assert_eq!(calculate_voronoi_grid(&mut supporter), Status::Success);
             let map = supporter.voronoi_map.as_ref().unwrap();
@@ -1136,7 +1135,7 @@ mod ball_support_tests {
                 .inner
                 .pose
                 .as_transform();
-            peer.world_state.robot.player_number = number;
+            peer.player_number = number;
             peer.world_state.robot.ground_to_field = Some(transform);
             assert_eq!(calculate_voronoi_grid(&mut peer), Status::Success);
             let baseline = field_player_positioning(&peer, peer.voronoi_map.as_ref().unwrap());
@@ -1181,7 +1180,7 @@ mod ball_support_tests {
                 baseline
             );
         }
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field = Some(
             board
                 .world_state

@@ -535,7 +535,7 @@ mod tests {
                 ball_is_free: true,
                 kick_off: false,
             },
-            ..Default::default()
+            ..crate::test_support::filtered_game_controller_state()
         });
         board.world_state.fall_detection = Some(FallDetection {
             time: now,
@@ -551,7 +551,7 @@ mod tests {
                 time: now,
                 inner: PlayerState {
                     pose: position.into(),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
         }
@@ -841,7 +841,7 @@ mod tests {
                 time: board.world_state.now,
                 inner: PlayerState {
                     pose: point![1.0, 1.0].into(),
-                    ..Default::default()
+                    ..crate::test_support::player_state()
                 },
             });
             match invalidation {
@@ -1007,7 +1007,10 @@ mod tests {
                         kick_off: true,
                     }
                 }
-                _ => board.parameters.control.injected_motion_command = Some(Default::default()),
+                _ => {
+                    board.parameters.control.injected_motion_command =
+                        Some(types::motion_command::MotionCommand::Damping)
+                }
             }
             refresh_replacement_goalkeeper_role(&mut board);
             assert!(
