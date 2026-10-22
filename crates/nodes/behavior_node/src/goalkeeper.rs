@@ -60,6 +60,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                         action!(kick),
                         action!(select_goalkeeper_kick_away_target),
                         subtree!(kick_strength_subtree),
+                        action!(enable_quick_clearance),
                     ),
                     subtree!(kick_alternatives_subtree),
                 )
@@ -622,6 +623,15 @@ fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
     }
 }
 
+fn enable_quick_clearance(blackboard: &mut Blackboard) -> Status {
+    if let Some(BodyMotion::Kick { quick, .. }) = &mut blackboard.body_motion {
+        *quick = true;
+        Status::Success
+    } else {
+        Status::Failure
+    }
+}
+
 pub(crate) fn goalkeeper_clearance_target(
     ball: Point2<Field>,
     field: &FieldDimensions,
@@ -1151,6 +1161,7 @@ mod tests {
         board.parameters.walking.speed.minimum_speed = 0.2;
         board.parameters.walking.speed.velocity_fade_distance = 3.0;
         board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
         board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
         board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.walking_velocity_limits.angular_velocity_limit = 2.0;
@@ -1264,13 +1275,20 @@ mod tests {
 
         board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
         board.last_ball = board.ball.clone();
+        board.parameters.control.allow_switch.walk = Duration::from_millis(500);
+        board.last_motion_switch_time = board.world_state.now - Duration::from_millis(100);
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
             matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick { strong: true, .. })
+                Some(BodyMotion::Kick {
+                    strong: true,
+                    quick: true,
+                    soft: false,
+                    ..
+                })
             ),
-            "settled ball under pressure should still get a strong clearance"
+            "settled ball under pressure should clear quickly without waiting for walking dwell"
         );
 
         board.world_state.obstacles.clear();
@@ -1280,7 +1298,11 @@ mod tests {
         assert!(
             matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick { strong: true, .. })
+                Some(BodyMotion::Kick {
+                    strong: true,
+                    quick: true,
+                    ..
+                })
             ),
             "unpressured goal-mouth ball should clear without waiting for a striker election"
         );
@@ -1309,8 +1331,8 @@ mod tests {
         board.last_motion_switch_time = board.world_state.now - Duration::from_millis(100);
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
-            matches!(board.body_motion, Some(BodyMotion::WalkWithVelocity { .. })),
-            "while Kick is locked, keep walking toward the predicted shot position"
+            matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+            "a close interception must not wait for the walking dwell"
         );
     }
 
