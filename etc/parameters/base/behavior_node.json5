@@ -1,5 +1,4 @@
 {
-  obstacle_source: 'ObjectFilters',
   control: {
     allow_switch: {
       kick: { nanos: 500000000, secs: 0 },

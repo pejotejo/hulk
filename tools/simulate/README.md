@@ -15,7 +15,7 @@ The [profile plan](PROFILES.md) records topic ownership and validation contracts
 | Preset | Additional real nodes | Remaining ideal inputs |
 | --- | --- | --- |
 | Motion & behavior | Common 24-node stack per robot, including search, raw sensor/button bridges, LED handler, whistle filter and HSL communications; one shared gamepad handler | Body geometry, odometry, field pose, first ball, other robots and fixed goalposts |
-| Ball and obstacle filtering | Ball filter, visual-kick selector, obstacle filter and the humanoid and stationary object filters | Body geometry, odometry and field pose; synthetic camera detections |
+| Ball and obstacle filtering | Ball filter, visual-kick selector and the combined obstacle filter | Body geometry, odometry and field pose; synthetic camera detections |
 | Body state & odometry | Kinematics, support foot, ground provider, camera matrix and odometry | Field pose; synthetic camera detections and camera calibration |
 | Localization | Field-mark association and 3D/2D localization | Synthetic camera detections, calibration and coherent camera-motion measurements |
 

@@ -62,7 +62,6 @@ impl Default for Blackboard {
 
 pub(crate) fn behavior_parameters() -> BehaviorParameters {
     BehaviorParameters {
-        obstacle_source: Default::default(),
         control: Default::default(),
         ball: Default::default(),
         walking: WalkingBehaviorParameters {

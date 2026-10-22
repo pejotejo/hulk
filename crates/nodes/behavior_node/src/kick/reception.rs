@@ -250,8 +250,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         .filter(|_| {
             position.x() > 0.0
                 && position.coords().norm()
-                    <= blackboard.parameters.kicking.kick_activation_distance
-                        + blackboard.parameters.kicking.kick_activation_hysteresis
+                    <= 2.0 * blackboard.parameters.kicking.approach_ball_standoff
         })
         .and_then(|target| {
             (transform.inverse() * target - position)
@@ -1343,7 +1342,7 @@ mod tests {
     }
 
     #[test]
-    fn approaches_crossing_ball_facing_the_outgoing_shot() {
+    fn crossing_ball_approach_turns_toward_observed_ball_instead_of_outgoing_shot() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
@@ -1368,20 +1367,21 @@ mod tests {
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
         blackboard.parameters.walking.speed.kicking = 1.0;
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
-        let Some(BodyMotion::Walk {
-            orientation_mode: OrientationMode::LookTowards { direction, .. },
-            path,
-            ..
+        let Some(BodyMotion::WalkWithVelocity {
+            velocity,
+            angular_velocity,
         }) = blackboard.body_motion
         else {
-            panic!("expected outgoing-shot alignment")
+            panic!("expected observed-ball alignment")
         };
-        assert!(direction.as_unit_vector().x() > 0.9);
-        assert!(direction.as_unit_vector().y() > 0.0);
-        let types::path::PathSegment::LineSegment(segment) = path.last_segment() else {
-            panic!("expected final contact approach")
-        };
-        assert!(segment.1.x() < 0.8);
+        assert_eq!(velocity, Vector2::zeros());
+        let bearing = Orientation2::<Ground>::from_vector(vector![0.8, -0.6]);
+        assert_eq!(
+            angular_velocity,
+            blackboard
+                .walking_velocity_limits
+                .scale_angular_axis(bearing.angle())
+        );
     }
 
     #[test]

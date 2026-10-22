@@ -11,7 +11,6 @@ use types::{
     filtered_game_state::FilteredGameState,
     motion_type::MotionType,
     obstacles::{Obstacle, ObstacleKind},
-    parameters::ObstacleSource,
     primary_state::PrimaryState,
     tracked_objects::{HumanoidRole, HumanoidTrack, TrackStatus},
 };
@@ -283,9 +282,6 @@ fn tracked_humanoid<'a>(
     blackboard: &'a Blackboard,
     obstacle: &Obstacle,
 ) -> Option<&'a HumanoidTrack> {
-    if blackboard.parameters.obstacle_source != ObstacleSource::ObjectFilters {
-        return None;
-    }
     let world = &blackboard.world_state;
     let tracks = world.humanoid_tracks.as_ref()?;
     if tracks.time > world.now || world.now.duration_since(tracks.time) > Duration::from_millis(500)
@@ -694,7 +690,6 @@ mod tests {
         let mut board = Blackboard::default();
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board.world_state.robot.ground_to_field = Some(Default::default());
-        board.parameters.obstacle_source = ObstacleSource::ObjectFilters;
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board
             .parameters
@@ -758,7 +753,7 @@ mod tests {
             assert!(opponent_near_position(&board, target, 1.5));
         }
         board.world_state.humanoid_tracks.as_mut().unwrap().time = board.world_state.now;
-        board.parameters.obstacle_source = ObstacleSource::Legacy;
+        board.world_state.humanoid_tracks = None;
         assert!(opponent_near_position(&board, target, 1.5));
     }
 
@@ -771,7 +766,6 @@ mod tests {
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         let transform = linear_algebra::Isometry2::from_parts(vector![0.5, -0.7], 0.8);
         board.world_state.robot.ground_to_field = Some(transform);
-        board.parameters.obstacle_source = ObstacleSource::ObjectFilters;
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.parameters.kicking.approach_ball_standoff = 0.3;
         board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
@@ -884,7 +878,7 @@ mod tests {
         invalid.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].remote_only = true;
         assert!(opponent_shot_direction(&invalid).is_none());
         invalid = board.clone();
-        invalid.parameters.obstacle_source = ObstacleSource::Legacy;
+        invalid.world_state.humanoid_tracks = None;
         assert!(opponent_shot_direction(&invalid).is_none());
         for age in [Duration::from_millis(251), Duration::from_secs(1)] {
             let mut invalid = board.clone();

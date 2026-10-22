@@ -365,14 +365,7 @@ impl ObstacleFilter {
         if let Some(time) = self.current_frame_time(now) {
             self.maintain(now, parameters, primary_state, fall_detection);
             let obstacles = field_dimensions.map_or_else(Vec::new, |dimensions| {
-                self.compose_outputs(
-                    now,
-                    parameters,
-                    dimensions,
-                    ground_to_field,
-                    primary_state,
-                    fall_detection,
-                )
+                self.compose_outputs(now, parameters, dimensions, ground_to_field)
             });
             let (humanoid_tracks, stationary_tracks) =
                 self.tracked_objects(time, ground_to_field.copied(), parameters, true);
@@ -564,16 +557,12 @@ impl ObstacleFilter {
     }
 
     fn compose_outputs(
-        &mut self,
+        &self,
         now: Time,
         parameters: &ObstacleFilterParameters,
         field_dimensions: &FieldDimensions,
         ground_to_field: Option<&Isometry2<Ground, Field>>,
-        primary_state: PrimaryState,
-        fall_detection: Option<&FallDetection>,
     ) -> Vec<Obstacle> {
-        self.maintain(now, parameters, primary_state, fall_detection);
-
         let goal_posts = calculate_goal_post_positions(ground_to_field, field_dimensions);
         let obstacles = self
             .hypotheses
@@ -1303,14 +1292,7 @@ mod tests {
                 .unwrap()
                 .is_obstacle
         );
-        let obstacles = filter.compose_outputs(
-            now,
-            &parameters,
-            &FieldDimensions::SPL_2025,
-            None,
-            PrimaryState::Playing,
-            None,
-        );
+        let obstacles = filter.compose_outputs(now, &parameters, &FieldDimensions::SPL_2025, None);
         assert_eq!(obstacles.len(), 2);
         // Predictions in a fresh frame carry physical velocity, without claiming new evidence.
         let later = now + Duration::from_millis(200);
@@ -1395,8 +1377,6 @@ mod tests {
             start + Duration::from_millis(1100),
             &parameters,
             &FieldDimensions::SPL_2025,
-            None,
-            PrimaryState::Playing,
             None,
         );
         assert_eq!(obstacles.len(), 1);
@@ -1902,14 +1882,8 @@ mod tests {
             Pose2::new(point![0.1, 0.0], 0.0),
             na::Vector2::zeros(),
         );
-        let obstacles = filter.compose_outputs(
-            time,
-            &parameters,
-            &FieldDimensions::SPL_2025,
-            None,
-            PrimaryState::Damping,
-            None,
-        );
+        filter.maintain(time, &parameters, PrimaryState::Damping, None);
+        let obstacles = filter.compose_outputs(time, &parameters, &FieldDimensions::SPL_2025, None);
         assert!(obstacles.is_empty());
         assert!(filter.hypotheses.is_empty());
         assert_eq!(filter.ground_frame.unwrap().0, time);

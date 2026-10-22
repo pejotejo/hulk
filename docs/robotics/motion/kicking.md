@@ -22,12 +22,13 @@ selection. The kick command carries the resulting direction and inference
 inputs. `last_kick_target` holds the Field target across ticks for remote and
 penalty kicks.
 
-The behavior `kick` action prefers the visual percept for position and uses
-`world_state.ball.ball_in_ground_velocity` for velocity. The visual selector
-publishes zero velocity. Without a current tracked ball, the request uses zero
-velocity. Position and velocity are assumed to describe the same ball.
-Interception computes a future point locally while retaining the observed
-position and current velocity in the request.
+The behavior `kick` action uses the observed Ground position and velocity from
+one `BallState`. If that sample is absent, it transforms the cached Field position
+and velocity together using the current pose. Invalid pairs are rejected. Raw
+visual positions remain available to head tracking; they lack the odometry needed
+to replace a kick position safely while the robot moves.
+Interception uses prediction to choose an approach or contact direction, while
+the kick request retains the observed position and velocity.
 
 Initial choices come from `behavior_node.kicking.soft`, `.quick`, and
 `.target_speed` (defaults: `false`, `false`, and `3.4`). Target speed is configured
@@ -46,16 +47,16 @@ These parameters belong to `behavior_node.kicking`. All distances are in metres.
 
 | Parameter | Base default | Purpose |
 | --- | --- | --- |
-| `allow_strong_kicks` | `false` | Permit strong striker and penalty kicks; this does not limit target speed. |
-| `strong_kick_min_target_distance` | `6.0` | Select strong striker kicks at or beyond this ball-to-target distance. Penalty selection only checks permission. |
-| `kick_activation_distance` | `2.0` | Centre of the normal striker's walk-to-kick handoff band. |
-| `kick_activation_hysteresis` | `0.5` | Total width of that band: enter below 1.75, leave above 2.25. |
+| `allow_strong_kicks` | `true` | Permit strong striker and penalty kicks; this does not limit target speed. |
+| `strong_kick_min_target_distance` | `3.0` | Long-kick threshold; direct goal shots use strong whenever permitted. |
+| `kick_activation_distance` | `1.3` | Centre of the normal striker's walk-to-kick handoff band. |
+| `kick_activation_hysteresis` | `0.3` | Hysteresis around the walk-to-kick handoff distance. |
 | `approach_ball_standoff` | `0.3` | Walking standoff behind the ball and set-play alignment position. |
 | `minimum_interception_forward_distance` | `0.3` | Minimum Ground x coordinate of the predicted interception point, for both striker and goalkeeper. |
 
 `disable_strong_kick` clears the strong flag without selecting the soft policy
 or lowering `target_speed`. The `kick_strength_subtree` retains settings while
-a kick continues. Goalkeeper actions disable strong explicitly.
+a kick continues. Urgent goalkeeper clearances request strong kicks.
 
 Strength selection and kick direction use the same target position. The separate
 `substates.distance_for_kick` and `substates.distance_for_kick_hysteresis`
@@ -69,9 +70,11 @@ kicks use the maximum speed regardless of `target_speed`. Soft kicks ignore the
 strong and quick flags. Base speed limits are `[0.5, 3.4]` m/s for normal kicks and
 `[0.1, 1.7]` m/s for soft kicks.
 
-Inference caps the ball-position observation at 2.0 m. The base kick exit
-distance is 2.25 m, so observations beyond the cap lose distance information.
-The observation cap does not establish the policy's physical reach.
+Inference caps ball-position magnitude at 2.0 m and ball-velocity magnitude at
+2.0 m/s. Faster passes therefore lose speed information at the policy boundary.
+These observation caps do not establish physical reach. Side deflections use the
+existing quick kick when a ball crosses the near-foot contact zone; there is no
+independent leg-extension command.
 
 The behavior simulator approximates the speed rules with configurable limits.
 It does not model the learned quick-kick movement or recovery timing;
