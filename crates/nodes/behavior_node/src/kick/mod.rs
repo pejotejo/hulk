@@ -117,15 +117,16 @@ pub fn apply_kick_target(
 }
 
 pub fn kick_strength_subtree() -> Node<Blackboard> {
+    // A long clearance must not inherit a preceding interception's weaker flag.
     selection!(
-        sequence!(
-            condition!(is_last_motion_type, MotionType::Kick),
-            action!(use_last_kick_settings)
-        ),
         sequence!(
             condition!(is_target_in_strong_kick_range),
             condition!(allow_strong_kicks),
             action!(use_strong_kick)
+        ),
+        sequence!(
+            condition!(is_last_motion_type, MotionType::Kick),
+            action!(use_last_kick_settings)
         ),
         action!(disable_strong_kick)
     )

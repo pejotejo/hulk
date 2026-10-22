@@ -2,18 +2,20 @@ use std::time::Duration;
 
 use coordinate_systems::Field;
 use hsl_network_messages::{GamePhase, PlayerNumber, SubState};
-use linear_algebra::{Point2, point};
+use linear_algebra::{Orientation2, Point2, Pose2, point};
 use ros_z::time::Time;
 use serde::{Deserialize, Serialize};
 use types::{
     behavior_tree::Status, fall_detection::Posture, filtered_game_state::FilteredGameState,
-    motion_type::MotionType, players::Players, primary_state::PrimaryState,
+    motion_command::OrientationMode, motion_type::MotionType, obstacles::Obstacle,
+    players::Players, primary_state::PrimaryState,
 };
 
 use crate::{
     action,
     actions::stand,
     behavior_tree::Node,
+    condition,
     conditions::is_finishing_striker_kick,
     goalkeeper::{goalkeeper_shot_block_position_subtree, walk_to_goalkeeper_default_position},
     head::look_at_ball_subtree,
@@ -21,6 +23,7 @@ use crate::{
     node::{Blackboard, ball_timeout},
     selection, sequence, subtree,
     switch_motion_type::switch_motion_type,
+    walk::walk_to,
 };
 
 // Based on Sonja's replacement_keeper claim election; retain its timing and rank backoff.
@@ -319,15 +322,177 @@ pub fn replacement_goalkeeper_subtree() -> Node<Blackboard> {
     sequence!(
         subtree!(look_at_ball_subtree),
         selection!(
-            subtree!(goalkeeper_shot_block_position_subtree),
+            sequence!(
+                condition!(is_shot_uncovered_by_regular_keeper),
+                subtree!(goalkeeper_shot_block_position_subtree),
+            ),
             switch_motion_type(
                 MotionType::Walk,
-                action!(walk_to_goalkeeper_default_position),
+                selection!(
+                    action!(walk_to_complementary_goal_cover),
+                    action!(walk_to_goalkeeper_default_position),
+                ),
                 action!(stand),
             ),
             action!(stand),
         ),
     )
+}
+
+fn regular_keeper_position(blackboard: &Blackboard) -> Option<Point2<Field>> {
+    let world = &blackboard.world_state;
+    let number = blackboard.parameters.goalkeeper.player_number;
+    if world.filtered_game_controller_state.as_ref()?.penalties[number].is_some() {
+        return None;
+    }
+    let keeper = world.player_states[number].as_ref()?;
+    let position = keeper.inner.pose.position();
+    (keeper.time <= world.now
+        && world.now.duration_since(keeper.time)
+            < blackboard
+                .parameters
+                .network
+                .hsl_striker_message_receive_timeout
+        && position.inner.iter().all(|value| value.is_finite())
+        && keeper.inner.pose.angle().is_finite()
+        && position.x() >= -blackboard.field_dimensions.length / 2.0)
+        .then_some(position)
+}
+
+fn is_shot_uncovered_by_regular_keeper(blackboard: &mut Blackboard) -> bool {
+    let (Some(keeper), Some(ball)) = (regular_keeper_position(blackboard), &blackboard.ball) else {
+        return true;
+    };
+    if ball.velocity.x() >= 0.0 || keeper.x() >= ball.position.x() {
+        return true;
+    }
+    let shot_y = ball.position.y()
+        + ball.velocity.y() * (keeper.x() - ball.position.x()) / ball.velocity.x();
+    let body_half_width = blackboard.parameters.walking.path_planning.robot_radius / 2.0;
+    (shot_y - keeper.y()).abs() > body_half_width + blackboard.field_dimensions.ball_radius
+}
+
+fn complementary_goal_cover_position(blackboard: &Blackboard) -> Option<Point2<Field>> {
+    let keeper = regular_keeper_position(blackboard)?;
+    let field = blackboard.field_dimensions;
+    let goal_x = -field.length / 2.0;
+    if keeper.x() > goal_x + field.penalty_area_length
+        || keeper.y().abs() > field.penalty_area_width / 2.0
+    {
+        return None;
+    }
+    let ball = blackboard.ball.as_ref()?;
+    if ball.age > blackboard.world_state.now
+        || blackboard.world_state.now.duration_since(ball.age)
+            >= ball_timeout(&blackboard.parameters, ball.source)
+        || !ball.position.inner.iter().all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let radius = blackboard.parameters.walking.path_planning.robot_radius;
+    let half_width = field.goal_inner_width / 2.0;
+    let defense_x = goal_x + blackboard.parameters.goalkeeper.x_offset;
+    let maximum_y = (half_width
+        - blackboard
+            .parameters
+            .goalkeeper
+            .distance_to_goalpost
+            .max(radius))
+    .max(0.0);
+    let own_y = blackboard
+        .world_state
+        .robot
+        .ground_to_field?
+        .translation()
+        .y();
+    let preferred_side = if own_y.abs() > radius / 2.0 {
+        own_y.signum()
+    } else {
+        -1.0
+    };
+
+    // Project the keeper's body onto the goal and take the larger remaining opening.
+    let projection = if ball.position.x() > keeper.x() + radius / 2.0 {
+        (ball.position.x() - goal_x) / (ball.position.x() - keeper.x())
+    } else {
+        1.0
+    };
+    let shadow_y = ball.position.y() + (keeper.y() - ball.position.y()) * projection;
+    let shadow_half_width = radius / 2.0 * projection;
+    let lower_end = (shadow_y - shadow_half_width).clamp(-half_width, half_width);
+    let upper_start = (shadow_y + shadow_half_width).clamp(-half_width, half_width);
+    let lower_width = lower_end + half_width;
+    let upper_width = half_width - upper_start;
+    let side = if (upper_width - lower_width).abs() <= radius / 2.0 {
+        preferred_side
+    } else if upper_width > lower_width {
+        1.0
+    } else {
+        -1.0
+    };
+    let goal_y = if lower_width.max(upper_width) <= f32::EPSILON {
+        side * half_width / 2.0
+    } else if side < 0.0 {
+        (-half_width + lower_end) / 2.0
+    } else {
+        (upper_start + half_width) / 2.0
+    };
+    let mut target_y = if ball.position.x() > defense_x {
+        ball.position.y()
+            + (goal_y - ball.position.y()) * (ball.position.x() - defense_x)
+                / (ball.position.x() - goal_x)
+    } else {
+        goal_y
+    };
+    let clearance = radius * 1.5;
+    let longitudinal_gap = (defense_x - keeper.x()).abs();
+    if longitudinal_gap < clearance {
+        let lateral_gap = (clearance.powi(2) - longitudinal_gap.powi(2)).sqrt();
+        if (target_y - keeper.y()).abs() < lateral_gap {
+            target_y = keeper.y() + side * lateral_gap;
+        }
+    }
+    Some(point![defense_x, target_y.clamp(-maximum_y, maximum_y)])
+}
+
+fn walk_to_complementary_goal_cover(blackboard: &mut Blackboard) -> Status {
+    let (Some(position), Some(keeper), Some(transform), Some(ball)) = (
+        complementary_goal_cover_position(blackboard),
+        regular_keeper_position(blackboard),
+        blackboard.world_state.robot.ground_to_field,
+        blackboard.ball.as_ref(),
+    ) else {
+        return Status::Failure;
+    };
+    let target = transform.inverse() * position;
+    let ball = transform.inverse() * ball.position;
+    let pose = Pose2::from_parts(target, Orientation2::from_vector(ball - target));
+    let parameters = blackboard.parameters.walking.walk_and_stand;
+    let blocking_speed = blackboard.parameters.walking.speed.blocking;
+    let radius = blackboard.parameters.walking.path_planning.robot_radius / 2.0;
+    let original_obstacles = blackboard.world_state.obstacles.len();
+    blackboard.world_state.obstacles.push(Obstacle::robot(
+        transform.inverse() * keeper,
+        radius,
+        radius,
+    ));
+    blackboard.walk_position = Some(target);
+    let status = walk_to(
+        blackboard,
+        pose,
+        blocking_speed,
+        OrientationMode::LookAt {
+            target: ball,
+            tolerance: parameters.orientation_tolerance,
+        },
+        parameters.normal_distance_to_be_aligned,
+        parameters.goalkeeper_hysteresis,
+    );
+    blackboard
+        .world_state
+        .obstacles
+        .truncate(original_obstacles);
+    status
 }
 
 #[cfg(test)]
@@ -428,6 +593,163 @@ mod tests {
         refresh_replacement_goalkeeper_role(board);
         advance(board, ELECTION_WINDOW);
         refresh_replacement_goalkeeper_role(board);
+    }
+
+    fn cover_board(keeper: Point2<Field>) -> Blackboard {
+        let mut board = board(PlayerNumber::Two);
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.goalkeeper.distance_to_goalpost = 0.15;
+        board.parameters.walking.speed.blocking = 0.8;
+        board.parameters.walking.speed.minimum_speed = 0.2;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
+        board.walking_velocity_limits.lateral_velocity_limit = 1.0;
+        board.walking_velocity_limits.angular_velocity_limit = 2.0;
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![-6.7, -0.7], 0.0).as_transform());
+        board
+            .world_state
+            .player_states
+            .one
+            .as_mut()
+            .unwrap()
+            .inner
+            .pose = keeper.into();
+        board.ball.as_mut().unwrap().position = point![0.0, 0.0];
+        board.last_ball = board.ball.clone();
+        board
+    }
+
+    #[test]
+    fn near_keeper_cover_mirrors_onto_opposite_goal_opening() {
+        let mut targets = Vec::new();
+        for side in [-1.0, 1.0] {
+            let mut board = cover_board(point![-5.6, side * 0.5]);
+            let target = complementary_goal_cover_position(&board).unwrap();
+            assert!(target.y() * side < -0.2);
+            assert!((target.x() + 6.7).abs() < 1e-5);
+            assert!(target.y().abs() <= 0.8);
+            let original_obstacles = board.world_state.obstacles.len();
+            assert_eq!(
+                walk_to_complementary_goal_cover(&mut board),
+                Status::Success
+            );
+            assert_eq!(board.world_state.obstacles.len(), original_obstacles);
+            assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+            targets.push(target);
+        }
+        assert!((targets[0].y() + targets[1].y()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn central_keeper_ties_keep_current_side_and_body_clearance() {
+        for side in [-1.0, 1.0] {
+            let mut board = cover_board(point![-6.7, 0.0]);
+            board.world_state.robot.ground_to_field =
+                Some(Pose2::new(point![-6.7, side * 0.7], 0.0).as_transform());
+            board.ball.as_mut().unwrap().position = point![-6.0, 0.0];
+            for noise in [-0.001, 0.0, 0.001] {
+                board
+                    .world_state
+                    .player_states
+                    .one
+                    .as_mut()
+                    .unwrap()
+                    .inner
+                    .pose = point![-6.7, noise].into();
+                let target = complementary_goal_cover_position(&board).unwrap();
+                assert!(target.y() * side >= 0.59);
+                assert!((target.y() - noise).abs() >= 0.6 - 1e-5);
+                assert!(target.y().abs() <= 0.8);
+            }
+        }
+    }
+
+    #[test]
+    fn far_or_unavailable_keeper_leaves_full_goal_cover() {
+        for case in 0..6 {
+            let mut board = cover_board(point![-5.6, 0.5]);
+            match case {
+                0 => {
+                    board
+                        .world_state
+                        .player_states
+                        .one
+                        .as_mut()
+                        .unwrap()
+                        .inner
+                        .pose =
+                        point![-7.0 + board.field_dimensions.penalty_area_length + 0.1, 0.5].into()
+                }
+                1 => board.world_state.player_states.one = None,
+                2 => board.world_state.player_states.one.as_mut().unwrap().time = Time::zero(),
+                3 => {
+                    board
+                        .world_state
+                        .filtered_game_controller_state
+                        .as_mut()
+                        .unwrap()
+                        .penalties
+                        .one = Some(Penalty::PickUp {
+                        remaining: Duration::from_secs(30),
+                    })
+                }
+                4 => {
+                    board
+                        .world_state
+                        .player_states
+                        .one
+                        .as_mut()
+                        .unwrap()
+                        .inner
+                        .pose = point![-7.1, 0.0].into()
+                }
+                _ => {
+                    board.world_state.player_states.one.as_mut().unwrap().time =
+                        board.world_state.now + Duration::from_secs(1)
+                }
+            }
+            assert!(
+                complementary_goal_cover_position(&board).is_none(),
+                "case {case}"
+            );
+            replacement_goalkeeper_subtree().tick_with_trace(&mut board);
+            let Some(BodyMotion::Walk { path, .. }) = board.body_motion else {
+                panic!("missing or distant keeper must leave normal full-goal coverage");
+            };
+            let target = board.world_state.robot.ground_to_field.unwrap() * path.end_point();
+            assert!((target - point![-6.7, 0.0]).norm() < 1e-5, "case {case}");
+        }
+    }
+
+    #[test]
+    fn fast_shot_prediction_only_yields_when_real_keeper_already_blocks_trajectory() {
+        for side in [-1.0, 1.0] {
+            let mut board = cover_board(point![-5.6, side * 0.5]);
+            board.ball.as_mut().unwrap().position = point![-2.0, side * 0.5];
+            board.ball.as_mut().unwrap().velocity = vector![-3.0, 0.0];
+            board.last_ball = board.ball.clone();
+            assert!(!is_shot_uncovered_by_regular_keeper(&mut board));
+            replacement_goalkeeper_subtree().tick_with_trace(&mut board);
+            assert!(matches!(board.body_motion, Some(BodyMotion::Walk { .. })));
+            let target =
+                board.world_state.robot.ground_to_field.unwrap() * board.walk_position.unwrap();
+            assert!(target.y() * side < 0.0);
+
+            board.ball.as_mut().unwrap().position = point![-2.0, -side * 0.5];
+            board.ball.as_mut().unwrap().velocity = vector![-3.0, side * 0.2];
+            board.last_ball = board.ball.clone();
+            assert!(is_shot_uncovered_by_regular_keeper(&mut board));
+            replacement_goalkeeper_subtree().tick_with_trace(&mut board);
+            let target =
+                board.world_state.robot.ground_to_field.unwrap() * board.walk_position.unwrap();
+            assert!((target.y() - side * (-0.5 + 0.2 * 4.7 / 3.0)).abs() < 1e-5);
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::WalkWithVelocity { .. })
+            ));
+            assert!(board.ball_action.is_none());
+        }
     }
 
     #[test]
