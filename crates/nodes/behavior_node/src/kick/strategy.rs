@@ -1033,11 +1033,29 @@ mod tests {
 
             // The remaining distance shrinks during an already announced kick.
             board.last_motion_type = Some(types::motion_type::MotionType::Kick);
+            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+                board.body_motion.clone().unwrap(),
+                types::motion_command::HeadMotion::Center {
+                    image_region_target: Default::default(),
+                },
+            );
+            if let types::motion_command::MotionCommand::Kick { quick, .. } =
+                &mut board.last_motion_command
+            {
+                *quick = true;
+            }
             board.ball.as_mut().unwrap().position = point![0.2, 0.0];
             select_ball_action(&mut board);
             execute_ball_action(&mut board);
             assert!(matches!(board.ball_action, Some(BallAction::Pass { .. })));
-            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    quick: false,
+                    strong: false,
+                    ..
+                })
+            ));
 
             let mut crowded = board.clone();
             let closer = point![0.9, 0.0];

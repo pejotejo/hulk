@@ -9,8 +9,11 @@ use types::{
 };
 
 use crate::{
-    actions::stand, conditions::is_close_to_ball, node::Blackboard,
-    switch_motion_type::is_allowed_to_switch, walk::walk_to,
+    actions::stand,
+    conditions::is_close_to_ball,
+    node::Blackboard,
+    switch_motion_type::{is_allowed_to_start_kick, is_allowed_to_switch},
+    walk::walk_to,
 };
 
 use super::{
@@ -64,31 +67,11 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     );
     let force_strong = matches!(
         blackboard.ball_action,
-        Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter)
+        Some(BallAction::Shoot { .. } | BallAction::ShootAtGoalCenter | BallAction::Clear)
     ) || (matches!(blackboard.ball_action, Some(BallAction::Pass { .. }))
         && super::kickoff::own_kickoff(blackboard));
-    let rolling = ball_velocity.norm()
-        > blackboard
-            .parameters
-            .ball
-            .interception
-            .minimum_ball_velocity;
-    let mut strong = kicking.allow_strong_kicks
-        && (force_strong
-            || (!controlled
-                && !rolling
-                && (target - ball).norm() >= kicking.strong_kick_min_target_distance));
+    let strong = kicking.allow_strong_kicks && force_strong;
     let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
-    if was_kicking
-        && !controlled
-        && !force_strong
-        && let MotionCommand::Kick {
-            strong: previous, ..
-        } = blackboard.last_motion_command
-        && (!previous || kicking.allow_strong_kicks)
-    {
-        strong = previous;
-    }
     let target_speed = if blackboard.ball_action == Some(BallAction::Dribble) {
         kicking.dribble_target_speed.min(kicking.target_speed)
     } else {
@@ -96,18 +79,24 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     };
     let receiving = super::reception::is_receiving_ball(blackboard);
     let ready_to_receive = !receiving || super::reception::is_ready_to_receive_kick(blackboard);
+    let field_ball = ground_to_field * ball;
+    let field = &blackboard.field_dimensions;
+    let urgent = (field_ball.x() < -field.length / 2.0 + field.penalty_area_length
+        && field_ball.y().abs() < field.penalty_area_width / 2.0)
+        || crate::conditions::opponent_near_ball(blackboard, kicking.strategy.pressure_distance);
     let quick = (receiving
         && ready_to_receive
         && blackboard.world_state.robot.player_number
             != blackboard.parameters.goalkeeper.player_number)
-        || (!controlled && kicking.quick)
-        || (was_kicking
-            && matches!(
-                blackboard.last_motion_command,
-                MotionCommand::Kick { quick: true, .. }
-            ));
-    let can_switch = is_allowed_to_switch(blackboard)
-        || (receiving && ready_to_receive && blackboard.last_motion_type == Some(MotionType::Walk));
+        || (!controlled
+            && (kicking.quick
+                || urgent
+                || (was_kicking
+                    && matches!(
+                        blackboard.last_motion_command,
+                        MotionCommand::Kick { quick: true, .. }
+                    ))));
+    let can_switch = is_allowed_to_start_kick(blackboard);
     let close_to_ball = is_close_to_ball(blackboard);
     if (((was_kicking || (!receiving && ball.x() >= 0.0)) && close_to_ball)
         || (receiving && ready_to_receive)
@@ -149,7 +138,9 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
         walk.normal_distance_to_be_aligned,
         walk.hysteresis,
     );
-    if let Some(BodyMotion::Walk { path, .. }) = &blackboard.body_motion {
+    if let Some(BodyMotion::Walk { path, speed, .. }) = &mut blackboard.body_motion {
+        // The kick policy takes over at range; do not slow the approach several metres early.
+        *speed = blackboard.parameters.walking.speed.kicking;
         let forward = path.forward(Point2::origin());
         if forward.x() < 0.0 {
             blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
@@ -347,8 +338,90 @@ mod tests {
     use crate::node::LastBall;
     use types::{
         field_dimensions::{FieldDimensions, Side},
+        obstacles::Obstacle,
         world_state::BallSource,
     };
+
+    #[test]
+    fn walking_hands_off_immediately_and_urgent_shots_and_clears_are_quick() {
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ball_action: Some(BallAction::ShootAtGoalCenter),
+            ball: Some(LastBall {
+                position: point![0.5, 0.0],
+                velocity: Vector2::zeros(),
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            last_motion_type: Some(MotionType::Walk),
+            ..Default::default()
+        };
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.world_state.now = ros_z::time::Time::from_nanos(1_000_000_000);
+        board.last_motion_switch_time =
+            board.world_state.now - std::time::Duration::from_millis(100);
+        board.parameters.control.allow_switch.walk = std::time::Duration::from_millis(500);
+        board.parameters.control.allow_switch.stand_up = std::time::Duration::from_millis(500);
+        board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        board.parameters.kicking.strategy.pressure_distance = 0.8;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        assert_eq!(execute_ball_action(&mut board), Status::Success);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                quick: false,
+                soft: false,
+                ..
+            })
+        ));
+
+        board.world_state.obstacles = vec![Obstacle::robot(point![0.4, 0.6], 0.1, 0.1)];
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                quick: true,
+                ..
+            })
+        ));
+
+        board.world_state.obstacles.clear();
+        board.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![-4.2, 0.0], 0.0));
+        board.ball.as_mut().unwrap().position = point![-3.7, 0.0];
+        board.ball_action = Some(BallAction::Clear);
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                quick: true,
+                soft: false,
+                ..
+            })
+        ));
+
+        board.ball.as_mut().unwrap().velocity = vector![0.4, 0.0];
+        execute_ball_action(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                strong: true,
+                quick: true,
+                soft: false,
+                ..
+            })
+        ));
+
+        board.last_motion_type = Some(MotionType::StandUp);
+        execute_ball_action(&mut board);
+        assert!(matches!(board.body_motion, Some(BodyMotion::Stand)));
+    }
 
     #[test]
     fn goal_shots_are_strong_even_when_close_or_rolling_and_honor_quick() {
@@ -455,11 +528,17 @@ mod tests {
             .strategy
             .maximum_dribble_distance = 1.0;
         blackboard.parameters.kicking.dribble_target_speed = 1.2;
+        blackboard.last_motion_type = Some(MotionType::Kick);
+        assert!(matches!(
+            blackboard.last_motion_command,
+            MotionCommand::Kick { quick: true, .. }
+        ));
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick {
                 strong: false,
+                quick: false,
                 soft: false,
                 target_speed: 1.2,
                 ..
