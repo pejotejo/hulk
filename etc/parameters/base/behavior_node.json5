@@ -55,7 +55,7 @@
     speed: {
       kicking: 1.0,
       search: 0.8,
-      blocking: 0.8,
+      blocking: 1.0,
       minimum_speed: 0.2,
       velocity_fade_distance: 2.0,
       walk_to_kickoff: 0.5,
