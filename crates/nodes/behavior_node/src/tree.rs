@@ -16,7 +16,7 @@ use crate::{
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
-        execution::execute_ball_action,
+        execution::{challenge_opponent_ball, execute_ball_action},
         kick,
         kickoff::kickoff_subtree,
         passing::{
@@ -209,6 +209,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
             sequence!(
                 negation!(condition!(is_in_sub_state)),
                 selection!(
+                    action!(challenge_opponent_ball),
                     action!(receive_rolling_ball),
                     action!(block_opponent_with_ball),
                     sequence!(action!(select_ball_action), action!(execute_ball_action)),
@@ -392,6 +393,93 @@ mod clearance_tests {
     fn succeeded(trace: &NodeTrace, name: &str) -> bool {
         (trace.name == name && trace.status == Status::Success)
             || trace.children.iter().any(|child| succeeded(child, name))
+    }
+
+    #[test]
+    fn striker_pokes_reachable_opponent_ball_instead_of_waiting_for_a_corridor() {
+        let tree = striker_subtree();
+        let mut board = three_players();
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.ball.as_mut().unwrap().position = point![0.6, 0.0];
+        board.ball.as_mut().unwrap().velocity = vector![0.1, 0.0];
+        board.world_state.obstacles = vec![Obstacle::robot(point![0.85, 0.0], 0.2, 0.2)];
+        board.parameters.kicking.strategy.pressure_distance = 0.8;
+        board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
+        let (_, trace) = tree.tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "challenge_opponent_ball"));
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick { quick: true, strong: false, soft: false,
+                ball_position, ball_velocity, kick_direction, .. })
+                if ball_position == point![0.6, 0.0]
+                    && ball_velocity == vector![0.1, 0.0]
+                    && kick_direction.angle().abs() < 1e-6
+        ));
+        assert!(board.ball_action.is_none());
+        let mut previous = board.body_motion.clone().unwrap();
+        if let BodyMotion::Kick {
+            target_speed,
+            strong,
+            ..
+        } = &mut previous
+        {
+            *target_speed = 0.5;
+            *strong = true;
+        }
+        board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+            previous,
+            board.head_motion.unwrap(),
+        );
+        board.last_motion_type = Some(MotionType::Kick);
+        tree.tick_with_trace(&mut board);
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick {
+                target_speed: 3.4,
+                strong: false,
+                quick: true,
+                ..
+            })
+        ));
+        board.last_motion_type = Some(MotionType::Walk);
+        for case in 0..5 {
+            let mut protected = board.clone();
+            match case {
+                0 => protected.ball.as_mut().unwrap().position = point![1.5, 0.0],
+                1 => {
+                    protected.world_state.robot.ground_to_field =
+                        Some(Pose2::new(point![1.2, 0.0], std::f32::consts::PI).as_transform())
+                }
+                2 => {
+                    protected.last_motion_type = Some(MotionType::StandUp);
+                    protected.last_motion_switch_time = protected.world_state.now;
+                    protected.parameters.control.allow_switch.stand_up = Duration::from_secs(1);
+                }
+                3 => {
+                    protected
+                        .world_state
+                        .player_states
+                        .three
+                        .as_mut()
+                        .unwrap()
+                        .inner
+                        .pose = point![0.85, 0.0].into()
+                }
+                _ => {
+                    protected
+                        .world_state
+                        .filtered_game_controller_state
+                        .as_mut()
+                        .unwrap()
+                        .sub_state = Some(SubState::ThrowIn)
+                }
+            }
+            let (_, trace) = tree.tick_with_trace(&mut protected);
+            assert!(
+                !succeeded(&trace, "challenge_opponent_ball"),
+                "protected case {case}"
+            );
+        }
     }
 
     #[test]
@@ -636,12 +724,13 @@ mod clearance_tests {
         let tree = create_tree();
         let mut keeper = three_players();
         for y in [-1e-7, 1e-7] {
-            assert!(
+            assert_eq!(
                 crate::goalkeeper::goalkeeper_clearance_target(
                     point![-6.0, y],
                     &keeper.field_dimensions
                 )
-                .y() > 0.0
+                .y(),
+                y
             );
         }
         assert!(
@@ -707,7 +796,7 @@ mod clearance_tests {
                 .as_mut()
                 .unwrap()
                 .inner
-                .pose = Pose2::new(point![-3.8, 0.825], 0.0);
+                .pose = Pose2::new(point![-3.8, 0.2], 0.0);
             let transform = preparing.world_state.player_states[number]
                 .as_ref()
                 .unwrap()
@@ -730,7 +819,8 @@ mod clearance_tests {
             };
             if number == PlayerNumber::Two {
                 assert!(velocity.norm() > 0.0);
-                let direction = vector![6.0, 2.25].normalize();
+                let direction =
+                    crate::conditions::goalkeeper_clearance_direction(&preparing).unwrap();
                 assert!((transform * velocity).dot(&direction).abs() < 1e-6);
                 for case in 0..3 {
                     let mut ordinary = preparing.clone();
@@ -747,14 +837,15 @@ mod clearance_tests {
                                 .pose = Pose2::new(point![-5.7, 0.1], 0.0)
                         }
                         _ => {
-                            ordinary.ball.as_mut().unwrap().position = point![-4.0, 0.0];
+                            ordinary.ball.as_mut().unwrap().position = point![-4.0, 1.0];
                             ordinary.ball.as_mut().unwrap().velocity = vector![0.5, 0.0];
                         }
                     }
                     let (_, trace) = tree.tick_with_trace(&mut ordinary);
-                    assert!(
-                        !succeeded(&trace, "yield_goalkeeper_clearance"),
-                        "prelaunch case {case}"
+                    assert_eq!(
+                        succeeded(&trace, "yield_goalkeeper_clearance"),
+                        case != 2,
+                        "keeper retains clearance priority without pressure or despite closer fielders: {case}"
                     );
                 }
             } else {
@@ -779,9 +870,11 @@ mod clearance_tests {
         assert!(!supporter.last_closest_to_ball);
 
         // A real strong clearance slows below half its requested speed before passing support.
-        supporter.ball.as_mut().unwrap().velocity = vector![1.1, 0.0];
-        let (_, trace) = tree.tick_with_trace(&mut supporter);
-        assert!(succeeded(&trace, "yield_goalkeeper_clearance"));
+        for speed in [1.1, 0.5] {
+            supporter.ball.as_mut().unwrap().velocity = vector![speed, 0.0];
+            let (_, trace) = tree.tick_with_trace(&mut supporter);
+            assert!(succeeded(&trace, "yield_goalkeeper_clearance"));
+        }
 
         // The third robot is already clear and must not chase the projected ball.
         let mut third = three_players();
@@ -842,7 +935,10 @@ mod clearance_tests {
         for case in 0..13 {
             let mut board = three_players();
             match case {
-                0 => board.ball.as_mut().unwrap().velocity = vector![0.5, 0.0],
+                0 => {
+                    board.ball.as_mut().unwrap().position = point![-4.9, 0.0];
+                    board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+                }
                 1 => board.ball.as_mut().unwrap().velocity = vector![0.0, 3.4],
                 2 => board.ball.as_mut().unwrap().velocity = vector![-3.4, 0.0],
                 3 => board.ball.as_mut().unwrap().age = Default::default(),

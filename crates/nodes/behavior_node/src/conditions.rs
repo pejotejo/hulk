@@ -5,15 +5,20 @@ use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
 use linear_algebra::{Point2, Vector2, point, vector};
 use types::{
-    controller_input::Button, fall_detection::Posture,
+    controller_input::Button,
+    fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
-    filtered_game_state::FilteredGameState, motion_type::MotionType, obstacles::ObstacleKind,
+    filtered_game_state::FilteredGameState,
+    motion_type::MotionType,
+    obstacles::{Obstacle, ObstacleKind},
+    parameters::ObstacleSource,
     primary_state::PrimaryState,
+    tracked_objects::{HumanoidRole, HumanoidTrack, TrackStatus},
 };
 use voronoi::Ownership;
 
 use crate::{
-    goalkeeper::goalkeeper_clearance_target,
+    goalkeeper::goalkeeper_clearance_target_for_pose,
     kick::{
         kick_ball_position_in_ground,
         passing::{is_pass_receiver, outgoing_pass_in_flight},
@@ -103,10 +108,10 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
         + field.ball_radius
         + blackboard.parameters.kicking.strategy.obstacle_clearance;
     let moving = ball.velocity.norm() > interception.minimum_ball_velocity;
-    if moving && ball.velocity.x() <= ball.velocity.y().abs() {
+    if moving && ball.velocity.x() <= 0.0 {
         return None;
     }
-    if moving && ball.velocity.x() > interception.minimum_ball_velocity_towards_own_half {
+    if moving {
         let direction = ball.velocity.normalize();
         // shortcut: infer origin from keeper proximity, replace when clearance intent is shared.
         return (to_keeper.dot(&direction) < 0.0
@@ -115,7 +120,6 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
             .then_some(direction);
     }
     let ball_at_keeper = keeper.inner.pose.as_transform::<Ground>().inverse() * ball.position;
-    let keeper_distance = to_keeper.norm_squared();
     if ball.position.x() >= -field.length / 2.0 + field.penalty_area_length
         || ball.position.y().abs() >= field.penalty_area_width / 2.0
         || ball_at_keeper.x() <= 0.0
@@ -124,31 +128,12 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
                 .parameters
                 .goalkeeper
                 .kick_away_ball_maximum_robot_distance
-        || to_robot.norm_squared() < keeper_distance
-        || !opponent_near_ball(blackboard, 6.0)
-        || world.player_states.iter().any(|(number, state)| {
-            number != keeper_number
-                && world
-                    .filtered_game_controller_state
-                    .as_ref()
-                    .is_none_or(|game| game.penalties[number].is_none())
-                && state.as_ref().is_some_and(|state| {
-                    state.time <= world.now
-                        && world.now.duration_since(state.time)
-                            <= blackboard
-                                .parameters
-                                .kicking
-                                .strategy
-                                .passing
-                                .maximum_receiver_age
-                        && (state.inner.pose.position() - ball.position).norm_squared()
-                            < keeper_distance
-                })
-        })
     {
         return None;
     }
-    let direction = (goalkeeper_clearance_target(ball.position, field) - ball.position).normalize();
+    let direction = (goalkeeper_clearance_target_for_pose(blackboard, keeper.inner.pose)?
+        - ball.position)
+        .normalize();
     (to_robot.dot(&direction) > 0.0).then_some(direction)
 }
 
@@ -167,16 +152,38 @@ pub(crate) fn opponent_near_position(
     let Some(transform) = blackboard.world_state.robot.ground_to_field else {
         return false;
     };
-    blackboard.world_state.obstacles.iter().any(|obstacle| {
-        if !matches!(
-            obstacle.kind,
-            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
-        ) {
-            return false;
-        }
+    enemy_obstacles(blackboard).any(|obstacle| {
         let position = transform * obstacle.position;
-        (position - target).norm() - obstacle.radius_at_foot_height <= distance
-            && !blackboard
+        let predicted = tracked_humanoid(blackboard, obstacle)
+            .filter(|track| track.velocity_in_ground.inner.iter().all(|v| v.is_finite()))
+            .map_or(position, |track| {
+                position + transform * track.velocity_in_ground * 0.3
+            });
+        (position - target).norm().min((predicted - target).norm()) - obstacle.radius_at_foot_height
+            <= distance
+    })
+}
+
+pub(crate) fn enemy_obstacles(blackboard: &Blackboard) -> impl Iterator<Item = &Obstacle> {
+    blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .filter(move |obstacle| {
+            if !matches!(
+                obstacle.kind,
+                ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+            ) {
+                return false;
+            }
+            if let Some(track) = tracked_humanoid(blackboard, obstacle) {
+                return track.role == HumanoidRole::Opponent;
+            }
+            let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+                return false;
+            };
+            let position = transform * obstacle.position;
+            !blackboard
                 .world_state
                 .player_states
                 .iter()
@@ -195,7 +202,47 @@ pub(crate) fn opponent_near_position(
                                     + obstacle.radius_at_foot_height
                     })
                 })
-    })
+        })
+}
+
+fn tracked_humanoid<'a>(
+    blackboard: &'a Blackboard,
+    obstacle: &Obstacle,
+) -> Option<&'a HumanoidTrack> {
+    if blackboard.parameters.obstacle_source != ObstacleSource::ObjectFilters {
+        return None;
+    }
+    let world = &blackboard.world_state;
+    let tracks = world.humanoid_tracks.as_ref()?;
+    if tracks.time > world.now || world.now.duration_since(tracks.time) > Duration::from_millis(500)
+    {
+        return None;
+    }
+    tracks
+        .tracks
+        .iter()
+        .filter(|track| {
+            track.status == TrackStatus::Confirmed
+                && track.existence >= 0.5
+                && track
+                    .time_since_detection
+                    .is_some_and(|age| age <= Duration::from_secs(1))
+                && track.position_in_ground.inner.iter().all(|v| v.is_finite())
+        })
+        .min_by(|a, b| {
+            (a.position_in_ground - obstacle.position)
+                .norm_squared()
+                .total_cmp(&(b.position_in_ground - obstacle.position).norm_squared())
+        })
+        .filter(|track| {
+            (track.position_in_ground - obstacle.position).norm()
+                <= blackboard
+                    .parameters
+                    .walking
+                    .path_planning
+                    .robot_radius
+                    .max(obstacle.radius_at_foot_height)
+        })
 }
 
 pub fn is_finishing_striker_kick(blackboard: &mut Blackboard) -> bool {
@@ -534,9 +581,84 @@ mod tests {
     use hsl_network_messages::{Penalty, PlayerNumber};
     use types::{
         field_dimensions::Side,
+        multivariate_normal_distribution::MultivariateNormalDistribution,
         time_wrapper::TimeWrapper,
+        tracked_objects::TrackedObjects,
         world_state::{BallSource, PlayerState},
     };
+
+    #[test]
+    fn fresh_opponent_tracks_identify_pressure_and_predict_closing_robots() {
+        let mut board = Blackboard::default();
+        board.world_state.now = board.world_state.now + Duration::from_secs(10);
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.obstacle_source = ObstacleSource::ObjectFilters;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(1);
+        board.world_state.obstacles = vec![Obstacle::robot(point![1.6, 0.0], 0.2, 0.2)];
+        board.world_state.humanoid_tracks = Some(TrackedObjects {
+            time: board.world_state.now,
+            ground_to_odometry: Default::default(),
+            ground_to_field: Some(Default::default()),
+            tracks: vec![HumanoidTrack {
+                id: 1,
+                existence: 1.0,
+                status: TrackStatus::Confirmed,
+                robot_probability: 1.0,
+                human_probability: 0.0,
+                role: HumanoidRole::Opponent,
+                teammate_probabilities: vec![],
+                remote_only: false,
+                detection_probability: 1.0,
+                time_since_detection: Some(Duration::ZERO),
+                state: MultivariateNormalDistribution {
+                    mean: nalgebra::SVector::zeros(),
+                    covariance: nalgebra::SMatrix::identity(),
+                },
+                position_in_ground: point![1.6, 0.0],
+                velocity_in_ground: vector![-2.1, 0.0],
+                position_in_field: Some(point![1.6, 0.0]),
+            }],
+        });
+        let target = Point2::origin();
+        assert!(opponent_near_position(&board, target, 0.8));
+        board.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].velocity_in_ground =
+            vector![2.0, 0.0];
+        assert!(!opponent_near_position(&board, target, 0.8));
+
+        // Identified opponents remain threats even beside a teammate's reported position.
+        board.world_state.player_states.three = Some(TimeWrapper {
+            time: board.world_state.now,
+            inner: PlayerState {
+                pose: point![1.6, 0.0].into(),
+                ..Default::default()
+            },
+        });
+        assert!(opponent_near_position(&board, target, 1.5));
+        for role in [
+            HumanoidRole::Teammate(PlayerNumber::Three),
+            HumanoidRole::Human,
+        ] {
+            board.world_state.humanoid_tracks.as_mut().unwrap().tracks[0].role = role;
+            assert!(!opponent_near_position(&board, target, 1.5));
+        }
+        board.world_state.player_states.three = None;
+        for time in [
+            board.world_state.now - Duration::from_secs(1),
+            board.world_state.now + Duration::from_secs(1),
+        ] {
+            board.world_state.humanoid_tracks.as_mut().unwrap().time = time;
+            assert!(opponent_near_position(&board, target, 1.5));
+        }
+        board.world_state.humanoid_tracks.as_mut().unwrap().time = board.world_state.now;
+        board.parameters.obstacle_source = ObstacleSource::Legacy;
+        assert!(opponent_near_position(&board, target, 1.5));
+    }
 
     #[test]
     fn incoming_ball_claims_its_region_without_waiting_for_entry_dwell() {

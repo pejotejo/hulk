@@ -81,13 +81,7 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
                 0.0
             },
     );
-    if under_pressure
-        && less_than_with_relative_hysteresis(
-            was_clearing,
-            own_goal.distance_to(ball),
-            parameters.clear_goal_distance,
-            0.0..=parameters.clear_distance_hysteresis,
-        )
+    let can_clear = under_pressure
         && travel_openings(
             ball,
             ground_to_field,
@@ -97,7 +91,14 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
             parameters.obstacle_clearance,
         )
         .iter()
-        .any(|opening| opening.0.x().max(opening.1.x()) > ball.x())
+        .any(|opening| opening.0.x().max(opening.1.x()) > ball.x());
+    if can_clear
+        && less_than_with_relative_hysteresis(
+            was_clearing,
+            own_goal.distance_to(ball),
+            parameters.clear_goal_distance,
+            0.0..=parameters.clear_distance_hysteresis,
+        )
     {
         return Some(BallAction::Clear);
     }
@@ -205,6 +206,10 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
 
     if let Some(pass) = pass {
         return Some(pass);
+    }
+
+    if can_shoot && can_clear {
+        return Some(BallAction::Clear);
     }
 
     (!travel_openings(
@@ -852,12 +857,13 @@ mod tests {
         assert!(matches!(
             blackboard.body_motion,
             Some(BodyMotion::Kick {
-                strong: false,
+                strong: true,
+                quick: true,
                 soft: false,
                 ..
             })
         ));
-        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+        assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
         let target = transform * blackboard.kick_target.unwrap();
         for obstacle in &blackboard.world_state.obstacles {
             assert!(
@@ -1662,6 +1668,21 @@ mod tests {
             );
             assert_eq!(blackboard.kick_target, None, "case {case}");
         }
+    }
+
+    #[test]
+    fn releases_ball_under_pressure_when_no_shot_or_pass_is_available() {
+        let mut board = blackboard();
+        board.ball.as_mut().unwrap().position = point![0.0, 0.0];
+        board.world_state.obstacles = vec![Obstacle::robot(point![0.5, 0.4], 0.2, 0.2)];
+        assert_eq!(select_ball_action(&mut board), Status::Success);
+        assert_eq!(board.ball_action, Some(BallAction::Clear));
+        let target = crate::kick::execution::resolve_target(&board).unwrap();
+        assert!(target.x() > 0.0);
+
+        board.world_state.obstacles.clear();
+        assert_eq!(select_ball_action(&mut board), Status::Success);
+        assert_eq!(board.ball_action, Some(BallAction::Dribble));
     }
 
     #[test]

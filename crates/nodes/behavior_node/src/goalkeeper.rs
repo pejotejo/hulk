@@ -1,7 +1,7 @@
-use coordinate_systems::Field;
+use coordinate_systems::{Field, Ground};
 use geometry::line_segment::LineSegment;
 use hsl_network_messages::SubState;
-use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
+use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point, vector};
 use path_planner::path_planner::PathPlanner;
 use types::{
     behavior_tree::Status,
@@ -19,8 +19,8 @@ use crate::{
     conditions::{hulks_is_kicking_team, is_closest_to_ball},
     head::look_at_ball_subtree,
     kick::{
-        apply_kick_target, disable_strong_kick, intercept, kick, kick_alternatives_subtree,
-        kick_strength_subtree,
+        apply_kick_target, disable_strong_kick, execution::goalward_target,
+        geometry::travel_openings, intercept, kick, kick_alternatives_subtree,
     },
     negation,
     node::Blackboard,
@@ -31,8 +31,7 @@ use crate::{
     tree::striker_subtree,
     voronoi::calculate_voronoi_grid,
     walk::{
-        adaptive_blocking_velocity, walk_alternatives_subtree, walk_to, walk_to_ball,
-        walk_to_block_position,
+        adaptive_blocking_velocity, walk_alternatives_subtree, walk_to, walk_to_block_position,
     },
 };
 
@@ -45,25 +44,38 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                 subtree!(goalkeeper_center_position_subtree),
             ),
             sequence!(
-                condition!(is_goalkeeper_kick_approach_obstructed),
-                switch_motion_type(MotionType::Walk, action!(walk_to_ball), Node::Failure)
-            ),
-            sequence!(
                 condition!(is_in_sub_state),
+                negation!(condition!(hulks_is_kicking_team)),
                 subtree!(goalkeeper_sub_state_subtree)
             ),
             sequence!(
                 condition!(is_goalkeeper_kick_away_needed),
-                switch_motion_type(
-                    MotionType::Kick,
+                selection!(
                     sequence!(
-                        action!(kick),
-                        action!(select_goalkeeper_kick_away_target),
-                        subtree!(kick_strength_subtree),
-                        action!(enable_quick_clearance),
+                        condition!(needs_walk_before_goalkeeper_clearance),
+                        switch_motion_type(
+                            MotionType::Walk,
+                            action!(walk_to_goalkeeper_clearance_ball),
+                            Node::Failure,
+                        )
                     ),
-                    subtree!(kick_alternatives_subtree),
+                    sequence!(
+                        negation!(condition!(needs_walk_before_goalkeeper_clearance)),
+                        switch_motion_type(
+                            MotionType::Kick,
+                            sequence!(
+                                action!(kick),
+                                action!(select_goalkeeper_kick_away_target),
+                                action!(enable_quick_clearance),
+                            ),
+                            subtree!(kick_alternatives_subtree),
+                        )
+                    ),
                 )
+            ),
+            sequence!(
+                condition!(is_in_sub_state),
+                subtree!(goalkeeper_sub_state_subtree)
             ),
             sequence!(
                 condition!(is_goalkeeper_interception_candidate),
@@ -97,6 +109,24 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
             subtree!(goalkeeper_default_position_subtree),
         ),
     )
+}
+
+fn needs_walk_before_goalkeeper_clearance(blackboard: &mut Blackboard) -> bool {
+    match (
+        blackboard.ball.as_ref(),
+        blackboard.world_state.robot.ground_to_field,
+    ) {
+        (Some(ball), Some(transform))
+            if (transform.inverse() * ball.position).x() > 0.0
+                && goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose())
+                    .is_some_and(|target| {
+                        (transform.inverse() * (target - ball.position)).x() > 0.0
+                    }) =>
+        {
+            is_goalkeeper_kick_approach_obstructed(blackboard)
+        }
+        _ => true,
+    }
 }
 
 fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
@@ -139,7 +169,10 @@ fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
         );
     }
     planner.with_goal_support_structures(transform.inverse(), dimensions);
-    let direction = (transform.inverse() * point![dimensions.length / 2.0, 0.0] - ball).normalize();
+    let Some(target) = goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose()) else {
+        return true;
+    };
+    let direction = (transform.inverse() * target - ball).normalize();
     let standoff = blackboard.parameters.kicking.approach_ball_standoff;
     let stance = ball - direction * standoff;
     planner.obstacles.iter().any(|obstacle| {
@@ -150,6 +183,30 @@ fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
                 .shape
                 .intersects_line_segment(LineSegment(Point2::origin(), stance))
     })
+}
+
+fn walk_to_goalkeeper_clearance_ball(blackboard: &mut Blackboard) -> Status {
+    let (Some(ball), Some(transform)) = (
+        blackboard.ball.as_ref(),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return Status::Failure;
+    };
+    let Some(target) = goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose()) else {
+        return Status::Failure;
+    };
+    let direction = (target - ball.position).normalize();
+    let stance = ball.position - direction * blackboard.parameters.kicking.approach_ball_standoff;
+    let walking = blackboard.parameters.walking.walk_and_stand;
+    blackboard.walk_position = Some(transform.inverse() * stance);
+    walk_to(
+        blackboard,
+        transform.inverse() * Pose2::from_parts(stance, Orientation2::from_vector(direction)),
+        blackboard.parameters.walking.speed.kicking,
+        OrientationMode::AlignWithPath,
+        walking.normal_distance_to_be_aligned,
+        walking.hysteresis,
+    )
 }
 
 fn goalkeeper_sub_state_subtree() -> Node<Blackboard> {
@@ -430,20 +487,7 @@ fn walk_to_goalkeeper_shot_block_position(blackboard: &mut Blackboard) -> Status
 }
 
 fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
-    let field = &blackboard.field_dimensions;
-    let goal_x = -field.length / 2.0;
-    let urgent_goal_mouth_ball = blackboard.ball.as_ref().is_some_and(|ball| {
-        (goal_x..=goal_x + field.goal_box_area_length).contains(&ball.position.x())
-            && ball.position.y().abs() <= field.goal_inner_width / 2.0 + field.goal_post_diameter
-            && ball.velocity.x()
-                <= blackboard
-                    .parameters
-                    .ball
-                    .interception
-                    .minimum_ball_velocity
-    });
     if !is_ball_in_own_penalty_area(blackboard)
-        || (!urgent_goal_mouth_ball && !is_goalkeeper_under_pressure(blackboard))
         || goalkeeper_shot_block_position(blackboard).is_some()
     {
         return false;
@@ -455,19 +499,14 @@ fn is_goalkeeper_kick_away_needed(blackboard: &mut Blackboard) -> bool {
     ) {
         let ball_in_ground = ground_to_field.inverse() * ball.position;
 
-        ball_in_ground.x() > 0.0
-            && ball_in_ground.coords().norm()
-                < blackboard
-                    .parameters
-                    .goalkeeper
-                    .kick_away_ball_maximum_robot_distance
+        ball_in_ground.coords().norm()
+            < blackboard
+                .parameters
+                .goalkeeper
+                .kick_away_ball_maximum_robot_distance
     } else {
         false
     }
-}
-
-fn is_goalkeeper_under_pressure(blackboard: &Blackboard) -> bool {
-    crate::conditions::opponent_near_ball(blackboard, 6.0)
 }
 
 fn is_ball_in_own_penalty_area(blackboard: &mut Blackboard) -> bool {
@@ -615,17 +654,28 @@ pub fn walk_to_goalkeeper_penalty_position(blackboard: &mut Blackboard) -> Statu
 }
 
 fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
-    if let Some(ball) = &blackboard.ball {
-        let target = goalkeeper_clearance_target(ball.position, &blackboard.field_dimensions);
-        apply_kick_target(blackboard, target)
-    } else {
-        Status::Failure
-    }
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(target) = goalkeeper_clearance_target_for_pose(blackboard, transform.as_pose()) else {
+        return Status::Failure;
+    };
+    apply_kick_target(blackboard, target)
 }
 
 fn enable_quick_clearance(blackboard: &mut Blackboard) -> Status {
-    if let Some(BodyMotion::Kick { quick, .. }) = &mut blackboard.body_motion {
+    if let Some(BodyMotion::Kick {
+        quick,
+        strong,
+        soft,
+        target_speed,
+        ..
+    }) = &mut blackboard.body_motion
+    {
         *quick = true;
+        *strong = blackboard.parameters.kicking.allow_strong_kicks;
+        *soft = false;
+        *target_speed = blackboard.parameters.kicking.target_speed;
         Status::Success
     } else {
         Status::Failure
@@ -636,15 +686,58 @@ pub(crate) fn goalkeeper_clearance_target(
     ball: Point2<Field>,
     field: &FieldDimensions,
 ) -> Point2<Field> {
-    // Keep one central lane so pose roundoff cannot flip the clearance side.
     point![
         0.0,
-        if ball.y() >= -field.ball_radius {
-            field.width / 4.0
-        } else {
-            -field.width / 4.0
-        }
+        ball.y().clamp(
+            -field.width / 2.0 + field.ball_radius,
+            field.width / 2.0 - field.ball_radius
+        )
     ]
+}
+
+pub(crate) fn goalkeeper_clearance_target_for_pose(
+    blackboard: &Blackboard,
+    keeper_pose: Pose2<Field>,
+) -> Option<Point2<Field>> {
+    let ball = blackboard.ball.as_ref()?.position;
+    let transform = blackboard.world_state.robot.ground_to_field?;
+    let heading = keeper_pose.as_transform::<Ground>() * vector![1.0, 0.0];
+    if !ball
+        .inner
+        .iter()
+        .chain(heading.inner.iter())
+        .all(|value| value.is_finite())
+    {
+        return None;
+    }
+    // Keep a forward component, but prefer a quick sideways clearance to a long turn.
+    let preferred = ball + vector![heading.x().max(0.25), heading.y()];
+    let field = &blackboard.field_dimensions;
+    let kicking = &blackboard.parameters.kicking;
+    let distance = kicking.strong_kick_min_target_distance.max(3.0);
+    for distance in [distance, distance / 2.0] {
+        if let Some(target) = travel_openings(
+            ball,
+            transform,
+            &blackboard.world_state.obstacles,
+            field,
+            distance,
+            kicking.strategy.obstacle_clearance,
+        )
+        .into_iter()
+        .filter(|opening| opening.length() > f32::EPSILON)
+        .map(|opening| goalward_target(ball, preferred, opening))
+        .filter(|target| target.x() > ball.x())
+        .min_by(|a, b| {
+            (a - ball)
+                .angle(&(preferred - ball))
+                .total_cmp(&(b - ball).angle(&(preferred - ball)))
+        }) {
+            return Some(target);
+        }
+    }
+    // A crowded penalty area must not turn an urgent clearance into waiting.
+    Some(goalkeeper_clearance_target(ball, field))
 }
 
 fn is_interception_velocity_towards_own_half(
@@ -660,18 +753,54 @@ fn is_interception_velocity_towards_own_half(
 mod tests {
     use std::time::Duration;
 
-    use hsl_network_messages::{SubState, Team};
+    use geometry::{Distance, line_segment::LineSegment};
+    use hsl_network_messages::{PlayerNumber, SubState, Team};
     use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point, vector};
     use types::{
         field_dimensions::{FieldDimensions, Side},
         filtered_game_controller_state::FilteredGameControllerState,
         motion_command::BodyMotion,
+        motion_type::MotionType,
+        obstacles::Obstacle,
         path::traits::EndPoints,
-        world_state::BallSource,
+        time_wrapper::TimeWrapper,
+        world_state::{BallSource, BallState, PlayerState},
     };
 
     use super::{goalkeeper_subtree, shot_y_at_defense_line};
     use crate::node::{Blackboard, LastBall};
+
+    fn clearance_board() -> Blackboard {
+        let ball = LastBall {
+            position: point![-3.5, 1.1],
+            velocity: Vector2::zeros(),
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        };
+        let mut board = Blackboard {
+            field_dimensions: FieldDimensions::SPL_2025,
+            ball: Some(ball.clone()),
+            last_ball: Some(ball),
+            last_motion_type: Some(MotionType::Walk),
+            ..Default::default()
+        };
+        board.world_state.robot.player_number = PlayerNumber::One;
+        board.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![-4.2, 0.0], 0.0));
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board
+            .parameters
+            .goalkeeper
+            .kick_away_ball_maximum_robot_distance = 1.5;
+        board.parameters.kicking.allow_strong_kicks = true;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.kicking.target_speed = 3.0;
+        board.parameters.walking.path_planning.robot_radius = 0.2;
+        board.parameters.walking.path_planning.ball_obstacle_radius = 0.05;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board
+    }
 
     #[test]
     fn does_not_chase_a_ball_into_the_goal_net() {
@@ -986,54 +1115,166 @@ mod tests {
     }
 
     #[test]
-    fn clears_goal_mouth_balls_without_pressure_but_keeps_safe_play_further_out() {
-        use types::{obstacles::Obstacle, time_wrapper::TimeWrapper, world_state::PlayerState};
-        let mut board = Blackboard::default();
-        let transform = Isometry2::from_parts(vector![-4.2, 0.0], 0.0);
-        board.world_state.robot.ground_to_field = Some(transform);
-        board.field_dimensions = FieldDimensions::SPL_2025;
-        board
-            .parameters
-            .goalkeeper
-            .kick_away_ball_maximum_robot_distance = 1.5;
-        board.parameters.walking.path_planning.robot_radius = 0.4;
-        board.ball = Some(LastBall {
-            position: point![-3.5, 0.0],
-            velocity: Default::default(),
-            age: Default::default(),
-            field_side: Side::Left,
-            source: BallSource::Own,
-        });
-        assert!(!super::is_goalkeeper_kick_away_needed(&mut board));
-        board
-            .world_state
-            .obstacles
-            .push(Obstacle::robot(point![1.0, 0.0], 0.2, 0.3));
-        assert!(super::is_goalkeeper_under_pressure(&board));
-        assert!(super::is_goalkeeper_kick_away_needed(&mut board));
-        board.world_state.player_states.two = Some(TimeWrapper {
-            time: board.world_state.now,
-            inner: PlayerState {
-                pose: Pose2::new(transform * point![1.0, 0.0], 0.0),
-                ..Default::default()
-            },
-        });
-        assert!(!super::is_goalkeeper_under_pressure(&board));
-        assert!(!super::is_goalkeeper_kick_away_needed(&mut board));
-        board.world_state.player_states.two = None;
-        board.world_state.obstacles[0].position = point![7.0, 0.0];
-        assert!(!super::is_goalkeeper_under_pressure(&board));
+    fn clears_unpressured_penalty_area_balls_with_three_or_five_players_and_own_restarts() {
+        for players in [3, 5] {
+            for sub_state in [
+                None,
+                Some(SubState::GoalKick),
+                Some(SubState::DirectFreeKick),
+            ] {
+                for allow_strong_kicks in [false, true] {
+                    let mut board = clearance_board();
+                    board.parameters.kicking.allow_strong_kicks = allow_strong_kicks;
+                    board.world_state.filtered_game_controller_state =
+                        Some(FilteredGameControllerState {
+                            sub_state,
+                            kicking_team: Some(Team::Hulks),
+                            ..Default::default()
+                        });
+                    let ball = board.ball.as_ref().unwrap().position;
+                    for (index, number) in [
+                        PlayerNumber::Two,
+                        PlayerNumber::Three,
+                        PlayerNumber::Four,
+                        PlayerNumber::Five,
+                    ]
+                    .into_iter()
+                    .take(players - 1)
+                    .enumerate()
+                    {
+                        board.world_state.player_states[number] = Some(TimeWrapper {
+                            time: board.world_state.now,
+                            inner: PlayerState {
+                                // All teammates are closer; clearance must bypass election.
+                                pose: Pose2::new(
+                                    ball + vector![0.15 * (index + 1) as f32, 0.0],
+                                    0.0,
+                                ),
+                                ..Default::default()
+                            },
+                        });
+                    }
+                    let transform = board.world_state.robot.ground_to_field.unwrap();
+                    let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+                    assert_eq!(status, types::behavior_tree::Status::Success);
+                    let Some(BodyMotion::Kick {
+                        strong,
+                        quick: true,
+                        soft: false,
+                        target_speed,
+                        ..
+                    }) = board.body_motion
+                    else {
+                        panic!(
+                            "unpressured reachable ball must clear: {:?}",
+                            board.body_motion
+                        );
+                    };
+                    assert_eq!(strong, allow_strong_kicks);
+                    approx::assert_relative_eq!(target_speed, 3.0);
+                    assert!((transform * board.kick_target.unwrap()).x() > ball.x());
+                    assert!(board.voronoi_map.is_none());
+                }
+            }
+        }
+    }
 
-        board.world_state.obstacles.clear();
-        for side in [-1.0, 1.0] {
-            board.ball.as_mut().unwrap().position = point![-4.0, side * 0.8];
-            assert!(super::is_goalkeeper_kick_away_needed(&mut board));
-            board.ball.as_mut().unwrap().position = point![-4.0, side * 1.1];
+    #[test]
+    fn clearance_requires_reach_and_own_penalty_area_but_not_a_stationary_ball() {
+        let mut board = clearance_board();
+        board.ball.as_mut().unwrap().velocity = vector![1.0, 0.0];
+        assert!(super::is_goalkeeper_kick_away_needed(&mut board));
+
+        for (keeper, ball) in [
+            (point![-4.2, 0.0], point![-2.8, 0.0]),
+            (point![-3.5, 1.0], point![-3.5, 2.0]),
+            (point![-4.5, 0.0], point![-3.0, 0.0]),
+        ] {
+            board.world_state.robot.ground_to_field = Some(Pose2::new(keeper, 0.0).as_transform());
+            board.ball.as_mut().unwrap().position = ball;
             assert!(!super::is_goalkeeper_kick_away_needed(&mut board));
         }
-        board.ball.as_mut().unwrap().position = point![-4.0, 0.0];
-        board.ball.as_mut().unwrap().velocity = vector![1.0, 0.0];
-        assert!(!super::is_goalkeeper_kick_away_needed(&mut board));
+    }
+
+    #[test]
+    fn keeper_approaches_rear_balls_and_turns_before_backward_clearances() {
+        for angle in [0.0, std::f32::consts::PI] {
+            let mut board = clearance_board();
+            let transform = Isometry2::from_parts(vector![-3.4, 0.0], angle);
+            let ball = point![-3.9, 0.0];
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.ball.as_mut().unwrap().position = ball;
+            board.last_ball = board.ball.clone();
+            board.world_state.ball = Some(BallState {
+                ball_in_ground: transform.inverse() * ball,
+                ..Default::default()
+            });
+            if angle != 0.0 {
+                assert!((transform.inverse() * ball).x() > 0.0);
+            }
+            let (status, _) = goalkeeper_subtree().tick_with_trace(&mut board);
+            assert_eq!(status, types::behavior_tree::Status::Success);
+            let Some(BodyMotion::Walk {
+                path,
+                target_orientation,
+                ..
+            }) = &board.body_motion
+            else {
+                panic!(
+                    "unsafe clearance must approach first: {:?}",
+                    board.body_motion
+                );
+            };
+            assert!(
+                path.segments.len() > 1,
+                "approach must detour around the ball"
+            );
+            let stance = transform * board.walk_position.unwrap();
+            assert!(stance.x() < ball.x());
+            assert!(stance.x() > -board.field_dimensions.length / 2.0);
+            let heading = transform * target_orientation.as_unit_vector();
+            assert!(heading.x() > 0.0, "approach must face away from own goal");
+            assert!(board.kick_target.is_none());
+
+            board.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+                (ball - vector![board.parameters.kicking.approach_ball_standoff, 0.0]).coords(),
+                0.0,
+            ));
+            board.world_state.ball = None;
+            goalkeeper_subtree().tick_with_trace(&mut board);
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick { quick: true, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn clearance_prefers_keeper_heading_and_avoids_blocked_lanes() {
+        for angle in [-1.2, 0.0, 1.2] {
+            let mut board = clearance_board();
+            board.field_dimensions.length = 14.0;
+            board.field_dimensions.width = 9.0;
+            let transform = Isometry2::from_parts(vector![-6.7, 0.0], angle);
+            let ball = point![-6.0, 0.0];
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.ball.as_mut().unwrap().position = ball;
+            board.parameters.kicking.strategy.obstacle_clearance = 0.1;
+            let heading = transform * vector![1.0, 0.0];
+            let target =
+                super::goalkeeper_clearance_target_for_pose(&board, transform.as_pose()).unwrap();
+            assert!((target - ball).angle(&heading) < 1e-3);
+
+            let blocker = ball + heading;
+            board.world_state.obstacles =
+                vec![Obstacle::robot(transform.inverse() * blocker, 0.3, 0.3)];
+            let target =
+                super::goalkeeper_clearance_target_for_pose(&board, transform.as_pose()).unwrap();
+            assert!(target.x() > ball.x());
+            assert!(target.x().abs() < board.field_dimensions.length / 2.0);
+            assert!(target.y().abs() < board.field_dimensions.width / 2.0);
+            assert!(LineSegment(ball, target).distance_to(blocker) >= 0.45 - 1e-4);
+        }
     }
 
     #[test]
@@ -1323,7 +1564,14 @@ mod tests {
         board.last_ball = board.ball.clone();
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
-            matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+            matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    strong: false,
+                    soft: false,
+                    ..
+                })
+            ),
             "close interceptable balls should still use the kick policy"
         );
 

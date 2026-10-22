@@ -23,6 +23,59 @@ use super::{
     strategy::BallAction,
 };
 
+pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(ball) = kick_ball_position_in_ground(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    let forward = transform * vector![1.0, 0.0];
+    if blackboard.world_state.robot.player_number == blackboard.parameters.goalkeeper.player_number
+        || blackboard.parameters.kicking.strategy.validate().is_err()
+        || !ball.inner.iter().all(|value| value.is_finite())
+        || ball.x() <= 0.0
+        || ball.coords().norm() > blackboard.parameters.kicking.kick_activation_distance
+        || !forward.x().is_finite()
+        || forward.x() <= 0.0
+        || super::passing::is_pass_receiver(blackboard)
+        || !crate::conditions::opponent_near_ball(
+            blackboard,
+            blackboard.parameters.kicking.strategy.pressure_distance,
+        )
+        || crate::conditions::goalkeeper_clearance_direction(blackboard).is_some()
+        || (blackboard.last_motion_type != Some(MotionType::Kick)
+            && !is_allowed_to_start_kick(blackboard))
+    {
+        return Status::Failure;
+    }
+    if super::strategy::select_ball_action(blackboard) == Status::Success
+        && !matches!(blackboard.ball_action, Some(BallAction::Dribble))
+    {
+        return execute_ball_action(blackboard);
+    }
+    // A ball inside the holder's obstacle has no open corridor; poke it out of their control.
+    if super::kick(blackboard) == Status::Failure {
+        return Status::Failure;
+    }
+    if let Some(BodyMotion::Kick {
+        quick,
+        strong,
+        soft,
+        kick_direction,
+        target_speed,
+        ..
+    }) = &mut blackboard.body_motion
+    {
+        *quick = true;
+        *strong = false;
+        *soft = false;
+        *kick_direction = Orientation2::default();
+        *target_speed = blackboard.parameters.kicking.target_speed;
+    }
+    Status::Success
+}
+
 /// Revalidate the selected corridor, choosing another safe action if it has disappeared.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     if crate::conditions::goalkeeper_clearance_direction(blackboard).is_some() {
@@ -312,7 +365,7 @@ fn resolve_action_target(
         .map(|(target, _)| target)
 }
 
-pub(super) fn goalward_target(
+pub(crate) fn goalward_target(
     ball: Point2<Field>,
     goal: Point2<Field>,
     opening: LineSegment<Field>,
