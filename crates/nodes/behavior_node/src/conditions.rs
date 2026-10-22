@@ -3,7 +3,7 @@ use std::time::Duration;
 use coordinate_systems::{Field, Ground};
 use filtering::hysteresis::less_than_with_hysteresis;
 use hsl_network_messages::Team;
-use linear_algebra::{Vector2, point, vector};
+use linear_algebra::{Point2, Vector2, point, vector};
 use types::{
     controller_input::Button, fall_detection::Posture,
     filtered_game_controller_state::FilteredGameControllerState,
@@ -153,10 +153,18 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
 }
 
 pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool {
-    let (Some(ball), Some(transform)) = (
-        blackboard.ball.as_ref(),
-        blackboard.world_state.robot.ground_to_field,
-    ) else {
+    let Some(ball) = &blackboard.ball else {
+        return false;
+    };
+    opponent_near_position(blackboard, ball.position, distance)
+}
+
+pub(crate) fn opponent_near_position(
+    blackboard: &Blackboard,
+    target: Point2<Field>,
+    distance: f32,
+) -> bool {
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
         return false;
     };
     blackboard.world_state.obstacles.iter().any(|obstacle| {
@@ -167,7 +175,7 @@ pub(crate) fn opponent_near_ball(blackboard: &Blackboard, distance: f32) -> bool
             return false;
         }
         let position = transform * obstacle.position;
-        (position - ball.position).norm() - obstacle.radius_at_foot_height <= distance
+        (position - target).norm() - obstacle.radius_at_foot_height <= distance
             && !blackboard
                 .world_state
                 .player_states
