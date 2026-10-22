@@ -129,7 +129,9 @@ async fn real_udp_game_controller_returns_penalties_and_team_messages() {
         }
         let teammate = bincode::serialize(&HulkMessage::State(StateMessage {
             player_number: PlayerNumber::Two,
-            ..Default::default()
+            pose: linear_algebra::Pose2::zero(),
+            ball_position: None,
+            head_yaw: 0.0,
         }))
         .unwrap();
         loop {

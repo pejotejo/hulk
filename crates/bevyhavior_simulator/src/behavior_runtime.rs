@@ -307,8 +307,11 @@ mod tests {
     };
 
     fn kick_blackboard(ball_position: Point2<Ground>) -> BehaviorBlackboard {
-        let mut blackboard = create_behavior_blackboard(default_behavior_parameters().unwrap());
-        blackboard.field_dimensions = FieldDimensions::SPL_2025;
+        let mut blackboard = create_behavior_blackboard(
+            FieldDimensions::SPL_2025,
+            default_behavior_parameters().unwrap(),
+            PlayerNumber::One,
+        );
         blackboard.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::identity());
         blackboard.visual_kick_ball_position = Some(BallPosition {
             position: ball_position,
@@ -400,8 +403,12 @@ mod tests {
 
         let mut blackboard = kick_blackboard(point![0.5, 1.0]);
         blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.0, 0.0],
+            ball_in_field: point![0.0, 0.0],
             ball_in_ground_velocity: vector![0.0, -1.0],
-            ..Default::default()
+            last_seen_ball: SystemTime::UNIX_EPOCH,
+            field_side: types::field_dimensions::Side::Left,
+            source: types::world_state::BallSource::Own,
         });
         blackboard
             .parameters
@@ -436,6 +443,7 @@ mod tests {
             velocity: vector![0.0, 0.0],
             age: ros_z::time::Time::zero(),
             field_side: Side::Left,
+            source: types::world_state::BallSource::Own,
         });
         blackboard
             .parameters
