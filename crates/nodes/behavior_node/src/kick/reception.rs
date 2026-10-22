@@ -43,7 +43,7 @@ pub(crate) fn is_ready_to_receive_kick(blackboard: &Blackboard) -> bool {
     let Some((position, velocity)) = rolling_ball_in_ground(blackboard) else {
         return false;
     };
-    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+    if blackboard.player_number != blackboard.parameters.goalkeeper.player_number
     {
         let controlled = controlled_ball_at_feet(blackboard, position, velocity)
             && super::execution::resolve_target(blackboard).is_some_and(|target| {
@@ -180,14 +180,14 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         && blackboard.ball_action.is_none()
         && matches!(
             blackboard.last_motion_command,
-            types::motion_command::MotionCommand::Kick {
+            Some(types::motion_command::MotionCommand::Kick {
                 quick: true,
                 strong: false,
                 soft: false,
                 ..
-            }
+            })
         );
-    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+    if blackboard.player_number != blackboard.parameters.goalkeeper.player_number
         && !super::passing::is_pass_receiver(blackboard)
         && !controlled_ball_at_feet(blackboard, position, velocity)
         && position.coords().dot(&velocity) < 0.0
@@ -219,7 +219,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
     if blackboard.last_motion_type != Some(MotionType::Walk) && !is_allowed_to_switch(blackboard) {
         return Status::Failure;
     }
-    if blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+    if blackboard.player_number != blackboard.parameters.goalkeeper.player_number
         && controlled_ball_at_feet(blackboard, position, velocity)
         && !is_receiver_under_pressure(blackboard)
     {
@@ -229,7 +229,7 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     }
     let goal = transform.inverse() * point![-blackboard.field_dimensions.length / 2.0, 0.0];
-    let settle = blackboard.world_state.robot.player_number
+    let settle = blackboard.player_number
         != blackboard.parameters.goalkeeper.player_number
         && !is_receiver_under_pressure(blackboard);
     if settle && position.coords().dot(&velocity) >= 0.0 {
@@ -457,7 +457,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        blackboard.world_state.robot.player_number = PlayerNumber::Two;
+        blackboard.player_number = PlayerNumber::Two;
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.goalkeeper.player_number = PlayerNumber::One;
         blackboard.parameters.ball.last_ball_timeout = Duration::from_secs(1);
@@ -587,7 +587,7 @@ mod tests {
             ball.velocity = velocity;
             assert!(!is_ready_to_receive_kick(&blackboard));
         }
-        blackboard.world_state.robot.player_number = PlayerNumber::One;
+        blackboard.player_number = PlayerNumber::One;
         blackboard.ball.as_mut().unwrap().position = point![0.8, -0.7];
         blackboard.ball.as_mut().unwrap().velocity = vector![0.0, 1.0];
         assert!(!is_ready_to_receive_kick(&blackboard));
@@ -614,7 +614,7 @@ mod tests {
             },
             ..Default::default()
         };
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field = Some(Default::default());
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
@@ -693,7 +693,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.world_state.robot.ground_to_field = Some(Default::default());
         board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
@@ -711,10 +711,10 @@ mod tests {
                     ball_position, ball_velocity, .. })
                 if ball_position == point![1.7, 0.05] && ball_velocity == vector![-2.0, 0.0]));
             assert!(board.ball_action.is_none());
-            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+            board.last_motion_command = Some(types::motion_command::MotionCommand::from_partial_motions(
                 board.body_motion.clone().unwrap(),
                 board.head_motion.unwrap(),
-            );
+            ));
             board.last_motion_type = Some(MotionType::Kick);
         }
         for (position, velocity) in [
@@ -833,10 +833,10 @@ mod tests {
         assert!(blackboard.kick_target.unwrap().x() > 1.0);
         assert!(blackboard.ball_action.is_some());
 
-        blackboard.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+        blackboard.last_motion_command = Some(types::motion_command::MotionCommand::from_partial_motions(
             blackboard.body_motion.clone().unwrap(),
             blackboard.head_motion.unwrap(),
-        );
+        ));
         blackboard.last_motion_type = Some(MotionType::Kick);
         blackboard.ball.as_mut().unwrap().velocity = vector![-0.2, 0.0];
         blackboard

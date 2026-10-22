@@ -145,7 +145,7 @@ pub struct RobotStack {
     pub profile: Profile,
     whistle: watch::Sender<Option<Time>>,
     frames: watch::Sender<Option<Frame>>,
-    body: crate::reference::BodyReferences,
+    body: Arc<crate::reference::BodyReferences>,
     detection_demand: crate::demand::Demand,
     sensors: tokio::sync::Mutex<crate::sensors::Sensors>,
     readiness: crate::readiness::Readiness,
@@ -384,7 +384,8 @@ impl RobotStack {
             .cache(1)
             .build()
             .await?;
-        let body = crate::reference::BodyReferences::new(&node, configuration.profile).await?;
+        let body =
+            Arc::new(crate::reference::BodyReferences::new(&node, configuration.profile).await?);
         let sensors = crate::sensors::Sensors::new(context.session()).await?;
         let behavior =
             crate::behavior_inputs::BehaviorInputs::new(&node, configuration.profile).await?;
@@ -457,6 +458,7 @@ impl RobotStack {
                 )
             });
             let game_cache = game.clone();
+            let body = body.clone();
             tasks.spawn(async move {
                 let result = async {
                     let mut camera_inputs = camera_inputs;
@@ -476,15 +478,10 @@ impl RobotStack {
                             });
                         behavior
                             .publish(
-                                frame.sample.ground_to_world,
-                                frame
-                                    .balls
-                                    .first()
-                                    .map(|ball| (ball.position, ball.velocity)),
-                                &frame.field,
+                                &frame,
                                 side,
-                                &frame.robots,
-                                frame.time,
+                                body.odometry_pose(frame.sample.ground_to_world)
+                                    .as_transform::<coordinate_systems::Ground>(),
                             )
                             .await?;
                         camera_inputs.publish(&frame).await?;

@@ -783,6 +783,7 @@ mod tests {
         let selected = history.at(source_time).unwrap();
         let teammate = PlayerState {
             pose: point![3.0, 5.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
@@ -892,6 +893,7 @@ mod tests {
         let now = Time::from_nanos(1_000_000_000);
         let state = PlayerState {
             pose: point![1.0, 2.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
@@ -1200,6 +1202,7 @@ mod tests {
         );
         let teammate = PlayerState {
             pose: point![3.0, 1.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
@@ -1253,6 +1256,7 @@ mod tests {
             na::Isometry2::translation(1.0, 2.0).framed_transform();
         let player_state = PlayerState {
             pose: linear_algebra::point![3.0, 5.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
@@ -1269,12 +1273,14 @@ mod tests {
 
         let own_player_state = PlayerState {
             pose: linear_algebra::point![1.0, 2.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
         };
         let teammate_state = PlayerState {
             pose: linear_algebra::point![3.0, 4.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,
@@ -1323,6 +1329,7 @@ mod tests {
 
         let newer_teammate_state = PlayerState {
             pose: linear_algebra::point![5.0, 6.0].into(),
+            pose_age: None,
             ball_position: None,
             pass: None,
             replacement_goalkeeper_claim: false,

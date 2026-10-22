@@ -28,16 +28,18 @@ use types::{
     field_dimensions::{FieldDimensions, Side},
     filtered_game_controller_state::FilteredGameControllerState,
     filtered_game_state::FilteredGameState,
+    localization::LocalizationEstimate,
     messages::OutgoingMessage,
     motion_command::{BodyMotion, HeadMotion, MotionCommand},
     motion_type::MotionType,
     obstacles::Obstacle,
-    parameters::BehaviorParameters,
+    parameters::{BehaviorParameters, ObstacleSource},
     path_obstacles::PathObstacle,
     players::Players,
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
     time_wrapper::TimeWrapper,
+    tracked_objects::{HumanoidTrack, TrackedObjects},
     walking_velocity_limits::{WALKING_VELOCITY_LIMITS_TOPIC, WalkingVelocityLimits},
     world_state::{BallSource, BallState, PlayerState, RobotState, WorldState},
 };
@@ -57,7 +59,7 @@ pub struct LastBall {
     pub source: BallSource,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct Blackboard {
     pub field_dimensions: FieldDimensions,
     pub player_number: PlayerNumber,
@@ -93,6 +95,8 @@ pub struct Blackboard {
     pub restart_pass_wait_started: Option<Time>,
     pub kickoff_prepared: bool,
     pub kickoff_started: Option<Time>,
+    /// Acquisition time of the latest localization estimate.
+    pub localization_time: Option<Time>,
     pub last_closest_to_ball: bool,
     pub closest_to_ball_entered_area_since: Option<Time>,
     pub closest_to_ball_left_area_since: Option<Time>,
@@ -352,6 +356,12 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         .cache(1)
         .build()
         .await?;
+    let localization_cache = node
+        .subscriber::<LocalizationEstimate>("localization/estimate")
+        .cache(1)
+        .with_stamp(|estimate: &LocalizationEstimate| estimate.time)
+        .build()
+        .await?;
     let hypothetical_ball_positions_cache = node
         .subscriber::<Vec<HypotheticalBallPosition<Ground>>>("hypothetical_ball_positions")
         .cache(1)
@@ -359,6 +369,22 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let obstacles_cache = node
         .subscriber::<Vec<Obstacle>>("obstacles")
+        .cache(1)
+        .build()
+        .await?;
+    let humanoid_obstacles_cache = node
+        .subscriber::<Vec<Obstacle>>("humanoid_filter/obstacles")
+        .cache(1)
+        .build()
+        .await?;
+    let humanoid_tracks_cache = node
+        .subscriber::<TrackedObjects<HumanoidTrack>>("humanoid_filter/tracks")
+        .cache(1)
+        .with_stamp(|tracks: &TrackedObjects<HumanoidTrack>| tracks.time)
+        .build()
+        .await?;
+    let stationary_obstacles_cache = node
+        .subscriber::<Vec<Obstacle>>("stationary_object_filter/obstacles")
         .cache(1)
         .build()
         .await?;
@@ -479,6 +505,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         restart_pass_wait_started: None,
         kickoff_prepared: false,
         kickoff_started: None,
+        localization_time: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,
@@ -569,6 +596,10 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.remote_control_enabled = false;
         }
 
+        blackboard.localization_time = localization_cache
+            .get_latest()
+            .filter(|estimate| estimate.robot_to_field.is_some())
+            .map(|estimate| estimate.time);
         blackboard.world_state.robot = RobotState {
             ground_to_field: ground_to_field_cache
                 .get_latest()
@@ -592,10 +623,23 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             .map(|positions| positions.as_ref().clone())
             .unwrap_or_default();
         blackboard.world_state.now = node.clock().now();
-        blackboard.world_state.obstacles = obstacles_cache
+        blackboard.world_state.humanoid_tracks = humanoid_tracks_cache
             .get_latest()
-            .map(|obstacles| obstacles.as_ref().clone())
-            .unwrap_or_default();
+            .map(|tracks| tracks.as_ref().clone());
+        let latest_obstacles = |cache: &ros_z::cache::Cache<Vec<Obstacle>>| {
+            cache
+                .get_latest()
+                .map(|obstacles| obstacles.as_ref().clone())
+                .unwrap_or_default()
+        };
+        blackboard.world_state.obstacles = match blackboard.parameters.obstacle_source {
+            ObstacleSource::Legacy => latest_obstacles(&obstacles_cache),
+            ObstacleSource::ObjectFilters => {
+                let mut obstacles = latest_obstacles(&humanoid_obstacles_cache);
+                obstacles.extend(latest_obstacles(&stationary_obstacles_cache));
+                obstacles
+            }
+        };
         blackboard.world_state.player_states = player_states;
         blackboard.world_state.position_of_interest = position_of_interest_cache
             .get_latest()

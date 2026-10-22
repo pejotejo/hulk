@@ -152,6 +152,7 @@ async fn spawn_all(ctx: Arc<Context>, log_path: Option<PathBuf>) -> Result<Runni
     join_set.spawn(ground_provider::run_boxed(ctx.clone()));
     join_set.spawn(hardware_interface::run_boxed(ctx.clone()));
     join_set.spawn(head_motion::run_boxed(ctx.clone()));
+    join_set.spawn(humanoid_filter::run_boxed(ctx.clone()));
     join_set.spawn(image_receiver::run_boxed(ctx.clone()));
     join_set.spawn(kinematics_provider::run_boxed(ctx.clone()));
     join_set.spawn(led_handler::run_boxed(ctx.clone()));
@@ -174,6 +175,7 @@ async fn spawn_all(ctx: Arc<Context>, log_path: Option<PathBuf>) -> Result<Runni
     join_set.spawn(rule_obstacle_composer::run_boxed(ctx.clone()));
     join_set.spawn(safe_pose_checker::run_boxed(ctx.clone()));
     join_set.spawn(search_suggestor::run_boxed(ctx.clone()));
+    join_set.spawn(stationary_object_filter::run_boxed(ctx.clone()));
     join_set.spawn(stereo_visual_odometry::run_boxed(ctx.clone()));
     join_set.spawn(support_foot_estimator::run_boxed(ctx.clone()));
     join_set.spawn(team_ball_filter::run_boxed(ctx.clone()));

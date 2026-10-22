@@ -141,7 +141,7 @@ mod tests {
                 ..Default::default()
             };
             board.world_state.now = board.world_state.now + Duration::from_secs(1);
-            board.world_state.robot.player_number = number;
+            board.player_number = number;
             board.world_state.robot.ground_to_field = Some(pose.as_transform());
             board.parameters.voronoi.grid_resolution = 0.2;
             board.parameters.voronoi.padding = 0.5;
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn ownership_sites_exclude_stale_future_nonfinite_and_penalized_players() {
         let mut board = Blackboard::default();
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board
             .parameters

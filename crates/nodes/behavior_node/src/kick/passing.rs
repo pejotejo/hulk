@@ -106,7 +106,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
     if parameters.validate().is_err()
         || parameters.maximum_distance <= 0.0
         || world.robot.primary_state != types::primary_state::PrimaryState::Playing
-        || pass.receiver == world.robot.player_number
+        || pass.receiver == blackboard.player_number
         || pass.receiver == blackboard.parameters.goalkeeper.player_number
         || Some(pass.receiver) == blackboard.replacement_goalkeeper_coordinator.keeper()
         || (blackboard.last_motion_type != Some(MotionType::Kick)
@@ -202,8 +202,8 @@ fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)>
         .filter_map(|(sender, state)| {
             let state = state.as_ref()?;
             let pass = state.inner.pass?;
-            if sender == world.robot.player_number
-                || pass.receiver != world.robot.player_number
+            if sender == blackboard.player_number
+                || pass.receiver != blackboard.player_number
                 || state.time > world.now
                 || world.now.duration_since(state.time) >= PassIntent::TIMEOUT
                 || world
@@ -312,7 +312,7 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     if restart_pass_is_open(blackboard, position) {
         if is_sub_state(blackboard, SubState::CornerKick)
             && restart_pass_receiver(blackboard)
-                .is_some_and(|(receiver, _)| receiver == blackboard.world_state.robot.player_number)
+                .is_some_and(|(receiver, _)| receiver == blackboard.player_number)
         {
             blackboard.ball_action = None;
             blackboard.kick_target = None;
@@ -324,7 +324,7 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     let Some((receiver, target)) = restart_pass_receiver(blackboard) else {
         return Status::Failure;
     };
-    if receiver != blackboard.world_state.robot.player_number {
+    if receiver != blackboard.player_number {
         return Status::Failure;
     }
     blackboard.ball_action = None;
@@ -385,7 +385,7 @@ pub fn yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> Status {
     );
     planner.with_goal_support_structures(transform.inverse(), &blackboard.field_dimensions);
     for (number, teammate) in blackboard.world_state.player_states.iter() {
-        if number != blackboard.world_state.robot.player_number
+        if number != blackboard.player_number
             && let Some(teammate) = teammate
             && teammate.time <= blackboard.world_state.now
             && blackboard.world_state.now.duration_since(teammate.time)
@@ -496,7 +496,7 @@ mod tests {
             ..Default::default()
         };
         sender.world_state.now = sender.world_state.now + Duration::from_secs(1);
-        sender.world_state.robot.player_number = PlayerNumber::Three;
+        sender.player_number = PlayerNumber::Three;
         sender.world_state.robot.primary_state = types::primary_state::PrimaryState::Playing;
         sender.world_state.robot.ground_to_field = Some(Default::default());
         sender.world_state.filtered_game_controller_state = Some(
@@ -650,7 +650,7 @@ mod tests {
             },
             ..Default::default()
         };
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.world_state.robot.ground_to_field =
             Some(Isometry2::from_parts(vector![2.0, 0.0], 0.0));
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
@@ -769,7 +769,7 @@ mod tests {
             },
             ..Default::default()
         };
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.world_state.robot.ground_to_field =
             Some(Isometry2::from_parts(vector![-2.0, 0.0], 0.0));
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;

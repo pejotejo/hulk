@@ -218,6 +218,7 @@ fn create_behavior_blackboard(
         restart_pass_wait_started: None,
         kickoff_prepared: false,
         kickoff_started: None,
+        localization_time: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,

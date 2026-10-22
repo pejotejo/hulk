@@ -116,6 +116,7 @@ pub fn apply_incoming_hsl_messages(
             pose: state_message.pose,
             pass: state_message.pass,
             replacement_goalkeeper_claim: state_message.replacement_goalkeeper_claim,
+            pose_age: state_message.pose_age,
             ball_position: state_message.ball_position.map(|ball| {
                 BallPosition::from_network_ball(
                     ball,
@@ -224,6 +225,7 @@ mod tests {
         HulkMessage::State(hsl_network_messages::StateMessage {
             player_number,
             pose: Pose2::new(point![x, y], 0.0),
+            pose_age: Some(Duration::ZERO),
             ball_position: Some(hsl_network_messages::BallPosition {
                 age: Duration::from_millis(500),
                 position: point![x + 1.0, y],

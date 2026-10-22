@@ -389,7 +389,13 @@ impl BodyReferences {
                 )
                 .await?;
         }
-        let world = sample.ground_to_world;
+        self.odometry
+            .publish(&self.odometry_pose(sample.ground_to_world), time)
+            .await?;
+        Ok(())
+    }
+
+    pub fn odometry_pose(&self, world: nalgebra::Isometry3<f32>) -> Pose2<Odometry> {
         let world = nalgebra::Isometry2::new(
             nalgebra::vector![world.translation.x, world.translation.y],
             world.rotation.euler_angles().2,
@@ -398,15 +404,9 @@ impl BodyReferences {
             let mut origin = self.odometry_origin.lock().unwrap();
             origin.get_or_insert(world).inverse() * world
         };
-        self.odometry
-            .publish(
-                &Pose2::new(
-                    point![pose.translation.x, pose.translation.y],
-                    pose.rotation.angle(),
-                ),
-                time,
-            )
-            .await?;
-        Ok(())
+        Pose2::new(
+            point![pose.translation.x, pose.translation.y],
+            pose.rotation.angle(),
+        )
     }
 }

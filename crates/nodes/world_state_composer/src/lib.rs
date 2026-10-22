@@ -14,6 +14,7 @@ use types::{
     obstacles::Obstacle,
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
+    tracked_objects::{HumanoidTrack, TrackedObjects},
     world_state::{BallState, WorldState},
 };
 
@@ -51,6 +52,10 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .await?;
     let _obstacles_sub = node
         .subscriber::<Vec<Obstacle>>("obstacles")
+        .build()
+        .await?;
+    let _humanoid_tracks_sub = node
+        .subscriber::<TrackedObjects<HumanoidTrack>>("humanoid_filter/tracks")
         .build()
         .await?;
     let _position_of_interest_sub = node

@@ -93,6 +93,7 @@ fn apply_message(
             pose: state_message.pose,
             pass: state_message.pass,
             replacement_goalkeeper_claim: state_message.replacement_goalkeeper_claim,
+            pose_age: state_message.pose_age,
             ball_position: state_message
                 .ball_position
                 .map(|ball| BallPosition::from_network_ball(ball, time)),
@@ -161,6 +162,7 @@ mod tests {
                     player_number: PlayerNumber::Two,
                     pose,
                     head_yaw: 0.0,
+                    pose_age: Some(Duration::from_millis(80)),
                     ball_position: None,
                     pass: Some(hsl_network_messages::PassIntent {
                         receiver: PlayerNumber::Three,
@@ -176,6 +178,7 @@ mod tests {
         assert_eq!(player.inner.pose, pose);
         assert_eq!(player.inner.pass.unwrap().receiver, PlayerNumber::Three);
         assert!(player.inner.replacement_goalkeeper_claim);
+        assert_eq!(player.inner.pose_age, Some(Duration::from_millis(80)));
     }
 
     #[test]

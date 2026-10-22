@@ -328,7 +328,7 @@ pub(super) fn pass_receiver_position(
 ) -> Option<Point2<Field>> {
     let world = &blackboard.world_state;
     let parameters = &blackboard.parameters.kicking.strategy.passing;
-    if receiver == world.robot.player_number
+    if receiver == blackboard.player_number
         || receiver == blackboard.parameters.goalkeeper.player_number
         || Some(receiver) == blackboard.replacement_goalkeeper_coordinator.keeper()
         || world

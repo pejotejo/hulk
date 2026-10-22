@@ -98,6 +98,7 @@ pub fn build_world_states(
                     robot.team,
                 )),
                 hypothetical_ball_positions: Vec::new(),
+                humanoid_tracks: None,
                 now: clock.now.into(),
                 obstacles,
                 player_states: player_states_from_received_hsl_messages(
@@ -255,6 +256,7 @@ mod tests {
         HulkMessage::State(hsl_network_messages::StateMessage {
             player_number,
             pose: Pose2::new(point![x, y], 0.0),
+            pose_age: Some(Duration::ZERO),
             ball_position: Some(hsl_network_messages::BallPosition {
                 age: Duration::from_millis(500),
                 position: point![x + 1.0, y],
@@ -407,6 +409,7 @@ mod tests {
                             time: ros_z::time::Time::from_wallclock(received_at),
                             inner: PlayerState {
                                 pose: Pose2::new(point![1.0, 0.5], 0.0),
+                                pose_age: Some(Duration::ZERO),
                                 pass: None,
                                 replacement_goalkeeper_claim: false,
                                 ball_position: Some(BallPosition::from_network_ball(
