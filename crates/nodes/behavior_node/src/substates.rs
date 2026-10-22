@@ -616,7 +616,12 @@ mod tests {
             receiver.kick_target = None;
             receiver.body_motion = None;
             tree.tick_with_trace(&mut receiver);
-            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand), "{state:?}");
+            assert!(
+                matches!(receiver.body_motion,
+                    Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                    if velocity == linear_algebra::Vector2::zeros() && angular_velocity == 0.0),
+                "{state:?}"
+            );
 
             taker.world_state.now = taker.world_state.now + Duration::from_millis(150);
             let state = taker.world_state.player_states.three.as_mut().unwrap();
@@ -1046,7 +1051,9 @@ mod tests {
                 .pass = message.pass;
             let (_, trace) = tree.tick_with_trace(&mut receiver);
             assert!(succeeded(&trace, "prepare_to_receive_pass"));
-            assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
+            assert!(matches!(receiver.body_motion,
+                Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+                if velocity == linear_algebra::Vector2::zeros() && angular_velocity == 0.0));
         }
     }
 

@@ -283,7 +283,15 @@ pub fn prepare_to_receive_pass(blackboard: &mut Blackboard) -> Status {
     let ball = blackboard.ball.as_ref().map_or(sender, |ball| {
         blackboard.projected_ball_position(ball.position, ball.velocity)
     });
-    hold_and_face_ball(blackboard, ball)
+    let status = hold_and_face_ball(blackboard, ball);
+    if matches!(blackboard.body_motion, Some(BodyMotion::Stand)) {
+        // Keep an addressed receiver ready without introducing the Stand-to-Walk dwell.
+        blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
+            velocity: Vector2::zeros(),
+            angular_velocity: 0.0,
+        });
+    }
+    status
 }
 
 pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
@@ -668,6 +676,21 @@ mod tests {
                 ..Default::default()
             },
         });
+
+        let mut waiting = receiver.clone();
+        waiting.ball.as_mut().unwrap().position = point![2.8, 0.0];
+        waiting.ball.as_mut().unwrap().velocity = Vector2::zeros();
+        assert!(is_pass_receiver(&mut waiting));
+        assert_eq!(prepare_to_receive_pass(&mut waiting), Status::Success);
+        assert!(matches!(waiting.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+            if velocity == Vector2::zeros() && angular_velocity == 0.0));
+        // Clearance yielding and other ordinary holds keep their existing Stand behavior.
+        assert_eq!(
+            hold_and_face_ball(&mut waiting, point![2.8, 0.0]),
+            Status::Success
+        );
+        assert!(matches!(waiting.body_motion, Some(BodyMotion::Stand)));
 
         assert!(is_pass_receiver(&mut receiver));
         assert!(is_pass_ball_arriving(&mut receiver));
