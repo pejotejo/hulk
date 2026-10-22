@@ -340,7 +340,7 @@ mod tests {
             ..FieldDimensions::SPL_2025
         };
         let parameters = PassingParameters {
-            maximum_distance: 12.0,
+            maximum_distance: 14.0,
             minimum_distance: 4.0,
             receiver_standoff: 0.5,
             target_half_width: 0.3,
@@ -353,6 +353,7 @@ mod tests {
                 (point![0.0, side * 7.0], point![5.0, side * 4.0]),
                 (point![11.0, side * 7.0], point![7.0, side * 4.0]),
                 (point![0.0, 0.0], point![-0.3, side * 5.0]),
+                (point![-7.0, 0.0], point![6.5, side * 0.2]),
             ] {
                 let openings = pass_openings(
                     ball,

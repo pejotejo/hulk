@@ -571,10 +571,6 @@ pub fn has_ball_position(blackboard: &mut Blackboard) -> bool {
     blackboard.ball.is_some()
 }
 
-pub fn has_new_ball_position(blackboard: &mut Blackboard) -> bool {
-    blackboard.world_state.ball.is_some()
-}
-
 pub fn has_hypothetical_ball_position(blackboard: &mut Blackboard) -> bool {
     !blackboard
         .world_state
