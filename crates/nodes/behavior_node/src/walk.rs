@@ -20,10 +20,13 @@ use crate::{
     actions::stand,
     behavior_tree::Node,
     condition,
-    conditions::{hulks_is_kicking_team, opponent_near_ball},
+    conditions::opponent_near_ball,
     kick::{
         execution::execute_ball_action,
-        kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
+        kickoff::{
+            kickoff_kicker, kickoff_receiver, kickoff_receiver_position, kickoff_receiving_pose,
+            kickoff_support_position,
+        },
     },
     node::{Blackboard, ball_timeout},
     selection, sequence, subtree,
@@ -59,7 +62,7 @@ pub(crate) fn adaptive_blocking_velocity(
     let parameters = &blackboard.parameters;
     let body_half_width = parameters.walking.path_planning.robot_radius / 2.0;
     let near_front = ball.x() >= 0.0
-        && ball.coords().norm() <= 2.0 * parameters.kicking.approach_ball_standoff
+        && ball.coords().norm() <= 2.0 * parameters.kicking.kick_position_ball_distance
         && ball.y().abs() <= body_half_width + blackboard.field_dimensions.ball_radius;
     let speed = velocity.norm();
     let closing_speed = parameters.walking.speed.minimum_speed.max(0.0);
@@ -106,7 +109,7 @@ fn plan_with_ball_obstacle(
     );
     let target_in_field = ground_to_field * target_in_ground;
     let own_goal_x = -field_dimensions.length / 2.0;
-    let keeper_defending = blackboard.world_state.robot.player_number
+    let keeper_defending = blackboard.player_number
         == blackboard.parameters.goalkeeper.player_number
         && (own_goal_x..=own_goal_x + field_dimensions.goal_box_area_length)
             .contains(&target_in_field.x())
@@ -278,16 +281,20 @@ pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
     else {
         return Status::Failure;
     };
-    let standoff = blackboard.parameters.kicking.approach_ball_standoff.max(
-        blackboard.parameters.walking.path_planning.robot_radius
-            + blackboard
-                .parameters
-                .walking
-                .path_planning
-                .ball_obstacle_radius
-                .max(blackboard.field_dimensions.ball_radius)
-            + 0.05,
-    );
+    let standoff = blackboard
+        .parameters
+        .kicking
+        .kick_position_ball_distance
+        .max(
+            blackboard.parameters.walking.path_planning.robot_radius
+                + blackboard
+                    .parameters
+                    .walking
+                    .path_planning
+                    .ball_obstacle_radius
+                    .max(blackboard.field_dimensions.ball_radius)
+                + 0.05,
+        );
     let target = transform.inverse() * (ball.position + toward_goal * standoff);
     let ball = transform.inverse() * ball.position;
     let walking = blackboard.parameters.walking.walk_and_stand;
@@ -370,13 +377,33 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     }
 
-    let kickoff_pose = select_kickoff_pose(
+    let mut kickoff_pose = select_kickoff_pose(
         player_number,
         game_controller_state,
         blackboard.parameters.goalkeeper.player_number,
         &blackboard.parameters.kickoff,
         &blackboard.field_dimensions,
     );
+    if game_controller_state.kicking_team == Some(Team::Hulks)
+        && player_number != blackboard.parameters.goalkeeper.player_number
+        && Some(player_number) != kickoff_kicker(blackboard)
+    {
+        kickoff_pose = if Some(player_number) == kickoff_receiver(blackboard) {
+            kickoff_receiving_pose(blackboard).unwrap_or_else(|| {
+                let position = kickoff_receiver_position(blackboard);
+                // An open stance limits the turn needed for the receiver's next shot.
+                let orientation = Orientation2::from_vector(
+                    (-position.coords()).normalize()
+                        + (point![blackboard.field_dimensions.length / 2.0, 0.0] - position)
+                            .normalize(),
+                );
+                Pose2::from_parts(position, orientation)
+            })
+        } else {
+            let position = kickoff_support_position(blackboard, kickoff_pose.position());
+            Pose2::from_parts(position, Orientation2::from_vector(-position.coords()))
+        };
+    }
 
     let walk_and_stand_parameters = blackboard.parameters.walking.walk_and_stand;
 
@@ -443,7 +470,7 @@ pub fn walk_to_voronoi_position(blackboard: &mut Blackboard) -> Status {
         blackboard.ball.as_ref().map(|ball| ball.position),
         &blackboard.field_dimensions,
         &blackboard.parameters.voronoi,
-        close_ball_supporter(blackboard, map) == Some(blackboard.world_state.robot.player_number),
+        close_ball_supporter(blackboard, map) == Some(blackboard.player_number),
     ) {
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;
@@ -574,8 +601,7 @@ fn target_player_position(
 
     let resolution = map.resolution();
 
-    let support_distance = (field_dimensions.center_circle_diameter / 2.0)
-        .max(resolution);
+    let support_distance = (field_dimensions.center_circle_diameter / 2.0).max(resolution);
     let support_sigma =
         (parameters.relative_ball_support_sigma * field_dimensions.width).max(resolution);
     let inv_two_support_sigma_sq = 1.0 / (2.0 * support_sigma * support_sigma);
@@ -594,13 +620,8 @@ fn target_player_position(
         let ball_distance = (dx_ball * dx_ball + dy_ball * dy_ball).sqrt();
         let support_distance_error = ball_distance - support_distance;
 
-        let ball_term = if dx_ball <= 0.0 {
-            parameters.ball_weight
-                * (-(support_distance_error * support_distance_error) * inv_two_support_sigma_sq)
-                    .exp()
-        } else {
-            0.0
-        };
+        let ball_term = parameters.ball_weight
+            * (-(support_distance_error * support_distance_error) * inv_two_support_sigma_sq).exp();
 
         let dx_centroid = point.x() - centroid.x();
         let dy_centroid = point.y() - centroid.y();
@@ -637,7 +658,7 @@ mod ball_support_tests {
         };
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.parameters.walking.speed.minimum_speed = 0.2;
-        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.kicking.kick_position_ball_distance = 0.3;
         board.walking_velocity_limits.forward_velocity_limits = [-0.8, 1.8];
         board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.walking_velocity_limits.angular_velocity_limit = 2.0;
@@ -701,7 +722,7 @@ mod ball_support_tests {
                     };
                     board.world_state.robot.ground_to_field = Some(transform);
                     board.parameters.goalkeeper.player_number = PlayerNumber::One;
-                    board.world_state.robot.player_number = PlayerNumber::One;
+                    board.player_number = PlayerNumber::One;
                     board.parameters.goalkeeper.distance_to_goalpost = 0.15;
                     board
                         .parameters
@@ -758,7 +779,7 @@ mod ball_support_tests {
                         epsilon = 1e-5
                     );
 
-                    board.world_state.robot.player_number = PlayerNumber::Two;
+                    board.player_number = PlayerNumber::Two;
                     let fielder_path = plan(&mut board, target, transform);
                     assert!((fielder_path.end_point() - target).norm() > 0.15);
                     approx::assert_relative_eq!(
@@ -834,36 +855,41 @@ mod ball_support_tests {
     fn more_ball_weight_moves_support_toward_ball_ring() {
         let mut map = VoronoiGrid::new(point![-4.5, -3.0], point![4.5, 3.0], 0.2);
         map.multi_source_dijkstra(&[(Pose2::new(point![-2.0, 0.0], 0.0), PlayerNumber::Two)]);
-        let ball = point![3.8, 0.0];
-        let mut parameters = VoronoiParameters {
-            ball_weight: 1.0,
-            ball_support_distance: 1.5,
-            ball_support_sigma: 0.5,
-            centroid_anchor_weight: 0.6,
-            centroid_anchor_sigma: 1.0,
-            ..Default::default()
-        };
-        let before = target_player_position(
-            &map,
-            PlayerNumber::Two,
-            Some(ball),
-            &FieldDimensions::SPL_2025,
-            &parameters,
-            false,
-        )
-        .unwrap();
-        parameters.ball_weight = 3.0;
-        let after = target_player_position(
-            &map,
-            PlayerNumber::Two,
-            Some(ball),
-            &FieldDimensions::SPL_2025,
-            &parameters,
-            false,
-        )
-        .unwrap();
-        assert!((after - ball).norm() < (before - ball).norm());
-        assert!(((after - ball).norm() - parameters.ball_support_distance).abs() < 0.5);
+        for ball in [point![3.8, 0.0], point![-3.8, 0.0]] {
+            let mut parameters = VoronoiParameters {
+                ball_weight: 1.0,
+                relative_ball_support_sigma: 0.5 / FieldDimensions::SPL_2025.width,
+                centroid_anchor_weight: 0.6,
+                relative_centroid_anchor_sigma: 1.0 / FieldDimensions::SPL_2025.width,
+                ..Default::default()
+            };
+            let before = target_player_position(
+                &map,
+                PlayerNumber::Two,
+                Some(ball),
+                &FieldDimensions::SPL_2025,
+                &parameters,
+                false,
+            )
+            .unwrap();
+            parameters.ball_weight = 3.0;
+            let after = target_player_position(
+                &map,
+                PlayerNumber::Two,
+                Some(ball),
+                &FieldDimensions::SPL_2025,
+                &parameters,
+                false,
+            )
+            .unwrap();
+            assert!((after - ball).norm() < (before - ball).norm());
+            assert!(after.x().abs() < ball.x().abs());
+            assert!(
+                ((after - ball).norm() - FieldDimensions::SPL_2025.center_circle_diameter / 2.0)
+                    .abs()
+                    < 0.5
+            );
+        }
     }
 
     #[test]
@@ -876,7 +902,6 @@ mod ball_support_tests {
         use hsl_network_messages::SubState;
         use types::{
             field_dimensions::Side,
-            filtered_game_controller_state::FilteredGameControllerState,
             path::traits::EndPoints,
             time_wrapper::TimeWrapper,
             world_state::{BallSource, PlayerState},
@@ -892,7 +917,7 @@ mod ball_support_tests {
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board.world_state.filtered_game_controller_state =
-            Some(FilteredGameControllerState::default());
+            Some(crate::test_support::game_controller_state());
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
         board
@@ -906,10 +931,9 @@ mod ball_support_tests {
             padding: 0.5,
             forward_weight: 0.2,
             ball_weight: 2.5,
-            ball_support_distance: 1.5,
-            ball_support_sigma: 0.5,
+            relative_ball_support_sigma: 0.5 / board.field_dimensions.width,
             centroid_anchor_weight: 0.6,
-            centroid_anchor_sigma: 1.0,
+            relative_centroid_anchor_sigma: 1.0 / board.field_dimensions.width,
         };
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.parameters.walking.speed.kicking = 1.8;
@@ -946,7 +970,7 @@ mod ball_support_tests {
                 .inner
                 .pose
                 .as_transform();
-            supporter.world_state.robot.player_number = number;
+            supporter.player_number = number;
             supporter.world_state.robot.ground_to_field = Some(transform);
             assert_eq!(calculate_voronoi_grid(&mut supporter), Status::Success);
             let map = supporter.voronoi_map.as_ref().unwrap();
@@ -1012,7 +1036,7 @@ mod ball_support_tests {
                 );
             }
         }
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field = Some(
             board
                 .world_state

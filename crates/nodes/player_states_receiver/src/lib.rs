@@ -185,6 +185,8 @@ mod tests {
             inner: PlayerState {
                 pose: Pose2::default(),
                 ball_position: None,
+                pass: None,
+                replacement_goalkeeper_claim: false,
             },
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
@@ -192,6 +194,8 @@ mod tests {
             inner: PlayerState {
                 pose: Pose2::default(),
                 ball_position: None,
+                pass: None,
+                replacement_goalkeeper_claim: false,
             },
         });
 
@@ -229,6 +233,8 @@ mod tests {
             inner: PlayerState {
                 pose: Pose2::default(),
                 ball_position: None,
+                pass: None,
+                replacement_goalkeeper_claim: false,
             },
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
@@ -236,6 +242,8 @@ mod tests {
             inner: PlayerState {
                 pose: Pose2::default(),
                 ball_position: None,
+                pass: None,
+                replacement_goalkeeper_claim: false,
             },
         });
 
@@ -258,6 +266,8 @@ mod tests {
             inner: PlayerState {
                 pose: Pose2::default(),
                 ball_position: None,
+                pass: None,
+                replacement_goalkeeper_claim: false,
             },
         });
 

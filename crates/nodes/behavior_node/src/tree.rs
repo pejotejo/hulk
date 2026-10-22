@@ -13,8 +13,7 @@ use crate::{
         has_ball_position, hulks_is_kicking_team, is_ball_free, is_closest_to_ball,
         is_controller_connected, is_fallen, is_finishing_striker_kick, is_goalkeeper, is_kickoff,
         is_last_hulk_standing, is_primary_state, is_ready_for_stand_up, is_remote_control_enabled,
-        is_remote_kick_mode, is_simple, requires_damping,
-        should_yield_goalkeeper_clearance,
+        is_remote_kick_mode, is_simple, requires_damping, should_yield_goalkeeper_clearance,
     },
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
@@ -29,7 +28,7 @@ use crate::{
         reception::receive_rolling_ball,
         set_kick_target_beyond_ball,
         strategy::select_ball_action,
-        use_kick_power,
+        use_kick,
     },
     negation,
     node::Blackboard,
@@ -270,7 +269,7 @@ fn remote_kick_subtree(button: Button, kick_power: KickPower) -> Node<Blackboard
         subtree!(look_at_ball_subtree),
         action!(kick),
         action!(set_kick_target_beyond_ball),
-        action!(use_kick_power, kick_power),
+        action!(use_kick, kick_power == KickPower::Schlong),
     )
 }
 
@@ -320,7 +319,7 @@ mod clearance_tests {
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board.world_state.robot.primary_state = PrimaryState::Playing;
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-3.6, 0.0], 0.0).as_transform());
         board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
@@ -329,7 +328,7 @@ mod clearance_tests {
                 kick_off: false,
             },
             kicking_team: Some(Team::Hulks),
-            ..Default::default()
+            ..crate::test_support::game_controller_state()
         });
         board.world_state.fall_detection = Some(FallDetection {
             time: board.world_state.now,
@@ -381,11 +380,13 @@ mod clearance_tests {
             .walking
             .walk_and_stand
             .orientation_tolerance = 0.05;
-        board.parameters.kicking.target_speed = 3.4;
-        board.parameters.kicking.kick_activation_distance = 1.3;
-        board.parameters.kicking.approach_ball_standoff = 0.3;
-        board.parameters.kicking.allow_strong_kicks = true;
-        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        board.parameters.kicking.distance_for_kick = 1.3;
+        board.parameters.kicking.kick_position_ball_distance = 0.3;
+        board.parameters.kicking.allow_schlong = true;
+        board
+            .parameters
+            .kicking
+            .target_distance_kick_power_threshold = 3.0;
         board.parameters.kicking.strategy = KickStrategyParameters {
             maximum_shot_distance: 12.0,
             maximum_dribble_distance: 3.0,
@@ -412,7 +413,7 @@ mod clearance_tests {
     #[test]
     fn losing_team_packets_keeps_goalkeeper_defending_until_confirmed_alone() {
         let mut keeper = three_players();
-        keeper.world_state.robot.player_number = PlayerNumber::One;
+        keeper.player_number = PlayerNumber::One;
         keeper.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-6.7, 0.0], 0.0).as_transform());
         keeper.world_state.player_states = types::players::Players::new(None);
@@ -475,14 +476,17 @@ mod clearance_tests {
         let (_, trace) = tree.tick_with_trace(&mut board);
         assert!(succeeded(&trace, "is_active_replacement_goalkeeper"));
         assert!(!succeeded(&trace, "is_closest_to_ball"));
-        assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+        assert!(!matches!(
+            board.body_motion,
+            Some(BodyMotion::VisualKick { .. })
+        ));
         let cover_pose = board.world_state.robot.ground_to_field.unwrap().as_pose();
         board.voronoi_inputs.clear();
         calculate_voronoi_grid(&mut board);
         assert!(!board.voronoi_inputs.contains(&cover_pose));
 
         let mut passer = board.clone();
-        passer.world_state.robot.player_number = PlayerNumber::Three;
+        passer.player_number = PlayerNumber::Three;
         passer.world_state.robot.ground_to_field = Some(
             passer
                 .world_state
@@ -519,7 +523,10 @@ mod clearance_tests {
         board.body_motion = None;
         let (_, trace) = tree.tick_with_trace(&mut board);
         assert!(succeeded(&trace, "is_active_replacement_goalkeeper"));
-        assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+        assert!(!matches!(
+            board.body_motion,
+            Some(BodyMotion::VisualKick { .. })
+        ));
 
         board
             .world_state
@@ -593,10 +600,13 @@ mod clearance_tests {
         assert!(succeeded(&trace, "walk_to_voronoi_position"));
         assert!(!succeeded(&trace, "is_finishing_striker_kick"));
         assert!(!sender.last_closest_to_ball);
-        assert!(!matches!(sender.body_motion, Some(BodyMotion::Kick { .. })));
+        assert!(!matches!(
+            sender.body_motion,
+            Some(BodyMotion::VisualKick { .. })
+        ));
 
         let mut receiver = sender.clone();
-        receiver.world_state.robot.player_number = PlayerNumber::Three;
+        receiver.player_number = PlayerNumber::Three;
         receiver.world_state.robot.ground_to_field =
             Some(Pose2::new(point![3.5, 0.0], std::f32::consts::PI).as_transform());
         receiver
@@ -618,7 +628,7 @@ mod clearance_tests {
         assert!(succeeded(&trace, "receive_rolling_ball"));
         assert!(!matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
 
         let mut aligned = receiver.clone();
@@ -627,22 +637,30 @@ mod clearance_tests {
         aligned.ball.as_mut().unwrap().position = point![3.4, 0.0];
         aligned.ball.as_mut().unwrap().velocity = vector![-0.45, 0.0];
         aligned.ball_action = None;
-        tree.tick_with_trace(&mut aligned);
+        aligned.parameters.control.allow_switch.walk = Duration::from_millis(500);
+        aligned.last_motion_switch_time = aligned.world_state.now - Duration::from_millis(100);
+        assert!(!crate::switch_motion_type::is_allowed_to_switch(
+            &mut aligned
+        ));
+        let (_, trace) = tree.tick_with_trace(&mut aligned);
+        assert!(succeeded(&trace, "execute_ball_action"));
         assert!(matches!(
             aligned.ball_action,
             Some(BallAction::Shoot { .. })
         ));
         assert!(matches!(
             aligned.body_motion,
-            Some(BodyMotion::Kick { quick: true, .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
 
         // A receiver facing the sender waits for the stop and lets the normal policy align.
         receiver.ball.as_mut().unwrap().velocity = vector![0.2, 0.0];
-        tree.tick_with_trace(&mut receiver);
+        let (_, trace) = tree.tick_with_trace(&mut receiver);
+        assert!(!succeeded(&trace, "receive_rolling_ball"));
+        assert!(succeeded(&trace, "execute_ball_action"));
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick { quick: false, .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
     }
 
@@ -666,7 +684,7 @@ mod clearance_tests {
             )
             .y() < 0.0
         );
-        keeper.world_state.robot.player_number = PlayerNumber::One;
+        keeper.player_number = PlayerNumber::One;
         let keeper_transform = keeper
             .world_state
             .player_states
@@ -687,27 +705,30 @@ mod clearance_tests {
         tree.tick_with_trace(&mut keeper);
         assert!(matches!(
             keeper.body_motion,
-            Some(BodyMotion::Kick {
-                strong: true,
-                soft: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
                 ..
             })
         ));
 
         // A previous trapping kick must not keep a subsequent long clearance weak.
         let mut previous = keeper.body_motion.clone().unwrap();
-        if let BodyMotion::Kick { strong, .. } = &mut previous {
-            *strong = false;
+        if let BodyMotion::VisualKick { kick_power, .. } = &mut previous {
+            *kick_power = KickPower::Rumpelstilzchen;
         }
         keeper.last_motion_type = Some(MotionType::Kick);
-        keeper.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-            previous,
-            keeper.head_motion.unwrap(),
-        );
+        keeper.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                previous,
+                keeper.head_motion.unwrap(),
+            ));
         tree.tick_with_trace(&mut keeper);
         assert!(matches!(
             keeper.body_motion,
-            Some(BodyMotion::Kick { strong: true, .. })
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
+                ..
+            })
         ));
 
         // Prepare before launch, while the keeper winds up and support could walk into its lane.
@@ -729,7 +750,7 @@ mod clearance_tests {
                 .inner
                 .pose
                 .as_transform();
-            preparing.world_state.robot.player_number = number;
+            preparing.player_number = number;
             preparing.world_state.robot.ground_to_field = Some(transform);
             preparing.world_state.obstacles = vec![Obstacle::robot(
                 transform.inverse() * point![-2.5, 2.5],
@@ -793,14 +814,14 @@ mod clearance_tests {
         assert!(supporter.kick_target.is_none());
         assert!(!supporter.last_closest_to_ball);
 
-        // A real strong clearance slows below half its requested speed before passing support.
+        // A clearance can slow down before passing support.
         supporter.ball.as_mut().unwrap().velocity = vector![1.1, 0.0];
         let (_, trace) = tree.tick_with_trace(&mut supporter);
         assert!(succeeded(&trace, "yield_goalkeeper_clearance"));
 
         // The third robot is already clear and must not chase the projected ball.
         let mut third = three_players();
-        third.world_state.robot.player_number = PlayerNumber::Three;
+        third.player_number = PlayerNumber::Three;
         third.world_state.robot.ground_to_field = Some(
             third
                 .world_state

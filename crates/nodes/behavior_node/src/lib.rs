@@ -12,6 +12,8 @@ pub mod search;
 pub mod send_message;
 pub mod substates;
 pub mod switch_motion_type;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tree;
 pub mod voronoi;
 pub mod walk;

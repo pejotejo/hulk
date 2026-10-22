@@ -60,7 +60,6 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                         action!(kick),
                         action!(select_goalkeeper_kick_away_target),
                         subtree!(kick_strength_subtree),
-                        action!(enable_quick_clearance),
                     ),
                     subtree!(kick_alternatives_subtree),
                 )
@@ -72,7 +71,7 @@ pub fn goalkeeper_subtree() -> Node<Blackboard> {
                     sequence!(
                         action!(kick),
                         action!(intercept),
-                        action!(use_kick_power, KickPower::Rumpelstilzchen),
+                        action!(disable_strong_kick),
                     ),
                     Node::Failure,
                 )
@@ -113,7 +112,7 @@ fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
     };
     let ball = transform.inverse() * ball.position;
     if ball.coords().norm()
-        > blackboard.parameters.kicking.kick_activation_distance.max(
+        > blackboard.parameters.kicking.distance_for_kick.max(
             blackboard
                 .parameters
                 .goalkeeper
@@ -140,7 +139,7 @@ fn is_goalkeeper_kick_approach_obstructed(blackboard: &mut Blackboard) -> bool {
     }
     planner.with_goal_support_structures(transform.inverse(), dimensions);
     let direction = (transform.inverse() * point![dimensions.length / 2.0, 0.0] - ball).normalize();
-    let standoff = blackboard.parameters.kicking.approach_ball_standoff;
+    let standoff = blackboard.parameters.kicking.kick_position_ball_distance;
     let stance = ball - direction * standoff;
     planner.obstacles.iter().any(|obstacle| {
         obstacle
@@ -291,7 +290,7 @@ fn is_goalkeeper_interception_candidate(blackboard: &mut Blackboard) -> bool {
                 .ball
                 .interception
                 .maximum_ball_distance
-                .min(blackboard.parameters.kicking.kick_activation_distance)
+                .min(blackboard.parameters.kicking.distance_for_kick)
         {
             return false;
         }
@@ -619,15 +618,6 @@ fn select_goalkeeper_kick_away_target(blackboard: &mut Blackboard) -> Status {
     }
 }
 
-fn enable_quick_clearance(blackboard: &mut Blackboard) -> Status {
-    if let Some(BodyMotion::Kick { quick, .. }) = &mut blackboard.body_motion {
-        *quick = true;
-        Status::Success
-    } else {
-        Status::Failure
-    }
-}
-
 pub(crate) fn goalkeeper_clearance_target(
     ball: Point2<Field>,
     field: &FieldDimensions,
@@ -661,7 +651,7 @@ mod tests {
     use types::{
         field_dimensions::{FieldDimensions, Side},
         filtered_game_controller_state::FilteredGameControllerState,
-        motion_command::BodyMotion,
+        motion_command::{BodyMotion, KickPower},
         path::traits::EndPoints,
         world_state::BallSource,
     };
@@ -742,7 +732,7 @@ mod tests {
                     .parameters
                     .goalkeeper
                     .kick_away_ball_maximum_robot_distance = 1.5;
-                board.parameters.kicking.approach_ball_standoff = 0.3;
+                board.parameters.kicking.kick_position_ball_distance = 0.3;
                 board.parameters.walking.path_planning.robot_radius = 0.4;
                 board
                     .parameters
@@ -795,7 +785,7 @@ mod tests {
                     beside_post_transform.inverse() * ball.position;
                 goalkeeper_subtree().tick_with_trace(&mut board);
                 assert!(
-                    matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+                    matches!(board.body_motion, Some(BodyMotion::VisualKick { .. })),
                     "nearby post must not prevent a clear final approach"
                 );
 
@@ -809,7 +799,7 @@ mod tests {
                     clear_transform.inverse() * ball.position;
                 goalkeeper_subtree().tick_with_trace(&mut board);
                 assert!(
-                    matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+                    matches!(board.body_motion, Some(BodyMotion::VisualKick { .. })),
                     "clear approach should resume normal clearance"
                 );
             }
@@ -949,7 +939,7 @@ mod tests {
                     Some(FilteredGameControllerState {
                         sub_state,
                         kicking_team: Some(kicking_team),
-                        ..Default::default()
+                        ..crate::test_support::game_controller_state()
                     });
                 board.ball = Some(LastBall {
                     position,
@@ -1156,8 +1146,8 @@ mod tests {
         board.parameters.walking.speed.blocking = 0.8;
         board.parameters.walking.speed.minimum_speed = 0.2;
         board.parameters.walking.speed.velocity_fade_distance = 3.0;
-        board.parameters.kicking.kick_activation_distance = 1.3;
-        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
+        board.parameters.kicking.kick_position_ball_distance = 0.3;
         board.walking_velocity_limits.forward_velocity_limits = [-0.5, 1.0];
         board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.walking_velocity_limits.angular_velocity_limit = 2.0;
@@ -1257,8 +1247,11 @@ mod tests {
             .parameters
             .goalkeeper
             .kick_away_ball_maximum_robot_distance = 1.5;
-        board.parameters.kicking.allow_strong_kicks = true;
-        board.parameters.kicking.strong_kick_min_target_distance = 1.0;
+        board.parameters.kicking.allow_schlong = true;
+        board
+            .parameters
+            .kicking
+            .target_distance_kick_power_threshold = 1.0;
         board.walking_velocity_limits.lateral_velocity_limit = 1.0;
         board.ball.as_mut().unwrap().position = point![-6.0, 0.2571429];
         board.last_ball = board.ball.clone();
@@ -1273,18 +1266,17 @@ mod tests {
         board.last_ball = board.ball.clone();
         board.parameters.control.allow_switch.walk = Duration::from_millis(500);
         board.last_motion_switch_time = board.world_state.now - Duration::from_millis(100);
+        assert!(!crate::switch_motion_type::is_allowed_to_switch(&mut board));
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
             matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: true,
-                    quick: true,
-                    soft: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Schlong,
                     ..
                 })
             ),
-            "settled ball under pressure should clear quickly without waiting for walking dwell"
+            "settled ball under pressure should enter the kick policy before walking dwell expires"
         );
 
         board.world_state.obstacles.clear();
@@ -1294,16 +1286,15 @@ mod tests {
         assert!(
             matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: true,
-                    quick: true,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Schlong,
                     ..
                 })
             ),
             "unpressured goal-mouth ball should clear without waiting for a striker election"
         );
 
-        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
         board.parameters.walking.path_planning.robot_radius = 0.4;
         board.ball.as_mut().unwrap().position = point![-6.2, 0.05];
         board.ball.as_mut().unwrap().velocity = vector![-3.0, 0.0];
@@ -1319,7 +1310,7 @@ mod tests {
         board.last_ball = board.ball.clone();
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
-            matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+            matches!(board.body_motion, Some(BodyMotion::VisualKick { .. })),
             "close interceptable balls should still use the kick policy"
         );
 
@@ -1327,7 +1318,7 @@ mod tests {
         board.last_motion_switch_time = board.world_state.now - Duration::from_millis(100);
         goalkeeper_subtree().tick_with_trace(&mut board);
         assert!(
-            matches!(board.body_motion, Some(BodyMotion::Kick { .. })),
+            matches!(board.body_motion, Some(BodyMotion::VisualKick { .. })),
             "a close interception must not wait for the walking dwell"
         );
     }

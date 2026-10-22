@@ -35,6 +35,13 @@ pub struct WorldState {
     pub suggested_search_position: Option<Point2<Field>>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, ros_z::Message)]
+pub enum BallSource {
+    #[default]
+    Own,
+    Team,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, ros_z::Message)]
 pub struct BallState {
     pub ball_in_ground: Point2<Ground>,
@@ -42,12 +49,27 @@ pub struct BallState {
     pub ball_in_ground_velocity: Vector2<Ground>,
     pub last_seen_ball: SystemTime,
     pub field_side: Side,
+    #[serde(default)]
+    pub source: BallSource,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, ros_z::Message)]
 pub struct LastBallState {
     pub time: SystemTime,
     pub ball: BallState,
+}
+
+impl Default for BallState {
+    fn default() -> Self {
+        Self {
+            ball_in_ground: Point2::origin(),
+            ball_in_field: Point2::origin(),
+            ball_in_ground_velocity: Vector2::zeros(),
+            last_seen_ball: UNIX_EPOCH,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        }
+    }
 }
 
 impl BallState {
@@ -58,6 +80,7 @@ impl BallState {
             ball_in_ground_velocity: Vector2::zeros(),
             last_seen_ball: UNIX_EPOCH,
             field_side: Side::Left,
+            source: BallSource::Own,
         }
     }
 }
@@ -77,7 +100,7 @@ impl Default for RobotState {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Message)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, Message)]
 pub struct PlayerState {
     pub pose: Pose2<Field>,
     pub ball_position: Option<BallPosition<Field>>,

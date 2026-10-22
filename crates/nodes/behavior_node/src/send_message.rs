@@ -108,8 +108,8 @@ impl Blackboard {
                     .zip(self.world_state.robot.ground_to_field)
                     .is_some_and(|(ball, transform)| {
                         (ball.position - transform.as_pose().position()).norm()
-                            <= self.parameters.kicking.kick_activation_distance
-                                + self.parameters.kicking.kick_activation_hysteresis
+                            <= self.parameters.kicking.distance_for_kick
+                                + self.parameters.kicking.distance_for_kick_hysteresis
                     }));
         let outgoing_pass = crate::kick::passing::outgoing_pass_in_flight(self);
         let cancelling_pass =
@@ -294,7 +294,7 @@ mod tests {
             remaining_number_of_messages: 100,
             kicking_team: Some(Team::Hulks),
             sub_state: Some(SubState::CornerKick),
-            ..Default::default()
+            ..crate::test_support::game_controller_state()
         });
         assert!(
             state_message_send_interval(

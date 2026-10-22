@@ -8,8 +8,8 @@ receiver prediction remains deferred.
 Experimental ball pursuit uses `position + velocity * ball.pursuit_lookahead`,
 clipped inside the field. The base lookahead is 0.5 s; zero restores observed-position
 pursuit. Approach walking, closest-player selection, and receiver preparation/handoff
-use this projection. Kick geometry and the motion policy retain measured ball position
-and velocity. Inside 0.75 m of the robot, pursuit and handoff use measured position too.
+use this projection. Kick geometry retains measured ball position and velocity; the SDK
+motion command carries the ball position. Inside 0.75 m of the robot, pursuit and handoff use measured position too.
 Constant velocity ignores deceleration and still needs simulator trials.
 
 Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
@@ -22,8 +22,13 @@ The walk-to-kick handoff uses that selected ball too. Strategy parameters must b
 finite and nonnegative; parameter updates reject invalid values, and invalid
 snapshots produce no plan. Clear openings are clipped to forward progress before
 choosing their angular midpoint.
-Dribbling uses the soft-kick policy, then follows the ball for the next kick.
-Execution uses the native `BodyMotion::Kick` API and the configured target speed.
+Dribbling uses the regular SDK kick, then follows the ball for the next kick.
+Execution uses main's `BodyMotion::VisualKick` API. Shots, clearances, and own-kickoff
+passes use `Schlong` when `allow_schlong` permits it; other passes and dribbles use
+`Rumpelstilzchen`. The SDK target retains `kick_target_offset_angle` calibration.
+The SDK has no independent quick mode, outgoing-speed setting, or ball-velocity
+input. Reception positioning and early handoff remain, but the source motion
+policy's quick kicks and controlled dribble speed require robot validation.
 The existing motion-switch timing and strong-kick settings are reused. An unusable
 corridor selects the explicit `ShootAtGoalCenter` fallback. This fallback bypasses
 corridor and range checks, so it can kick into an obstacle. Missing ball/localization,
@@ -32,9 +37,8 @@ ordinary striker play clears the intent. Remote control, set
 plays, penalties, goalkeeper clearance, and interception retain their own paths.
 
 Dribble execution checks corridors covering `kicking.strategy.maximum_dribble_distance`
-(provisionally 3 m, including travel uncertainty). The bound must cover the soft
-kick at the configured target speed; recalibrate after speed, policy, or surface
-changes. Zero or invalid values disable dribbling. Candidate corridors use a
+(provisionally 3 m, including travel uncertainty). The bound must cover the regular
+SDK kick; recalibrate after kick-power or surface changes. Zero or invalid values disable dribbling. Candidate corridors use a
 square around the ball, so checks can extend up to sqrt(2) times the bound.
 Field boundaries remove corridors instead of shortening them. Execution chooses
 the safe direction closest to the goal, including sideways/backward recovery.

@@ -23,37 +23,52 @@ use crate::{
 
 use super::{execution::execute_ball_action, strategy::BallAction};
 
-pub(crate) fn kickoff_kicker(blackboard: &Blackboard) -> PlayerNumber {
-    if blackboard.parameters.kickoff.pass_to_left {
-        PlayerNumber::Three
-    } else {
-        PlayerNumber::Two
-    }
+pub(crate) fn kickoff_kicker(blackboard: &Blackboard) -> Option<PlayerNumber> {
+    blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()?
+        .penalties
+        .iter()
+        .rev()
+        .find(|(player, penalty)| {
+            *player != blackboard.parameters.goalkeeper.player_number && penalty.is_none()
+        })
+        .map(|(player, _)| player)
 }
 
 pub fn kickoff_receiver(blackboard: &Blackboard) -> Option<PlayerNumber> {
-    let candidates = if blackboard.parameters.kickoff.pass_to_left {
-        [PlayerNumber::Four, PlayerNumber::Two, PlayerNumber::Five]
-    } else {
-        [PlayerNumber::Five, PlayerNumber::Three, PlayerNumber::Four]
-    };
-    candidates.into_iter().find(|&player| {
-        player != blackboard.parameters.goalkeeper.player_number
-            && player_pose(blackboard, player, Duration::from_secs(2)).is_some()
-    })
+    let kicker = kickoff_kicker(blackboard)?;
+    blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()?
+        .penalties
+        .iter()
+        .rev()
+        .find(|(player, _)| {
+            *player != kicker
+                && *player != blackboard.parameters.goalkeeper.player_number
+                && player_pose(blackboard, *player, Duration::from_secs(2)).is_some()
+        })
+        .map(|(player, _)| player)
 }
 
 pub fn kickoff_receiver_position(blackboard: &Blackboard) -> Point2<Field> {
     let side = if blackboard.parameters.kickoff.pass_to_left {
-        PlayerNumber::Five
+        1.0
     } else {
-        PlayerNumber::Four
+        -1.0
     };
     let radius = blackboard.parameters.walking.path_planning.robot_radius;
-    let y = blackboard.parameters.kickoff.standard_positions[side]
-        .position
-        .y()
-        .abs()
+    let relative_y = blackboard
+        .parameters
+        .kickoff
+        .relative_aggressive_positions
+        .iter()
+        .map(|position| side * position.y())
+        .fold(0.0, f32::max);
+    let y = (relative_y * blackboard.field_dimensions.width / 2.0)
         .max(blackboard.field_dimensions.center_circle_diameter / 2.0 + radius + 0.05)
         + radius
         + blackboard
@@ -62,17 +77,7 @@ pub fn kickoff_receiver_position(blackboard: &Blackboard) -> Point2<Field> {
             .strategy
             .passing
             .receiver_standoff;
-    kickoff_support_position(
-        blackboard,
-        point![
-            -0.3,
-            if blackboard.parameters.kickoff.pass_to_left {
-                y
-            } else {
-                -y
-            }
-        ],
-    )
+    kickoff_support_position(blackboard, point![-0.3, side * y])
 }
 
 fn kickoff_pass_position(blackboard: &Blackboard) -> Option<Point2<Field>> {
@@ -131,8 +136,9 @@ pub(crate) fn kickoff_support_position(
 }
 
 fn is_own_kickoff(blackboard: &mut Blackboard) -> bool {
+    let kicker = kickoff_kicker(blackboard);
     let receiver = kickoff_receiver(blackboard);
-    let receiving_ball = Some(blackboard.world_state.robot.player_number) == receiver
+    let receiving_ball = Some(blackboard.player_number) == receiver
         && blackboard.ball.as_ref().is_some_and(|ball| {
             let now = blackboard.world_state.now;
             let speed = ball.velocity.norm();
@@ -150,20 +156,15 @@ fn is_own_kickoff(blackboard: &mut Blackboard) -> bool {
     let active = own_kickoff(blackboard)
         && !receiving_ball
         && blackboard.has_team_message_budget()
-        && blackboard.world_state.robot.player_number
-            != blackboard.parameters.goalkeeper.player_number
-        && blackboard.parameters.goalkeeper.player_number != kickoff_kicker(blackboard)
-        && player_pose(
-            blackboard,
-            kickoff_kicker(blackboard),
-            Duration::from_secs(2),
-        )
-        .is_some();
+        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number
+        && kicker.is_some_and(|player| {
+            player_pose(blackboard, player, Duration::from_secs(2)).is_some()
+        });
     if !active || receiver.is_some() {
         blackboard.kickoff_receiver_wait_started = None;
         return active;
     }
-    if blackboard.world_state.robot.player_number != kickoff_kicker(blackboard) {
+    if Some(blackboard.player_number) != kicker {
         return false;
     }
     let now = blackboard.world_state.now;
@@ -172,7 +173,7 @@ fn is_own_kickoff(blackboard: &mut Blackboard) -> bool {
 }
 
 pub(crate) fn needs_kickoff_updates(blackboard: &Blackboard) -> bool {
-    blackboard.world_state.robot.player_number != blackboard.parameters.goalkeeper.player_number
+    blackboard.player_number != blackboard.parameters.goalkeeper.player_number
         && blackboard
             .world_state
             .filtered_game_controller_state
@@ -233,7 +234,7 @@ fn player_pose(
     if game.penalties[player].is_some() {
         return None;
     }
-    if player == world.robot.player_number {
+    if player == blackboard.player_number {
         return world
             .robot
             .ground_to_field
@@ -312,21 +313,20 @@ pub(super) fn kickoff_pass_target(
 }
 
 fn is_striker_with_receiver(blackboard: &mut Blackboard) -> bool {
-    blackboard.world_state.robot.player_number == kickoff_kicker(blackboard)
+    Some(blackboard.player_number) == kickoff_kicker(blackboard)
         && blackboard.has_team_message_budget()
 }
 
 fn is_other_field_player(blackboard: &mut Blackboard) -> bool {
-    let player = blackboard.world_state.robot.player_number;
-    player != kickoff_kicker(blackboard)
+    let player = blackboard.player_number;
+    Some(player) != kickoff_kicker(blackboard)
         && player != blackboard.parameters.goalkeeper.player_number
         && Some(player) != kickoff_receiver(blackboard)
 }
 
 fn is_kickoff_receiver(blackboard: &mut Blackboard) -> bool {
-    Some(blackboard.world_state.robot.player_number) == kickoff_receiver(blackboard)
-        && blackboard.world_state.robot.player_number
-            != blackboard.parameters.goalkeeper.player_number
+    Some(blackboard.player_number) == kickoff_receiver(blackboard)
+        && blackboard.player_number != blackboard.parameters.goalkeeper.player_number
 }
 
 fn select_kickoff_pass(blackboard: &mut Blackboard) -> Status {
@@ -380,7 +380,7 @@ mod tests {
         field_dimensions::{FieldDimensions, Side},
         filtered_game_controller_state::FilteredGameControllerState,
         messages::OutgoingMessage,
-        motion_command::{BodyMotion, HeadMotion, MotionCommand},
+        motion_command::{BodyMotion, HeadMotion, KickPower, MotionCommand},
         obstacles::Obstacle,
         path::PathSegment,
         primary_state::PrimaryState,
@@ -405,8 +405,8 @@ mod tests {
             ..Default::default()
         };
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
-        board.parameters.kicking.allow_strong_kicks = true;
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.parameters.kicking.allow_schlong = true;
+        board.player_number = PlayerNumber::Five;
         board.world_state.robot.ground_to_field = Some(Default::default());
         board.world_state.fall_detection = Some(FallDetection {
             time: board.world_state.now,
@@ -421,10 +421,18 @@ mod tests {
             kicking_team: Some(Team::Hulks),
             remaining_number_of_messages: 100,
             remaining_time_in_half: Duration::from_secs(1200),
-            ..Default::default()
+            ..crate::test_support::game_controller_state()
         });
-        board.parameters.kickoff.standard_positions.four.position = point![-2.5, -1.5];
-        board.parameters.kickoff.standard_positions.five.position = point![-2.5, 1.5];
+        board.parameters.kickoff.relative_goalkeeper_position = point![-1.0, 0.0];
+        board.parameters.kickoff.relative_striker_position = point![-0.05, 0.0];
+        board.parameters.kickoff.relative_aggressive_positions =
+            [point![-0.3, 0.5], point![-0.3, -0.5], point![-0.6, 0.0]];
+        board.parameters.kickoff.relative_defensive_positions = [
+            point![-0.4, 0.0],
+            point![-0.45, 0.5],
+            point![-0.45, -0.5],
+            point![-0.6, 0.0],
+        ];
         board
             .parameters
             .walking
@@ -451,9 +459,8 @@ mod tests {
                 maximum_receiver_age: Duration::from_millis(500),
             },
         };
-        for receiver in [PlayerNumber::Five, PlayerNumber::Four] {
-            board.parameters.kickoff.pass_to_left = receiver == PlayerNumber::Four;
-            let pose = kickoff_receiving_pose(&board).unwrap();
+        let pose = kickoff_receiving_pose(&board).unwrap();
+        for receiver in [PlayerNumber::Four, PlayerNumber::Three] {
             board.world_state.player_states[receiver] = Some(TimeWrapper {
                 time: board.world_state.now,
                 inner: PlayerState {
@@ -462,16 +469,15 @@ mod tests {
                 },
             });
         }
-        board.parameters.kickoff.pass_to_left = false;
         board
     }
 
     #[test]
     fn kickoff_waits_for_fresh_receiver_and_announces_before_adaptive_cooldown() {
         let mut board = blackboard();
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Five;
         board.world_state.robot.primary_state = types::primary_state::PrimaryState::Playing;
-        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
         board
             .world_state
             .filtered_game_controller_state
@@ -491,16 +497,15 @@ mod tests {
         assert_eq!(execute_ball_action(&mut board), Status::Success);
         assert!(matches!(
             board.body_motion,
-            Some(types::motion_command::BodyMotion::Kick {
-                soft: false,
-                strong: true,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
                 ..
             })
         ));
 
         // A missing update delays the side pass rather than starting an ordinary shot.
-        board.world_state.player_states.five = None;
         board.world_state.player_states.four = None;
+        board.world_state.player_states.three = None;
         let (status, _) = kickoff_subtree().tick_with_trace(&mut board);
         assert_eq!(status, Status::Success);
         assert_eq!(
@@ -511,7 +516,7 @@ mod tests {
         board.world_state.now = board.world_state.now + Duration::from_secs(2);
         let (status, _) = kickoff_subtree().tick_with_trace(&mut board);
         assert_eq!(status, Status::Failure);
-        board.world_state.robot.player_number = PlayerNumber::Five;
+        board.player_number = PlayerNumber::Four;
         assert!(!is_own_kickoff(&mut board));
         board
             .world_state
@@ -529,6 +534,7 @@ mod tests {
         board.field_dimensions.width = 9.0;
         board.field_dimensions.center_circle_diameter = 3.0;
         board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.kicking.strategy.passing.maximum_distance = 8.0;
         let right_position = kickoff_receiver_position(&board);
         let minimum_y = board.field_dimensions.center_circle_diameter / 2.0
             + 2.0 * board.parameters.walking.path_planning.robot_radius
@@ -539,13 +545,13 @@ mod tests {
         board
             .world_state
             .player_states
-            .five
+            .four
             .as_mut()
             .unwrap()
             .inner
             .pose = right_stance;
-        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Five));
-        let right = kickoff_pass_target(&board, PlayerNumber::Five).unwrap();
+        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Four));
+        let right = kickoff_pass_target(&board, PlayerNumber::Four).unwrap();
         assert!(right.x() < 0.0 && right.y() < 0.0);
         assert!((right - right_position).norm() <= 0.9);
         let incoming = (right - Point2::origin()).normalize();
@@ -572,9 +578,9 @@ mod tests {
         let left = kickoff_pass_target(&board, PlayerNumber::Four).unwrap();
         assert_eq!(left.x(), right.x());
         assert_eq!(left.y(), -right.y());
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Three).is_none());
 
-        board.parameters.kickoff.standard_positions.five.position = point![-2.5, 10.0];
+        board.parameters.kickoff.relative_aggressive_positions[0] = point![-0.3, 10.0];
         let bounded = kickoff_receiver_position(&board);
         let radius = board.parameters.walking.path_planning.robot_radius;
         assert!(bounded.x() + radius < 0.0);
@@ -587,11 +593,11 @@ mod tests {
     #[test]
     fn receiver_releases_kickoff_after_fresh_ball_motion_before_striker_does() {
         let mut board = blackboard();
-        board.world_state.player_states.two = Some(TimeWrapper {
+        board.world_state.player_states.five = Some(TimeWrapper {
             time: board.world_state.now,
             inner: PlayerState::default(),
         });
-        board.world_state.robot.player_number = PlayerNumber::Five;
+        board.player_number = PlayerNumber::Four;
         board.parameters.ball.last_ball_timeout = Duration::from_millis(500);
         board.parameters.ball.interception.minimum_ball_velocity = 0.3;
         let now = board.world_state.now;
@@ -604,9 +610,9 @@ mod tests {
         board.ball.as_mut().unwrap().position = point![0.0, -0.1];
         assert!(own_kickoff(&board));
         assert!(!is_own_kickoff(&mut board));
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Five;
         assert!(is_own_kickoff(&mut board));
-        board.world_state.robot.player_number = PlayerNumber::Five;
+        board.player_number = PlayerNumber::Four;
         board.ball.as_mut().unwrap().velocity = linear_algebra::vector![f32::INFINITY, 0.0];
         assert!(is_own_kickoff(&mut board));
         board.ball.as_mut().unwrap().velocity = linear_algebra::vector![0.0, -2.4];
@@ -627,7 +633,7 @@ mod tests {
         striker.parameters.walking.path_planning.robot_radius = 0.4;
         striker.parameters.walking.walk_and_stand.hysteresis = nalgebra::vector![0.3, 0.3];
         striker.parameters.kicking.strategy.passing.maximum_distance = 8.0;
-        striker.world_state.robot.player_number = PlayerNumber::Two;
+        striker.player_number = PlayerNumber::Five;
         striker.world_state.robot.primary_state = PrimaryState::Ready;
         striker
             .world_state
@@ -635,9 +641,9 @@ mod tests {
             .as_mut()
             .unwrap()
             .game_state = FilteredGameState::Ready;
-        striker.world_state.player_states.five = None;
         striker.world_state.player_states.four = None;
-        striker.world_state.player_states.three = Some(TimeWrapper {
+        striker.world_state.player_states.three = None;
+        striker.world_state.player_states.two = Some(TimeWrapper {
             time: striker.world_state.now,
             inner: PlayerState {
                 pose: Pose2::new(point![-3.0, -0.5], 0.0),
@@ -646,16 +652,16 @@ mod tests {
         });
         striker.update_kickoff();
         let mut receiver = striker.clone();
-        receiver.world_state.robot.player_number = PlayerNumber::Three;
+        receiver.player_number = PlayerNumber::Two;
         receiver.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-3.0, -0.5], 0.0).as_transform());
-        receiver.world_state.player_states.two = Some(TimeWrapper {
+        receiver.world_state.player_states.five = Some(TimeWrapper {
             time: receiver.world_state.now,
             inner: PlayerState::default(),
         });
         receiver.ball = None;
-        assert_eq!(kickoff_receiver(&striker), Some(PlayerNumber::Three));
-        assert_eq!(kickoff_receiver(&receiver), Some(PlayerNumber::Three));
+        assert_eq!(kickoff_receiver(&striker), Some(PlayerNumber::Two));
+        assert_eq!(kickoff_receiver(&receiver), Some(PlayerNumber::Two));
 
         let tree = crate::tree::create_tree();
         receiver.update_kickoff();
@@ -672,11 +678,11 @@ mod tests {
         assert!(target.x() + 0.4 < 0.0);
         let actual = receiver.world_state.robot.ground_to_field.unwrap() * segment.1;
         assert!((actual - target).norm() < 0.001);
-        assert!(kickoff_pass_target(&striker, PlayerNumber::Three).is_none());
+        assert!(kickoff_pass_target(&striker, PlayerNumber::Two).is_none());
 
         // Ready discovers available teammates without publishing an old pass intent.
         receiver.ball_action = Some(BallAction::Pass {
-            receiver: PlayerNumber::Five,
+            receiver: PlayerNumber::Four,
         });
         receiver.kick_target = Some(point![1.0, 1.0]);
         let Some(OutgoingMessage::Hsl(HulkMessage::State(message))) =
@@ -745,15 +751,17 @@ mod tests {
             ball_is_free: true,
             kick_off: false,
         };
-        striker.world_state.ball = Some(BallState::default());
-        striker.world_state.player_states.three = Some(TimeWrapper {
+        striker.world_state.ball = Some(BallState::new_at_center(
+            striker.world_state.robot.ground_to_field.unwrap(),
+        ));
+        striker.world_state.player_states.two = Some(TimeWrapper {
             time: striker.world_state.now,
             inner: PlayerState {
                 pose,
                 ..Default::default()
             },
         });
-        striker.parameters.kicking.kick_activation_distance = 1.3;
+        striker.parameters.kicking.distance_for_kick = 1.3;
         striker.update_kickoff();
         assert_eq!(tree.tick_with_trace(&mut striker).0, Status::Success);
         assert_eq!(striker.ball_action, None);
@@ -767,20 +775,20 @@ mod tests {
             receiving_pose.orientation().angle() - 0.16,
         );
         receiver.world_state.robot.ground_to_field = Some(settled_pose.as_transform());
-        receiver.last_motion_command = MotionCommand::Stand {
+        receiver.last_motion_command = Some(MotionCommand::Stand {
             head: HeadMotion::LookAround,
-        };
+        });
         assert_eq!(tree.tick_with_trace(&mut receiver).0, Status::Success);
         assert_eq!(receiver.body_motion, Some(BodyMotion::Stand));
         striker
             .world_state
             .player_states
-            .three
+            .two
             .as_mut()
             .unwrap()
             .inner
             .pose = settled_pose;
-        let pass_target = kickoff_pass_target(&striker, PlayerNumber::Three).unwrap();
+        let pass_target = kickoff_pass_target(&striker, PlayerNumber::Two).unwrap();
         assert!(pass_target.x() < 0.0);
         let passing = &striker.parameters.kicking.strategy.passing;
         assert!(
@@ -791,7 +799,7 @@ mod tests {
         assert_eq!(
             striker.ball_action,
             Some(BallAction::Pass {
-                receiver: PlayerNumber::Three
+                receiver: PlayerNumber::Two
             })
         );
         assert_eq!(striker.body_motion, Some(BodyMotion::Stand));
@@ -801,27 +809,32 @@ mod tests {
         assert_eq!(tree.tick_with_trace(&mut striker).0, Status::Success);
         assert!(matches!(
             striker.body_motion,
-            Some(BodyMotion::Kick {
-                soft: false,
-                strong: true,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
                 ..
             })
         ));
     }
 
     #[test]
-    fn middle_field_staging_keeps_every_non_kicker_outside_center_circle() {
-        let tree = crate::tree::create_tree();
+    fn kickoff_staging_projects_own_support_and_preserves_opponent_and_goalkeeper_positions() {
         for team in [Team::Hulks, Team::Opponent] {
-            for player in [PlayerNumber::Three, PlayerNumber::Two, PlayerNumber::Four] {
+            for player in [
+                PlayerNumber::One,
+                PlayerNumber::Two,
+                PlayerNumber::Three,
+                PlayerNumber::Four,
+                PlayerNumber::Five,
+            ] {
                 let mut board = blackboard();
                 board.field_dimensions.length = 14.0;
                 board.field_dimensions.width = 9.0;
                 board.field_dimensions.center_circle_diameter = 3.0;
                 board.parameters.walking.path_planning.robot_radius = 0.4;
-                board.parameters.kickoff.standard_positions[player].position = point![-0.3, 0.2];
-                board.parameters.kickoff.striker_position = point![-1.0, 0.0];
-                board.world_state.robot.player_number = player;
+                board.parameters.kickoff.relative_aggressive_positions =
+                    [point![-0.3 / 7.0, 0.2 / 4.5]; 3];
+                board.parameters.kickoff.relative_striker_position = point![-1.0 / 7.0, 0.0];
+                board.player_number = player;
                 board.world_state.robot.primary_state = PrimaryState::Ready;
                 let game = board
                     .world_state
@@ -830,38 +843,55 @@ mod tests {
                     .unwrap();
                 game.game_state = FilteredGameState::Ready;
                 game.kicking_team = Some(team);
-                assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+                assert_eq!(walk_to_kickoff_pose(&mut board), Status::Success);
                 let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
                     panic!("player should walk to kickoff staging");
                 };
                 let PathSegment::LineSegment(segment) = path.last_segment() else {
                     panic!("expected straight final approach");
                 };
-                let target = segment.1;
-                if team == Team::Hulks && player == PlayerNumber::Two {
-                    assert_eq!(target, point![-1.0, 0.0]);
+                let target = board.world_state.robot.ground_to_field.unwrap() * segment.1;
+                if player == PlayerNumber::One {
+                    assert_eq!(target, point![-7.0, 0.0]);
+                } else if team == Team::Hulks && player == PlayerNumber::Five {
+                    approx::assert_relative_eq!(target, point![-1.0, 0.0]);
                 } else {
                     assert!(target.coords().norm() - 0.4 > 1.5);
                     assert!(target.x() + 0.4 < 0.0);
                     assert!(target.x().abs() + 0.4 < 7.0);
                     assert!(target.y().abs() + 0.4 < 4.5);
+                    if team == Team::Opponent {
+                        let rank = match player {
+                            PlayerNumber::Five => 0,
+                            PlayerNumber::Four => 1,
+                            PlayerNumber::Three => 2,
+                            PlayerNumber::Two => 3,
+                            PlayerNumber::One => unreachable!(),
+                        };
+                        let relative = board.parameters.kickoff.relative_defensive_positions[rank];
+                        approx::assert_relative_eq!(
+                            target,
+                            point![relative.x() * 7.0, relative.y() * 4.5]
+                        );
+                    }
                 }
             }
         }
-        let mut board = blackboard();
-        board.field_dimensions.center_circle_diameter = 3.0;
-        board.parameters.walking.path_planning.robot_radius = 0.4;
-        let right = kickoff_receiver_position(&board);
-        board.parameters.kickoff.pass_to_left = true;
-        let left = kickoff_receiver_position(&board);
-        assert_eq!(left.x(), right.x());
-        assert_eq!(left.y(), -right.y());
     }
 
     #[test]
-    fn own_kickoff_swaps_entry_roles_without_waypoints_or_crossing() {
-        let tree = crate::tree::create_tree();
-        for count in [3, 5] {
+    fn own_kickoff_uses_active_ranking_for_both_sides() {
+        for active in [
+            vec![
+                PlayerNumber::Five,
+                PlayerNumber::Four,
+                PlayerNumber::Three,
+                PlayerNumber::Two,
+            ],
+            vec![PlayerNumber::Five, PlayerNumber::Two],
+            vec![PlayerNumber::Four, PlayerNumber::Three, PlayerNumber::Two],
+            vec![PlayerNumber::Two],
+        ] {
             for pass_to_left in [false, true] {
                 let mut board = blackboard();
                 board.field_dimensions.length = 14.0;
@@ -869,92 +899,74 @@ mod tests {
                 board.field_dimensions.center_circle_diameter = 3.0;
                 board.parameters.walking.path_planning.robot_radius = 0.4;
                 board.parameters.kickoff.pass_to_left = pass_to_left;
-                board.parameters.kickoff.striker_position = point![-1.5, 0.0];
-                board.parameters.kickoff.standard_positions.one.position = point![-4.2, 0.0];
-                board.parameters.kickoff.standard_positions.two.position = point![-3.0, -0.5];
-                board.parameters.kickoff.standard_positions.three.position = point![-2.0, 0.0];
+                board.parameters.kickoff.relative_striker_position = point![-1.5 / 7.0, 0.0];
                 board.world_state.robot.primary_state = PrimaryState::Ready;
-                board
+                let game = board
                     .world_state
                     .filtered_game_controller_state
                     .as_mut()
-                    .unwrap()
-                    .game_state = FilteredGameState::Ready;
-                board.world_state.player_states = Default::default();
-                let starts = [
-                    (PlayerNumber::One, point![-6.5, -4.5]),
-                    (PlayerNumber::Two, point![-6.5, 4.5]),
-                    (PlayerNumber::Three, point![-5.6, -4.5]),
-                    (PlayerNumber::Four, point![-5.6, 4.5]),
-                    (PlayerNumber::Five, point![-4.7, -4.5]),
-                ];
-                for &(player, position) in &starts[..count] {
+                    .unwrap();
+                game.game_state = FilteredGameState::Ready;
+                for number in [
+                    PlayerNumber::Two,
+                    PlayerNumber::Three,
+                    PlayerNumber::Four,
+                    PlayerNumber::Five,
+                ] {
+                    game.penalties[number] =
+                        (!active.contains(&number)).then_some(Penalty::default());
+                }
+                for &player in &active {
                     board.world_state.player_states[player] = Some(TimeWrapper {
                         time: board.world_state.now,
-                        inner: PlayerState {
-                            pose: Pose2::new(position, 0.0),
-                            ..Default::default()
-                        },
+                        inner: PlayerState::default(),
                     });
                 }
-                let expected_receiver = match (count, pass_to_left) {
-                    (3, false) => PlayerNumber::Three,
-                    (3, true) => PlayerNumber::Two,
-                    (_, false) => PlayerNumber::Five,
-                    (_, true) => PlayerNumber::Four,
-                };
-                assert_eq!(kickoff_receiver(&board), Some(expected_receiver));
-                assert_eq!(
-                    kickoff_kicker(&board),
-                    if pass_to_left {
-                        PlayerNumber::Three
-                    } else {
-                        PlayerNumber::Two
-                    }
-                );
-                let mut destinations = Vec::new();
-                for &(player, position) in &starts[..count] {
-                    board.world_state.robot.player_number = player;
-                    board.world_state.robot.ground_to_field =
-                        Some(Pose2::new(position, 0.0).as_transform());
-                    assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
-                    let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
-                        panic!("player must walk directly to its Ready pose");
+                for (rank, &player) in active.iter().enumerate() {
+                    board.player_number = player;
+                    assert_eq!(kickoff_kicker(&board), active.first().copied());
+                    assert_eq!(kickoff_receiver(&board), active.get(1).copied());
+                    assert_eq!(walk_to_kickoff_pose(&mut board), Status::Success);
+                    let Some(BodyMotion::Walk {
+                        ref path,
+                        target_orientation,
+                        ..
+                    }) = board.body_motion
+                    else {
+                        panic!("player must walk to its ranked Ready pose");
                     };
-                    assert_eq!(path.segments.len(), 1);
                     let PathSegment::LineSegment(segment) = path.last_segment() else {
                         panic!("expected direct Ready route");
                     };
-                    let target = board.world_state.robot.ground_to_field.unwrap() * segment.1;
-                    if player == kickoff_kicker(&board) {
-                        assert!(
-                            (target - board.parameters.kickoff.striker_position).norm() < 0.001
+                    let target_pose = board.world_state.robot.ground_to_field.unwrap()
+                        * Pose2::from_parts(segment.1, target_orientation);
+                    let target = target_pose.position();
+                    if rank == 0 {
+                        approx::assert_relative_eq!(target, point![-1.5, 0.0]);
+                    } else if rank == 1 {
+                        approx::assert_relative_eq!(target, kickoff_receiver_position(&board));
+                        assert_eq!(target.y().is_sign_positive(), pass_to_left);
+                        let open_stance = Orientation2::from_vector(
+                            (-target.coords()).normalize()
+                                + (point![7.0, 0.0] - target).normalize(),
                         );
-                    } else if player == expected_receiver {
-                        assert!((target - kickoff_receiver_position(&board)).norm() < 0.001);
-                    } else if player != PlayerNumber::One {
+                        assert!(
+                            target_pose
+                                .orientation()
+                                .rotation_to(open_stance)
+                                .angle()
+                                .abs()
+                                < 1e-5
+                        );
+                    } else {
+                        let relative =
+                            board.parameters.kickoff.relative_aggressive_positions[rank - 1];
+                        let expected = kickoff_support_position(
+                            &board,
+                            point![relative.x() * 7.0, relative.y() * 4.5],
+                        );
+                        approx::assert_relative_eq!(target, expected);
                         assert!(target.coords().norm() - 0.4 > 1.5);
-                    }
-                    destinations.push(target);
-                }
-                // Equal-speed entry from actual simulator spawns must leave body clearance.
-                for step in 0..=120 {
-                    let travel = step as f32 * 0.125;
-                    let positions: Vec<_> = starts[..count]
-                        .iter()
-                        .zip(&destinations)
-                        .map(|((_, start), target)| {
-                            let delta = *target - *start;
-                            *start + delta * (travel / delta.norm()).min(1.0)
-                        })
-                        .collect();
-                    for (index, position) in positions.iter().enumerate() {
-                        for other in &positions[index + 1..] {
-                            assert!(
-                                (*position - *other).norm() > 0.8,
-                                "count {count}, left {pass_to_left}, step {step}"
-                            );
-                        }
                     }
                 }
             }
@@ -962,22 +974,26 @@ mod tests {
     }
 
     #[test]
-    fn receiver_selection_excludes_goalkeeper_penalties_and_missing_players() {
+    fn receiver_selection_excludes_kicker_goalkeeper_penalties_and_missing_players() {
         let mut board = blackboard();
-        board.world_state.robot.player_number = PlayerNumber::Two;
-        board.world_state.player_states.three = board.world_state.player_states.five.clone();
+        assert_eq!(kickoff_kicker(&board), Some(PlayerNumber::Five));
+        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Four));
+        board.world_state.player_states.four.as_mut().unwrap().time =
+            board.world_state.now + Duration::from_secs(1);
+        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Three));
+        board.world_state.player_states.four.as_mut().unwrap().time = board.world_state.now;
         board
             .world_state
             .filtered_game_controller_state
             .as_mut()
             .unwrap()
             .penalties
-            .five = Some(Penalty::default());
+            .four = Some(Penalty::default());
         assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Three));
         board.parameters.goalkeeper.player_number = PlayerNumber::Three;
-        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Four));
-        board.world_state.player_states.four = None;
-        board.world_state.player_states.three = None;
+        board.world_state.player_states.two = board.world_state.player_states.three.clone();
+        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Two));
+        board.world_state.player_states.two = None;
         assert_eq!(kickoff_receiver(&board), None);
         assert!(is_own_kickoff(&mut board));
         board.world_state.now = board.world_state.now + Duration::from_secs(2);
@@ -986,9 +1002,9 @@ mod tests {
         let mut board = blackboard();
         board.world_state.now = board.world_state.now + Duration::from_secs(2);
         assert_eq!(kickoff_receiver(&board), None);
-        board.world_state.robot.player_number = board.parameters.goalkeeper.player_number;
+        board.player_number = board.parameters.goalkeeper.player_number;
         assert!(!is_own_kickoff(&mut board));
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Five;
         board.world_state.robot.primary_state = PrimaryState::Ready;
         board
             .world_state
@@ -997,19 +1013,40 @@ mod tests {
             .unwrap()
             .kicking_team = Some(Team::Opponent);
         assert!(board.try_sending_state_message().is_none());
+
+        let mut board = blackboard();
+        board.parameters.goalkeeper.player_number = PlayerNumber::Five;
+        board.player_number = PlayerNumber::Four;
+        assert_eq!(kickoff_kicker(&board), Some(PlayerNumber::Four));
+        assert_eq!(kickoff_receiver(&board), Some(PlayerNumber::Three));
+        for player in [
+            PlayerNumber::One,
+            PlayerNumber::Two,
+            PlayerNumber::Three,
+            PlayerNumber::Four,
+        ] {
+            board
+                .world_state
+                .filtered_game_controller_state
+                .as_mut()
+                .unwrap()
+                .penalties[player] = Some(Penalty::default());
+        }
+        assert_eq!(kickoff_kicker(&board), None);
+        assert_eq!(kickoff_receiver(&board), None);
     }
 
     #[test]
     fn kickoff_pass_rejects_stale_receiver_blocked_lane_and_other_restarts() {
         let mut board = blackboard();
         board.world_state.now = board.world_state.now + Duration::from_millis(500);
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
         let mut board = blackboard();
         board
             .world_state
             .obstacles
             .push(Obstacle::robot(point![-0.1, -0.5], 0.2, 0.2));
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
         let mut board = blackboard();
         board
             .world_state
@@ -1017,42 +1054,44 @@ mod tests {
             .as_mut()
             .unwrap()
             .kicking_team = Some(Team::Opponent);
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
         let mut board = blackboard();
         board.ball.as_mut().unwrap().position = point![0.4, 0.0];
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
         let mut board = blackboard();
         let staged = kickoff_receiver_position(&board);
         board
             .world_state
             .player_states
-            .five
+            .four
             .as_mut()
             .unwrap()
             .inner
             .pose = Pose2::new(point![staged.x() - 0.5, staged.y()], 0.0);
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
         let mut board = blackboard();
         let stance = kickoff_receiving_pose(&board).unwrap();
         board
             .world_state
             .player_states
-            .five
+            .four
             .as_mut()
             .unwrap()
             .inner
             .pose = Pose2::new(stance.position(), 0.0);
-        assert!(kickoff_pass_target(&board, PlayerNumber::Five).is_none());
+        assert!(kickoff_pass_target(&board, PlayerNumber::Four).is_none());
     }
 
     #[test]
     fn blocked_kickoff_pass_holds_instead_of_falling_through_to_goal_shot() {
         let mut board = blackboard();
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Five;
         board.world_state.robot.primary_state = PrimaryState::Playing;
-        board.world_state.ball = Some(BallState::default());
+        board.world_state.ball = Some(BallState::new_at_center(
+            board.world_state.robot.ground_to_field.unwrap(),
+        ));
         board.parameters.control.is_simple = true;
-        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
         board.parameters.kicking.strategy.maximum_shot_distance = 6.0;
         board
             .world_state
@@ -1069,7 +1108,7 @@ mod tests {
         assert_eq!(
             board.ball_action,
             Some(BallAction::Pass {
-                receiver: PlayerNumber::Five
+                receiver: PlayerNumber::Four
             })
         );
         assert!(board.kick_target.unwrap().y() < 0.0);
@@ -1083,7 +1122,7 @@ mod tests {
     #[test]
     fn prepared_kickoff_survives_game_controller_playing_and_releases_safely() {
         let mut board = blackboard();
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Five;
         board.world_state.robot.primary_state = PrimaryState::Ready;
         board
             .world_state

@@ -18,4 +18,10 @@
     goal_post_diameter: 0.1
   },
   player_number: "Three",
+  // Match SDK walking commands: linear velocities in m/s, angular velocity in rad/s.
+  walking_velocity_limits: {
+    forward_velocity_limits: [-1.0, 1.0],
+    lateral_velocity_limit: 1.0,
+    angular_velocity_limit: 1.0,
+  },
 }

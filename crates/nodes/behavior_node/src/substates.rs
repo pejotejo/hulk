@@ -86,7 +86,7 @@ fn restart_players(blackboard: &Blackboard) -> Vec<(PlayerNumber, Point2<Field>)
             {
                 return None;
             }
-            let position = if player == world.robot.player_number {
+            let position = if player == blackboard.player_number {
                 transform.as_pose().position()
             } else {
                 let state = world.player_states[player].as_ref()?;
@@ -125,7 +125,7 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
         return false;
     }
     let parameters = &blackboard.parameters.kicking.strategy;
-    let support_distance = blackboard.parameters.voronoi.ball_support_distance.max(
+    let support_distance = (blackboard.field_dimensions.center_circle_diameter / 2.0).max(
         parameters.passing.receiver_standoff
             + 2.0 * blackboard.parameters.walking.path_planning.robot_radius,
     );
@@ -169,7 +169,7 @@ pub(crate) fn restart_pass_is_open(blackboard: &Blackboard, receiver: Point2<Fie
         .obstacles
         .iter()
         .filter(|obstacle| {
-            *taker_number == blackboard.world_state.robot.player_number
+            *taker_number == blackboard.player_number
                 || !matches!(
                     obstacle.kind,
                     ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
@@ -217,10 +217,7 @@ pub(crate) fn restart_pass_receiver(
         })?
         .0;
     let radius = blackboard.parameters.walking.path_planning.robot_radius;
-    let distance = blackboard
-        .parameters
-        .voronoi
-        .ball_support_distance
+    let distance = (blackboard.field_dimensions.center_circle_diameter / 2.0)
         .max(parameters.passing.receiver_standoff + 2.0 * radius);
     let field = &blackboard.field_dimensions;
     let margin = radius + 0.05;
@@ -401,7 +398,7 @@ mod tests {
         field_dimensions::FieldDimensions,
         filtered_game_state::FilteredGameState,
         messages::OutgoingMessage,
-        motion_command::{BodyMotion, MotionCommand},
+        motion_command::{BodyMotion, KickPower, MotionCommand},
         motion_type::MotionType,
         obstacles::Obstacle,
         parameters::{KickStrategyParameters, PassingParameters},
@@ -451,7 +448,7 @@ mod tests {
             },
             remaining_number_of_messages: 1000,
             remaining_time_in_half: Duration::from_secs(100),
-            ..Default::default()
+            ..crate::test_support::game_controller_state()
         });
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.voronoi.grid_resolution = 0.25;
@@ -461,9 +458,12 @@ mod tests {
             .walking
             .walk_and_stand
             .orientation_tolerance = 0.05;
-        board.parameters.kicking.kick_activation_distance = 1.3;
-        board.parameters.kicking.allow_strong_kicks = true;
-        board.parameters.kicking.strong_kick_min_target_distance = 3.0;
+        board.parameters.kicking.distance_for_kick = 1.3;
+        board.parameters.kicking.allow_schlong = true;
+        board
+            .parameters
+            .kicking
+            .target_distance_kick_power_threshold = 3.0;
         board.parameters.kicking.strategy = KickStrategyParameters {
             maximum_shot_distance: 12.0,
             maximum_dribble_distance: 3.0,
@@ -522,9 +522,8 @@ mod tests {
             assert!(
                 matches!(
                     board.body_motion,
-                    Some(BodyMotion::Kick {
-                        soft: false,
-                        strong: false,
+                    Some(BodyMotion::VisualKick {
+                        kick_power: KickPower::Rumpelstilzchen,
                         ..
                     })
                 ),
@@ -540,9 +539,8 @@ mod tests {
         assert!(matches!(board.ball_action, Some(BallAction::Shoot { .. })));
         assert!(matches!(
             board.body_motion,
-            Some(BodyMotion::Kick {
-                strong: true,
-                soft: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
                 ..
             })
         ));
@@ -554,9 +552,8 @@ mod tests {
             assert!(
                 matches!(
                     board.body_motion,
-                    Some(BodyMotion::Kick {
-                        strong: false,
-                        soft: false,
+                    Some(BodyMotion::VisualKick {
+                        kick_power: KickPower::Rumpelstilzchen,
                         ..
                     })
                 ),
@@ -572,7 +569,7 @@ mod tests {
             (SubState::ThrowIn, point![0.0, 3.0], point![-1.0, 1.0]),
         ] {
             let mut taker = restart(state, ball);
-            taker.world_state.robot.player_number = PlayerNumber::Two;
+            taker.player_number = PlayerNumber::Two;
             let pose = Pose2::new(
                 position,
                 (ball.y() - position.y()).atan2(ball.x() - position.x()),
@@ -601,7 +598,7 @@ mod tests {
             };
 
             let mut receiver = taker.clone();
-            receiver.world_state.robot.player_number = PlayerNumber::Three;
+            receiver.player_number = PlayerNumber::Three;
             receiver.world_state.robot.ground_to_field = Some(pose.as_transform());
             receiver.world_state.player_states = Default::default();
             receiver.world_state.player_states.two = Some(TimeWrapper {
@@ -637,19 +634,18 @@ mod tests {
             tree.tick_with_trace(&mut taker);
             assert!(matches!(
                 taker.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: false,
-                    soft: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
 
             let transform = taker.world_state.robot.ground_to_field.unwrap();
             let target = transform * taker.kick_target.unwrap();
-            taker.last_motion_command = MotionCommand::from_partial_motions(
+            taker.last_motion_command = Some(MotionCommand::from_partial_motions(
                 taker.body_motion.clone().unwrap(),
                 taker.head_motion.unwrap(),
-            );
+            ));
             taker.last_motion_type = Some(MotionType::Kick);
             taker.last_motion_switch_time = taker.world_state.now;
             // GameController releases the restart on the first small ball movement.
@@ -671,9 +667,8 @@ mod tests {
             );
             assert!(matches!(
                 taker.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: false,
-                    soft: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
@@ -771,7 +766,7 @@ mod tests {
             }
 
             let mut taker = restart(state, ball);
-            taker.world_state.robot.player_number = PlayerNumber::Two;
+            taker.player_number = PlayerNumber::Two;
             taker.world_state.player_states.three = Some(TimeWrapper {
                 time: receiver.world_state.now,
                 inner: PlayerState {
@@ -800,9 +795,8 @@ mod tests {
             tree.tick_with_trace(&mut taker);
             assert!(matches!(
                 taker.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: false,
-                    soft: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
@@ -834,9 +828,8 @@ mod tests {
         execute_ball_action(&mut board);
         assert!(matches!(
             board.body_motion,
-            Some(BodyMotion::Kick {
-                soft: false,
-                strong: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));
@@ -878,8 +871,8 @@ mod tests {
                 .walking
                 .walk_and_stand
                 .target_reached_thresholds = nalgebra::vector![0.05, 0.1];
-            taker.parameters.voronoi.ball_support_distance = 1.5;
-            taker.world_state.robot.player_number = PlayerNumber::Three;
+            taker.field_dimensions.center_circle_diameter = 3.0;
+            taker.player_number = PlayerNumber::Three;
             let taker_position = ball + linear_algebra::vector![0.22, 0.3];
             let toward_ball = ball - taker_position;
             let taker_pose = Pose2::new(taker_position, toward_ball.y().atan2(toward_ball.x()));
@@ -956,12 +949,12 @@ mod tests {
             } else {
                 assert!(
                     (target.x() - ball.x()).abs()
-                        >= 1.5 * taker.parameters.voronoi.ball_support_distance
+                        >= 1.5 * (taker.field_dimensions.center_circle_diameter / 2.0)
                 );
             }
 
             let mut receiver = taker.clone();
-            receiver.world_state.robot.player_number = PlayerNumber::Two;
+            receiver.player_number = PlayerNumber::Two;
             receiver.world_state.robot.ground_to_field =
                 Some(Pose2::new(receiver_position, 0.0).as_transform());
             receiver.world_state.player_states.three = Some(TimeWrapper {
@@ -1083,7 +1076,7 @@ mod tests {
             let mut board = restart(state, ball);
             board.field_dimensions.length = 14.0;
             board.field_dimensions.width = 9.0;
-            board.world_state.robot.player_number = PlayerNumber::Two;
+            board.player_number = PlayerNumber::Two;
             let transform = Pose2::new(position, 0.0).as_transform();
             board.world_state.robot.ground_to_field = Some(transform);
             for (number, position) in [
@@ -1101,11 +1094,13 @@ mod tests {
             board.parameters.walking.path_planning.robot_radius = 0.4;
             board.parameters.walking.speed.kicking = 1.8;
             board.parameters.walking.speed.velocity_fade_distance = 3.0;
-            board.parameters.voronoi.ball_support_distance = 1.5;
+            board.field_dimensions.center_circle_diameter = 3.0;
             board.parameters.voronoi.forward_weight = 0.2;
-            board.parameters.voronoi.ball_support_sigma = 0.5;
+            board.parameters.voronoi.relative_ball_support_sigma =
+                0.5 / board.field_dimensions.width;
             board.parameters.voronoi.centroid_anchor_weight = 0.6;
-            board.parameters.voronoi.centroid_anchor_sigma = 1.0;
+            board.parameters.voronoi.relative_centroid_anchor_sigma =
+                1.0 / board.field_dimensions.width;
             assert!(restart_pass_is_open(&board, position), "{state:?}");
             for ball_weight in [0.0, 2.5] {
                 let mut supporter = board.clone();
@@ -1138,10 +1133,11 @@ mod tests {
         board.parameters.walking.speed.kicking = 1.8;
         board.parameters.walking.speed.velocity_fade_distance = 3.0;
         board.parameters.voronoi.ball_weight = 3.0;
-        board.parameters.voronoi.ball_support_distance = 1.5;
-        board.parameters.voronoi.ball_support_sigma = 1.0;
+        board.field_dimensions.center_circle_diameter = 3.0;
+        board.parameters.voronoi.relative_ball_support_sigma = 1.0 / board.field_dimensions.width;
         board.parameters.voronoi.centroid_anchor_weight = 0.6;
-        board.parameters.voronoi.centroid_anchor_sigma = 1.0;
+        board.parameters.voronoi.relative_centroid_anchor_sigma =
+            1.0 / board.field_dimensions.width;
         board.parameters.kicking.strategy.passing.minimum_distance = 4.0;
         for (number, position) in [
             (PlayerNumber::One, point![-6.6, 0.0]),
@@ -1167,7 +1163,7 @@ mod tests {
                 .inner
                 .pose
                 .as_transform();
-            supporter.world_state.robot.player_number = number;
+            supporter.player_number = number;
             supporter.world_state.robot.ground_to_field = Some(transform);
             supporter.world_state.obstacles = vec![Obstacle::robot(
                 transform.inverse() * point![2.0, 2.0],
@@ -1200,7 +1196,7 @@ mod tests {
                 let target = transform * path.end_point();
                 assert!(
                     (target - ball).norm()
-                        > 2.0 * supporter.parameters.voronoi.ball_support_distance,
+                        > 2.0 * (supporter.field_dimensions.center_circle_diameter / 2.0),
                     "{number:?} must retain its formation region: {target:?}"
                 );
                 formation_targets.push(target);

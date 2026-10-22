@@ -11,11 +11,7 @@ use types::fall_detection::FallDetection;
 use coordinate_systems::{Field, Ground};
 use hsl_network_messages::{PassIntent, PlayerNumber, SubState, Team};
 use linear_algebra::{Isometry2, Point2, Pose2, Vector2, point};
-use ros_z::{
-    prelude::*,
-    qos::QosDurability,
-    time::Time,
-};
+use ros_z::{prelude::*, qos::QosDurability, time::Time};
 use serde::{Deserialize, Serialize};
 use tokio::task::block_in_place;
 use tracing::info;
@@ -36,7 +32,8 @@ use types::{
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
     time_wrapper::TimeWrapper,
-    world_state::{BallState, PlayerState, RobotState, WorldState},
+    walking_velocity_limits::{WALKING_VELOCITY_LIMITS_TOPIC, WalkingVelocityLimits},
+    world_state::{BallSource, BallState, PlayerState, RobotState, WorldState},
 };
 use voronoi::VoronoiGrid;
 
@@ -51,13 +48,15 @@ pub struct LastBall {
     pub velocity: Vector2<Field>,
     pub age: Time,
     pub field_side: Side,
+    pub source: BallSource,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct Blackboard {
     pub field_dimensions: FieldDimensions,
     pub player_number: PlayerNumber,
     pub parameters: BehaviorParameters,
+    pub walking_velocity_limits: WalkingVelocityLimits,
     pub world_state: WorldState,
     pub controller_input: Option<ControllerInput>,
     pub remote_control_enabled: bool,
@@ -74,6 +73,7 @@ pub struct Blackboard {
     /// Target selected for this tick, used to choose kick strength.
     pub kick_target: Option<Point2<Ground>>,
     pub ball_action: Option<BallAction>,
+    pub deflecting_ball: bool,
     pub last_kick_target: Option<Point2<Field>>,
     pub last_motion_command: Option<MotionCommand>,
     pub last_motion_switch_time: Time,
@@ -194,6 +194,13 @@ pub fn run_boxed(ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = Result<()>> +
     Box::pin(run(ctx))
 }
 
+pub fn ball_timeout(parameters: &BehaviorParameters, source: BallSource) -> Duration {
+    match source {
+        BallSource::Own => parameters.ball.last_ball_timeout,
+        BallSource::Team => parameters.ball.team_ball_timeout,
+    }
+}
+
 fn validate_behavior_parameters(
     parameters: &BehaviorParameters,
 ) -> std::result::Result<(), String> {
@@ -236,14 +243,6 @@ fn validate_behavior_parameters(
         }
     }
 
-    if !parameters.kicking.target_speed.is_finite() || parameters.kicking.target_speed < 0.0 {
-        errors.push("kicking.target_speed must be finite and non-negative".to_owned());
-    }
-    if !parameters.kicking.dribble_target_speed.is_finite()
-        || parameters.kicking.dribble_target_speed < 0.0
-    {
-        errors.push("kicking.dribble_target_speed must be finite and non-negative".to_owned());
-    }
     if !parameters.kicking.receiving_opponent_distance.is_finite()
         || parameters.kicking.receiving_opponent_distance < 0.0
     {
@@ -268,6 +267,16 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
     parameters.add_validation_hook(validate_behavior_parameters)?;
     let field_dimensions_cache = node
         .subscriber::<FieldDimensions>("field_dimensions")
+        .qos(QosProfile {
+            durability: QosDurability::TransientLocal,
+            ..Default::default()
+        })
+        .cache(1)
+        .build()
+        .await?;
+
+    let walking_velocity_limits_cache = node
+        .subscriber::<WalkingVelocityLimits>(WALKING_VELOCITY_LIMITS_TOPIC)
         .qos(QosProfile {
             durability: QosDurability::TransientLocal,
             ..Default::default()
@@ -410,6 +419,10 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         field_dimensions,
         player_number,
         parameters: parameters.snapshot().typed().clone(),
+        walking_velocity_limits: walking_velocity_limits_cache
+            .get_latest()
+            .and_then(|limits| limits.validate().is_ok().then_some(*limits))
+            .unwrap_or_default(),
         world_state: WorldState::default(),
         controller_input: None,
         remote_control_enabled: false,
@@ -425,6 +438,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         last_close_enough_to_kick: false,
         kick_target: None,
         ball_action: None,
+        deflecting_ball: false,
         last_kick_target: None,
         last_motion_command: None,
         last_motion_switch_time: Time::zero(),
@@ -463,6 +477,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
 
         blackboard.is_injected_motion_command = false;
         blackboard.walk_position = None;
+        blackboard.kick_target = None;
         blackboard.body_motion = None;
         blackboard.head_motion = None;
         blackboard.voronoi_map = None;
@@ -471,6 +486,11 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.player_number = *player_number;
         }
         blackboard.parameters = parameters.snapshot().typed().clone();
+        if let Some(limits) = walking_velocity_limits_cache.get_latest()
+            && limits.validate().is_ok()
+        {
+            blackboard.walking_velocity_limits = *limits;
+        }
 
         let was_start_pressed = blackboard
             .controller_input
@@ -550,11 +570,12 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                 velocity: ground_to_field * ball.ball_in_ground_velocity,
                 age: blackboard.world_state.now,
                 field_side: ball.field_side,
+                source: ball.source,
             });
             blackboard.last_ball.clone_from(&blackboard.ball);
         } else if let Some(last_ball) = &blackboard.ball
             && blackboard.world_state.now.duration_since(last_ball.age)
-                >= blackboard.parameters.ball.last_ball_timeout
+                >= ball_timeout(&blackboard.parameters, last_ball.source)
         {
             blackboard.ball = None;
         }
@@ -566,6 +587,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             blackboard.ball_action = None;
         }
         let motion_command: MotionCommand = assemble_motion_command(&blackboard, status)?;
+        blackboard.deflecting_ball &= matches!(motion_command, MotionCommand::VisualKick { .. });
 
         let previous_motion_command = blackboard.last_motion_command.clone();
         blackboard.last_motion_command = Some(motion_command.clone());

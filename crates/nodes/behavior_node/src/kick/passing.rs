@@ -106,7 +106,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
     if parameters.validate().is_err()
         || parameters.maximum_distance <= 0.0
         || world.robot.primary_state != types::primary_state::PrimaryState::Playing
-        || pass.receiver == world.robot.player_number
+        || pass.receiver == blackboard.player_number
         || pass.receiver == blackboard.parameters.goalkeeper.player_number
         || Some(pass.receiver) == blackboard.replacement_goalkeeper_coordinator.keeper()
         || (blackboard.last_motion_type != Some(MotionType::Kick)
@@ -150,7 +150,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
     let Some(direction) = to_target.try_normalize(f32::EPSILON) else {
         return false;
     };
-    let contact = blackboard.parameters.kicking.approach_ball_standoff
+    let contact = blackboard.parameters.kicking.kick_position_ball_distance
         + blackboard.field_dimensions.ball_radius;
     let corridor = parameters.target_half_width
         + blackboard.parameters.walking.path_planning.robot_radius
@@ -158,7 +158,7 @@ pub(crate) fn outgoing_pass_in_flight(blackboard: &Blackboard) -> bool {
     // The announced recipient owns this launch; recover if it stops, reverses, or misses its lane.
     to_target.norm() <= parameters.maximum_distance + parameters.receiver_standoff
         && (receiver.inner.pose.position() - pass.target).norm()
-            <= parameters.receiver_standoff + blackboard.parameters.kicking.kick_activation_distance
+            <= parameters.receiver_standoff + blackboard.parameters.kicking.distance_for_kick
         && to_ball.norm() > contact
         && (receiver.inner.pose.position() - ball.position).norm() > contact
         && ball.velocity.norm()
@@ -188,7 +188,7 @@ fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)>
             && ((is_receiving_ball(blackboard)
                 && (own_position - ball.position).dot(&ball.velocity) > 0.0)
                 || (own_position - ball.position).norm()
-                    <= blackboard.parameters.kicking.kick_activation_distance)
+                    <= blackboard.parameters.kicking.distance_for_kick)
     });
     if parameters.maximum_distance <= 0.0
         || !own_position.x().is_finite()
@@ -202,8 +202,8 @@ fn incoming_pass(blackboard: &Blackboard) -> Option<(PassIntent, Point2<Field>)>
         .filter_map(|(sender, state)| {
             let state = state.as_ref()?;
             let pass = state.inner.pass?;
-            if sender == world.robot.player_number
-                || pass.receiver != world.robot.player_number
+            if sender == blackboard.player_number
+                || pass.receiver != blackboard.player_number
                 || state.time > world.now
                 || world.now.duration_since(state.time) >= PassIntent::TIMEOUT
                 || world
@@ -254,7 +254,7 @@ pub fn is_pass_ball_arriving(blackboard: &mut Blackboard) -> bool {
                 || (is_receiving_ball(blackboard)
                     && (own_position - ball.position).dot(&ball.velocity) > 0.0)
                 || ((own_position - ball.position).norm()
-                    <= blackboard.parameters.kicking.kick_activation_distance
+                    <= blackboard.parameters.kicking.distance_for_kick
                     && ball.velocity.norm()
                         <= blackboard
                             .parameters
@@ -312,7 +312,7 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     if restart_pass_is_open(blackboard, position) {
         if is_sub_state(blackboard, SubState::CornerKick)
             && restart_pass_receiver(blackboard)
-                .is_some_and(|(receiver, _)| receiver == blackboard.world_state.robot.player_number)
+                .is_some_and(|(receiver, _)| receiver == blackboard.player_number)
         {
             blackboard.ball_action = None;
             blackboard.kick_target = None;
@@ -324,7 +324,7 @@ pub fn prepare_for_restart_pass(blackboard: &mut Blackboard) -> Status {
     let Some((receiver, target)) = restart_pass_receiver(blackboard) else {
         return Status::Failure;
     };
-    if receiver != blackboard.world_state.robot.player_number {
+    if receiver != blackboard.player_number {
         return Status::Failure;
     }
     blackboard.ball_action = None;
@@ -385,7 +385,7 @@ pub fn yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> Status {
     );
     planner.with_goal_support_structures(transform.inverse(), &blackboard.field_dimensions);
     for (number, teammate) in blackboard.world_state.player_states.iter() {
-        if number != blackboard.world_state.robot.player_number
+        if number != blackboard.player_number
             && let Some(teammate) = teammate
             && teammate.time <= blackboard.world_state.now
             && blackboard.world_state.now.duration_since(teammate.time)
@@ -480,6 +480,7 @@ mod tests {
     use linear_algebra::{Isometry2, point};
     use types::{
         field_dimensions::{FieldDimensions, Side},
+        motion_command::KickPower,
         time_wrapper::TimeWrapper,
         walking_velocity_limits::WalkingVelocityLimits,
         world_state::{BallSource, PlayerState},
@@ -496,22 +497,22 @@ mod tests {
             ..Default::default()
         };
         sender.world_state.now = sender.world_state.now + Duration::from_secs(1);
-        sender.world_state.robot.player_number = PlayerNumber::Three;
+        sender.player_number = PlayerNumber::Three;
         sender.world_state.robot.primary_state = types::primary_state::PrimaryState::Playing;
         sender.world_state.robot.ground_to_field = Some(Default::default());
         sender.world_state.filtered_game_controller_state = Some(
             types::filtered_game_controller_state::FilteredGameControllerState {
                 remaining_time_in_half: Duration::from_secs(100),
                 remaining_number_of_messages: 10_000,
-                ..Default::default()
+                ..crate::test_support::game_controller_state()
             },
         );
         sender.parameters.goalkeeper.player_number = PlayerNumber::One;
         sender.parameters.ball.last_ball_timeout = Duration::from_secs(5);
         sender.parameters.ball.interception.minimum_ball_velocity = 0.3;
         sender.parameters.ball.closest_to_ball.exit_duration = Duration::from_millis(150);
-        sender.parameters.kicking.approach_ball_standoff = 0.3;
-        sender.parameters.kicking.kick_activation_distance = 1.3;
+        sender.parameters.kicking.kick_position_ball_distance = 0.3;
+        sender.parameters.kicking.distance_for_kick = 1.3;
         sender.parameters.walking.path_planning.robot_radius = 0.4;
         let parameters = &mut sender.parameters.kicking.strategy.passing;
         parameters.maximum_distance = 8.0;
@@ -650,16 +651,15 @@ mod tests {
             },
             ..Default::default()
         };
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.world_state.robot.ground_to_field =
             Some(Isometry2::from_parts(vector![2.0, 0.0], 0.0));
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
         receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
-        receiver.parameters.kicking.kick_activation_distance = 1.3;
-        receiver.parameters.kicking.approach_ball_standoff = 0.3;
+        receiver.parameters.kicking.distance_for_kick = 1.3;
+        receiver.parameters.kicking.kick_position_ball_distance = 0.3;
         receiver.parameters.kicking.strategy.maximum_shot_distance = 6.0;
-        receiver.parameters.kicking.target_speed = 3.4;
-        receiver.parameters.kicking.allow_strong_kicks = true;
+        receiver.parameters.kicking.allow_schlong = true;
         receiver.parameters.walking.path_planning.robot_radius = 0.4;
         let passing = &mut receiver.parameters.kicking.strategy.passing;
         passing.maximum_distance = 4.0;
@@ -714,9 +714,8 @@ mod tests {
         crate::tree::striker_subtree().tick_with_trace(&mut receiver);
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick {
-                strong: true,
-                target_speed: 3.4,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Schlong,
                 ..
             })
         ));
@@ -769,13 +768,13 @@ mod tests {
             },
             ..Default::default()
         };
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.world_state.robot.ground_to_field =
             Some(Isometry2::from_parts(vector![-2.0, 0.0], 0.0));
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
         receiver.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         receiver.parameters.walking.path_planning.robot_radius = 0.4;
-        receiver.parameters.kicking.kick_activation_distance = 1.3;
+        receiver.parameters.kicking.distance_for_kick = 1.3;
         receiver
             .parameters
             .kicking

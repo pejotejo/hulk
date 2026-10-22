@@ -17,6 +17,7 @@ use types::{
     motion_command::MotionCommand,
     parameters::{BehaviorParameters, HslNetworkParameters},
     path_obstacles::PathObstacle,
+    walking_velocity_limits::WalkingVelocityLimits,
     world_state::WorldState,
 };
 use voronoi::VoronoiGrid;
@@ -65,6 +66,7 @@ impl SimulatorRobotBehavior {
         self.blackboard.voronoi_inputs.clear();
         self.blackboard.is_injected_motion_command = false;
         self.blackboard.walk_position = None;
+        self.blackboard.kick_target = None;
         self.blackboard.body_motion = None;
         self.blackboard.head_motion = None;
         self.blackboard.voronoi_map = None;
@@ -78,6 +80,7 @@ impl SimulatorRobotBehavior {
                 velocity: ground_to_field * ball.ball_in_ground_velocity,
                 age: self.blackboard.world_state.now,
                 field_side: ball.field_side,
+                source: ball.source,
             });
             self.blackboard.last_ball.clone_from(&self.blackboard.ball);
         } else if let Some(last_ball) = &self.blackboard.ball
@@ -86,7 +89,7 @@ impl SimulatorRobotBehavior {
                 .world_state
                 .now
                 .duration_since(last_ball.age)
-                >= self.blackboard.parameters.ball.last_ball_timeout
+                >= behavior_node::node::ball_timeout(&self.blackboard.parameters, last_ball.source)
         {
             self.blackboard.ball = None;
         }
@@ -97,13 +100,9 @@ impl SimulatorRobotBehavior {
         if self.blackboard.kick_target.is_none() {
             self.blackboard.ball_action = None;
         }
-        if !matches!(
-            self.blackboard.ball_action,
-            Some(behavior_node::kick::strategy::BallAction::Pass { .. })
-        ) {
-            self.blackboard.last_announced_pass = None;
-        }
         let motion_command = assemble_motion_command(&self.blackboard, status)?;
+        self.blackboard.deflecting_ball &=
+            matches!(motion_command, MotionCommand::VisualKick { .. });
         self.blackboard.last_motion_command = Some(motion_command.clone());
 
         let motion_type = match motion_command.clone() {
@@ -185,6 +184,11 @@ fn create_behavior_blackboard(
     BehaviorBlackboard {
         field_dimensions,
         parameters,
+        walking_velocity_limits: WalkingVelocityLimits {
+            forward_velocity_limits: [-1.0, 1.0],
+            lateral_velocity_limit: 1.0,
+            angular_velocity_limit: 1.0,
+        },
         player_number,
         world_state: WorldState::default(),
         controller_input: None,
@@ -199,6 +203,7 @@ fn create_behavior_blackboard(
         last_close_enough_to_kick: false,
         kick_target: None,
         ball_action: None,
+        deflecting_ball: false,
         last_kick_target: None,
         last_motion_command: None,
         last_motion_switch_time: ros_z::time::Time::zero(),
@@ -321,7 +326,11 @@ mod tests {
     };
 
     fn kick_blackboard(ball_position: Point2<Ground>) -> BehaviorBlackboard {
-        let mut blackboard = create_behavior_blackboard(default_behavior_parameters().unwrap());
+        let mut blackboard = create_behavior_blackboard(
+            FieldDimensions::SPL_2025,
+            default_behavior_parameters().unwrap(),
+            PlayerNumber::Three,
+        );
         blackboard.field_dimensions = FieldDimensions::SPL_2025;
         blackboard.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::identity());
         blackboard.visual_kick_ball_position = Some(BallPosition {
@@ -345,12 +354,12 @@ mod tests {
             (1.0, 6.9, false),
         ] {
             let mut blackboard = kick_blackboard(point![ball_x, 0.0]);
-            blackboard.parameters.kicking.allow_strong_kicks = true;
+            blackboard.parameters.kicking.allow_schlong = true;
             blackboard
                 .parameters
                 .kicking
-                .strong_kick_min_target_distance = 6.0;
-            blackboard.parameters.kicking.target_speed = 1.2;
+                .target_distance_kick_power_threshold = 6.0;
+
             assert_eq!(kick(&mut blackboard), Status::Success);
             assert_eq!(
                 apply_kick_target(&mut blackboard, point![target_x, 0.0]),
@@ -358,27 +367,31 @@ mod tests {
             );
             let (status, _) = kick_strength_subtree().tick_with_trace(&mut blackboard);
             assert_eq!(status, Status::Success);
-            let Some(BodyMotion::Kick {
-                strong,
-                target_speed,
+            let Some(BodyMotion::VisualKick {
+                kick_power,
                 kick_direction,
                 ..
             }) = blackboard.body_motion
             else {
                 panic!("expected kick command")
             };
-            assert_eq!(strong, expected_strong);
-            assert_eq!(target_speed, 1.2);
+            assert_eq!(
+                kick_power,
+                if expected_strong {
+                    types::motion_command::KickPower::Schlong
+                } else {
+                    types::motion_command::KickPower::Rumpelstilzchen
+                }
+            );
             assert_eq!(blackboard.kick_target, Some(point![target_x, 0.0]));
             assert_eq!(kick_direction.angle(), 0.0);
 
-            blackboard.parameters.kicking.allow_strong_kicks = false;
+            blackboard.parameters.kicking.allow_schlong = false;
             kick_strength_subtree().tick_with_trace(&mut blackboard);
             assert!(matches!(
                 blackboard.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: false,
-                    target_speed: 1.2,
+                Some(BodyMotion::VisualKick {
+                    kick_power: types::motion_command::KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
@@ -399,10 +412,10 @@ mod tests {
         assert!(is_target_in_strong_kick_range(&mut blackboard));
         let command = assemble_motion_command(&blackboard, Status::Success).unwrap();
         let serialized = serde_json::to_value(command).unwrap();
-        let kick_fields = serialized["Kick"].as_object().unwrap();
+        let kick_fields = serialized["VisualKick"].as_object().unwrap();
         assert!(kick_fields.contains_key("kick_direction"));
-        assert!(!kick_fields.contains_key("target_position"));
-        assert!(!kick_fields.contains_key("robot_theta_to_field"));
+        assert!(kick_fields.contains_key("target_position"));
+        assert!(kick_fields.contains_key("robot_theta_to_field"));
         assert_eq!(blackboard.kick_target, Some(point![8.0, 0.0]));
 
         assert_eq!(kick(&mut blackboard), Status::Success);
@@ -431,7 +444,7 @@ mod tests {
             .kicking
             .minimum_interception_forward_distance = 0.4;
         for standoff in [0.3, 1.5] {
-            blackboard.parameters.kicking.approach_ball_standoff = standoff;
+            blackboard.parameters.kicking.kick_position_ball_distance = standoff;
             assert_eq!(kick(&mut blackboard), Status::Success);
             assert_eq!(intercept(&mut blackboard), Status::Success);
         }
@@ -460,9 +473,9 @@ mod tests {
             .parameters
             .kicking
             .minimum_interception_forward_distance = 5.0;
-        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.kick_position_ball_distance = 0.3;
         assert!(!is_close_to_ball_aligned(&mut blackboard));
-        blackboard.parameters.kicking.approach_ball_standoff = 1.0;
+        blackboard.parameters.kicking.kick_position_ball_distance = 1.0;
         assert!(is_close_to_ball_aligned(&mut blackboard));
     }
 

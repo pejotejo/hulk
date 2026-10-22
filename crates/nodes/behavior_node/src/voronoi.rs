@@ -120,9 +120,8 @@ mod tests {
 
     use hsl_network_messages::Penalty;
     use types::{
-        field_dimensions::FieldDimensions,
-        filtered_game_controller_state::FilteredGameControllerState, obstacles::Obstacle,
-        time_wrapper::TimeWrapper, world_state::PlayerState,
+        field_dimensions::FieldDimensions, obstacles::Obstacle, time_wrapper::TimeWrapper,
+        world_state::PlayerState,
     };
     use voronoi::Ownership;
 
@@ -141,7 +140,7 @@ mod tests {
                 ..Default::default()
             };
             board.world_state.now = board.world_state.now + Duration::from_secs(1);
-            board.world_state.robot.player_number = number;
+            board.player_number = number;
             board.world_state.robot.ground_to_field = Some(pose.as_transform());
             board.parameters.voronoi.grid_resolution = 0.2;
             board.parameters.voronoi.padding = 0.5;
@@ -192,7 +191,7 @@ mod tests {
     #[test]
     fn ownership_sites_exclude_stale_future_nonfinite_and_penalized_players() {
         let mut board = Blackboard::default();
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.now = board.world_state.now + Duration::from_secs(10);
         board
             .parameters
@@ -218,7 +217,7 @@ mod tests {
                 1 => peer.time = board.world_state.now + Duration::from_secs(1),
                 2 => peer.inner.pose = point![f32::NAN, 0.0].into(),
                 _ => {
-                    let mut game = FilteredGameControllerState::default();
+                    let mut game = crate::test_support::game_controller_state();
                     game.penalties.three = Some(Penalty::PickUp {
                         remaining: Duration::from_secs(1),
                     });

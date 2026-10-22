@@ -1,6 +1,7 @@
 use std::{ops::Range, path::PathBuf, time::Duration};
 
 use hsl_network_messages::PlayerNumber;
+use kinematics::joints::head::HeadJoints;
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
 
@@ -286,22 +287,16 @@ pub struct WalkSpeedParameters {
 pub struct KickingParameters {
     #[serde(default)]
     pub strategy: KickStrategyParameters,
-    pub soft: bool,
-    pub quick: bool,
-    /// Desired outgoing ball speed in m/s.
-    pub target_speed: f32,
-    /// Desired outgoing ball speed for a controlled dribble, in m/s.
-    #[serde(default = "default_dribble_target_speed")]
-    pub dribble_target_speed: f32,
-    pub allow_strong_kicks: bool,
+    pub kick_target_offset_angle: f32,
+    pub allow_schlong: bool,
     /// Ball distance at the centre of the walk-to-kick handoff band, in metres.
-    pub kick_activation_distance: f32,
+    pub distance_for_kick: f32,
     /// Total width of the handoff hysteresis band, in metres.
-    pub kick_activation_hysteresis: f32,
+    pub distance_for_kick_hysteresis: f32,
     /// Minimum ball-to-target distance for a strong striker kick, in metres.
-    pub strong_kick_min_target_distance: f32,
+    pub target_distance_kick_power_threshold: f32,
     /// Distance behind the ball for walking and set-play alignment, in metres.
-    pub approach_ball_standoff: f32,
+    pub kick_position_ball_distance: f32,
     /// Opponent distance to the ball below which a receiver releases immediately, in metres.
     #[serde(default = "default_receiving_opponent_distance")]
     pub receiving_opponent_distance: f32,
@@ -313,15 +308,12 @@ impl Default for KickingParameters {
     fn default() -> Self {
         Self {
             strategy: KickStrategyParameters::default(),
-            soft: false,
-            quick: false,
-            target_speed: 3.4,
-            dribble_target_speed: default_dribble_target_speed(),
-            allow_strong_kicks: false,
-            kick_activation_distance: 0.0,
-            kick_activation_hysteresis: 0.0,
-            strong_kick_min_target_distance: 0.0,
-            approach_ball_standoff: 0.0,
+            kick_target_offset_angle: 0.0,
+            allow_schlong: false,
+            distance_for_kick: 0.0,
+            distance_for_kick_hysteresis: 0.0,
+            target_distance_kick_power_threshold: 0.0,
+            kick_position_ball_distance: 0.0,
             receiving_opponent_distance: default_receiving_opponent_distance(),
             minimum_interception_forward_distance: 0.0,
         }
@@ -342,10 +334,6 @@ pub struct KickPowerParameters {
 
 fn default_receiving_opponent_distance() -> f32 {
     2.0
-}
-
-fn default_dribble_target_speed() -> f32 {
-    0.5
 }
 
 /// Distances are meters, angles radians. Values must be finite and nonnegative.

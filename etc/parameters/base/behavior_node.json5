@@ -65,7 +65,7 @@
     strategy: {
       // Initial tuning; verify maximum range on the robot before deployment.
       maximum_shot_distance: 12.0,
-      // Provisional travel bound including uncertainty; calibrate for target_speed and surface.
+      // Provisional travel bound including uncertainty; calibrate for the SDK kick power and surface.
       maximum_dribble_distance: 3.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,
@@ -75,7 +75,7 @@
       clear_goal_distance: 1.5,
       clear_distance_hysteresis: 0.2,
       passing: {
-        // Provisional regular-kick reach; calibrate at target_speed before deployment.
+        // Provisional regular-kick reach; calibrate for the SDK kick power before deployment.
         maximum_distance: 8.0,
         minimum_distance: 4.0,
         minimum_progress: 0.25,
@@ -85,15 +85,12 @@
         maximum_receiver_age: { secs: 3, nanos: 0 },
       },
     },
-    soft: false,
-    quick: false,
-    target_speed: 3.4, // Desired outgoing ball speed in m/s.
-    dribble_target_speed: 0.5,
-    allow_strong_kicks: true,
-    kick_activation_distance: 1.3,
-    kick_activation_hysteresis: 0.3,
-    strong_kick_min_target_distance: 3.0,
-    approach_ball_standoff: 0.3,
+    kick_target_offset_angle: 0.1,
+    allow_schlong: true,
+    distance_for_kick: 1.3,
+    distance_for_kick_hysteresis: 0.3,
+    target_distance_kick_power_threshold: 3.0,
+    kick_position_ball_distance: 0.3,
     receiving_opponent_distance: 2.0,
     minimum_interception_forward_distance: 0.3,
   },

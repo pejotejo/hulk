@@ -371,7 +371,7 @@ mod tests {
         ball_position::BallPosition,
         fall_detection::{FallDetection, Posture},
         field_dimensions::{FieldDimensions, Half, Side},
-        motion_command::BodyMotion,
+        motion_command::{BodyMotion, KickPower},
         obstacles::Obstacle,
         parameters::{KickStrategyParameters, PassingParameters},
         time_wrapper::TimeWrapper,
@@ -424,7 +424,7 @@ mod tests {
             types::filtered_game_controller_state::FilteredGameControllerState {
                 remaining_number_of_messages: 100,
                 remaining_time_in_half: Duration::from_millis(4800),
-                ..Default::default()
+                ..crate::test_support::game_controller_state()
             },
         );
         blackboard
@@ -441,8 +441,7 @@ mod tests {
             selection_hysteresis: 0.25,
             maximum_receiver_age: Duration::from_millis(500),
         };
-        blackboard.parameters.kicking.kick_activation_distance = 3.0;
-        blackboard.parameters.kicking.target_speed = 3.4;
+        blackboard.parameters.kicking.distance_for_kick = 3.0;
         blackboard.world_state.player_states.two = Some(TimeWrapper {
             time: blackboard.world_state.now,
             inner: PlayerState {
@@ -567,13 +566,13 @@ mod tests {
             board.field_dimensions.ball_radius = 0.105;
             board.parameters.goalkeeper.player_number = PlayerNumber::One;
             board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
-            board.parameters.kicking.kick_activation_distance = 1.3;
+            board.parameters.kicking.distance_for_kick = 1.3;
             board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
             board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
             board.parameters.ball.interception.minimum_ball_velocity = 0.3;
             board.parameters.walking.path_planning.robot_radius = 0.4;
             board.last_motion_type = Some(types::motion_type::MotionType::Walk);
-            board.world_state.robot.player_number = PlayerNumber::Three;
+            board.player_number = PlayerNumber::Three;
             let transform = Pose2::new(point![-0.45, -2.35], 0.45_f32.atan2(0.05)).as_transform();
             board.world_state.robot.ground_to_field = Some(transform);
             board.world_state.fall_detection = Some(FallDetection {
@@ -628,7 +627,10 @@ mod tests {
                         + board.field_dimensions.ball_radius
                         + board.parameters.kicking.strategy.obstacle_clearance
             );
-            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::VisualKick { .. })
+            ));
 
             board.world_state.obstacles[0].radius_at_foot_height = 2.0;
             board.kick_target = None;
@@ -720,7 +722,7 @@ mod tests {
             .strategy
             .passing
             .maximum_receiver_age = Duration::from_secs(3);
-        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
         board.ball.as_mut().unwrap().position = point![-4.0, 0.0];
         let transform = Pose2::new(point![-4.6, 0.0], 0.0).as_transform();
         board.world_state.robot.ground_to_field = Some(transform);
@@ -767,10 +769,8 @@ mod tests {
         execute_ball_action(&mut board);
         assert!(matches!(
             board.body_motion,
-            Some(BodyMotion::Kick {
-                strong: false,
-                soft: false,
-                target_speed: 3.4,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));
@@ -787,12 +787,11 @@ mod tests {
             Obstacle::robot(transform.inverse() * point![0.8, -0.04], 0.01, 0.01),
         ]
         .to_vec();
-        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard.parameters.kicking.allow_schlong = true;
         blackboard
             .parameters
             .kicking
-            .strong_kick_min_target_distance = 0.1;
-        blackboard.parameters.kicking.quick = true;
+            .target_distance_kick_power_threshold = 0.1;
         select_ball_action(&mut blackboard);
         assert_eq!(
             blackboard.ball_action,
@@ -808,19 +807,25 @@ mod tests {
         assert!(blackboard.try_sending_state_message().is_some());
         blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(150);
         execute_ball_action(&mut blackboard);
-        let Some(BodyMotion::Kick {
+        let Some(BodyMotion::VisualKick {
             kick_direction,
-            soft: false,
-            strong: false,
-            quick: false,
-            target_speed: 3.4,
-            ..
+            ball_position,
+            target_position,
+            robot_theta_to_field,
+            kick_power: KickPower::Rumpelstilzchen,
         }) = blackboard.body_motion
         else {
             panic!("expected controlled pass")
         };
         let direction = transform * kick_direction.as_unit_vector();
         assert!((direction - target.coords().normalize()).norm() < 1e-5);
+        assert!((transform * target_position - target).norm() < 1e-5);
+        assert!(
+            (kick_direction.as_unit_vector() - (target_position - ball_position).normalize())
+                .norm()
+                < 1e-5
+        );
+        assert_eq!(robot_theta_to_field, transform.as_pose().orientation());
         for obstacle in &blackboard.world_state.obstacles {
             assert!(
                 LineSegment(point![0.0, 0.0], target).distance_to(transform * obstacle.position)
@@ -851,9 +856,8 @@ mod tests {
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick {
-                strong: false,
-                soft: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));
@@ -889,9 +893,7 @@ mod tests {
                 b.parameters.kicking.strategy.passing.minimum_distance = 1.6
             }),
             ("missing", |b| b.world_state.player_states.two = None),
-            ("self", |b| {
-                b.world_state.robot.player_number = PlayerNumber::Two
-            }),
+            ("self", |b| b.player_number = PlayerNumber::Two),
             ("stale", |b| {
                 b.world_state.now = b.world_state.now + Duration::from_millis(500)
             }),
@@ -900,8 +902,7 @@ mod tests {
                     b.world_state.now + Duration::from_nanos(1)
             }),
             ("penalized", |b| {
-                let mut game =
-                    types::filtered_game_controller_state::FilteredGameControllerState::default();
+                let mut game = crate::test_support::game_controller_state();
                 game.penalties.two = Some(Penalty::PickUp {
                     remaining: Duration::from_secs(1),
                 });
@@ -938,9 +939,8 @@ mod tests {
             assert!(
                 matches!(
                     blackboard.body_motion,
-                    Some(BodyMotion::Kick {
-                        strong: false,
-                        soft: false,
+                    Some(BodyMotion::VisualKick {
+                        kick_power: KickPower::Rumpelstilzchen,
                         ..
                     })
                 ),
@@ -956,8 +956,8 @@ mod tests {
         approaching.world_state.robot.ground_to_field =
             Some(Pose2::new(point![-2.0, 0.0], 0.0).as_transform());
         approaching.world_state.obstacles[0].position = point![4.0, 0.0];
-        approaching.parameters.kicking.kick_activation_distance = 1.3;
-        approaching.parameters.kicking.kick_activation_hysteresis = 0.3;
+        approaching.parameters.kicking.distance_for_kick = 1.3;
+        approaching.parameters.kicking.distance_for_kick_hysteresis = 0.3;
         approaching.parameters.walking.speed.kicking = 1.8;
         approaching.parameters.walking.speed.velocity_fade_distance = 3.0;
         select_ball_action(&mut approaching);
@@ -989,7 +989,7 @@ mod tests {
         execute_ball_action(&mut approaching);
         assert!(matches!(
             approaching.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
 
         for sub_state in [None, Some(SubState::ThrowIn)] {
@@ -1028,31 +1028,29 @@ mod tests {
                 board.world_state.now = board.world_state.now + Duration::from_millis(1);
                 execute_ball_action(&mut board);
             }
-            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::VisualKick { .. })
+            ));
             assert!(board.try_sending_state_message().is_none());
 
             // The remaining distance shrinks during an already announced kick.
             board.last_motion_type = Some(types::motion_type::MotionType::Kick);
-            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-                board.body_motion.clone().unwrap(),
-                types::motion_command::HeadMotion::Center {
-                    image_region_target: Default::default(),
-                },
-            );
-            if let types::motion_command::MotionCommand::Kick { quick, .. } =
-                &mut board.last_motion_command
-            {
-                *quick = true;
-            }
+            board.last_motion_command =
+                Some(types::motion_command::MotionCommand::from_partial_motions(
+                    board.body_motion.clone().unwrap(),
+                    types::motion_command::HeadMotion::Center {
+                        image_region_target: types::motion_command::ImageRegion::Center,
+                    },
+                ));
             board.ball.as_mut().unwrap().position = point![0.2, 0.0];
             select_ball_action(&mut board);
             execute_ball_action(&mut board);
             assert!(matches!(board.ball_action, Some(BallAction::Pass { .. })));
             assert!(matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick {
-                    quick: false,
-                    strong: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
@@ -1091,7 +1089,10 @@ mod tests {
                 board.world_state.now = board.world_state.now + Duration::from_millis(150);
             }
             execute_ball_action(&mut board);
-            assert!(matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::VisualKick { .. })
+            ));
 
             board.ball_action = Some(BallAction::Dribble);
             board.world_state.now = board.world_state.now + Duration::from_millis(1);
@@ -1119,7 +1120,7 @@ mod tests {
     #[test]
     fn receiver_prepares_for_stationary_ball_then_claims_arrival_and_expires_intent() {
         let mut receiver = passing_blackboard();
-        receiver.world_state.robot.player_number = PlayerNumber::Two;
+        receiver.player_number = PlayerNumber::Two;
         receiver.parameters.goalkeeper.player_number = PlayerNumber::One;
         receiver.world_state.robot.ground_to_field = Some(linear_algebra::Isometry2::from_parts(
             linear_algebra::vector![2.0, 0.0],
@@ -1193,7 +1194,7 @@ mod tests {
         assert!(receiver.last_closest_to_ball);
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
 
         // A fast ball beside the receiver must not project beyond the reception area.
@@ -1205,7 +1206,7 @@ mod tests {
         ball.ball_in_ground_velocity = linear_algebra::vector![-4.0, 0.0];
         tree.tick_with_trace(&mut receiver);
         assert!(
-            matches!(receiver.body_motion, Some(BodyMotion::Kick { ball_position, .. })
+            matches!(receiver.body_motion, Some(BodyMotion::VisualKick { ball_position, .. })
             if (ball_position - point![0.4, 0.0]).norm() < 1e-6)
         );
 
@@ -1222,7 +1223,7 @@ mod tests {
         tree.tick_with_trace(&mut receiver);
         assert!(matches!(
             receiver.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
         receiver
             .world_state
@@ -1434,7 +1435,7 @@ mod tests {
         let mut blackboard = blackboard();
         let ball = point![1.0, 1.0];
         blackboard.ball.as_mut().unwrap().position = ball;
-        blackboard.parameters.kicking.kick_activation_distance = 10.0;
+        blackboard.parameters.kicking.distance_for_kick = 10.0;
         select_ball_action(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
         execute_ball_action(&mut blackboard);
@@ -1492,7 +1493,7 @@ mod tests {
             linear_algebra::Isometry2::from_parts(linear_algebra::vector![3.99, -1.86], -0.43);
         blackboard.world_state.robot.ground_to_field = Some(transform);
         blackboard.ball.as_mut().unwrap().position = ball;
-        blackboard.parameters.kicking.kick_activation_distance = 3.0;
+        blackboard.parameters.kicking.distance_for_kick = 3.0;
         blackboard.world_state.obstacles = [Half::Own, Half::Opponent]
             .into_iter()
             .flat_map(|half| {
@@ -1535,9 +1536,8 @@ mod tests {
         }
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick {
-                soft: false,
-                strong: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));
@@ -1549,7 +1549,7 @@ mod tests {
         blackboard.ball.as_mut().unwrap().position = point![0.0, 0.0];
         blackboard.field_dimensions.length = 1.0;
         blackboard.field_dimensions.width = 1.0;
-        blackboard.parameters.kicking.kick_activation_distance = 1.0;
+        blackboard.parameters.kicking.distance_for_kick = 1.0;
         for distance in [3.0, 0.0, -1.0, f32::NAN, f32::INFINITY] {
             blackboard.ball_action = Some(BallAction::Dribble);
             blackboard
@@ -1561,7 +1561,7 @@ mod tests {
             if distance.is_finite() && distance >= 0.0 {
                 assert!(matches!(
                     blackboard.body_motion,
-                    Some(BodyMotion::Kick { .. })
+                    Some(BodyMotion::VisualKick { .. })
                 ));
                 assert!((blackboard.kick_target.unwrap() - point![0.5, 0.0]).norm() < 1e-6);
                 assert!(matches!(
@@ -1613,10 +1613,11 @@ mod tests {
             }
             let target = board.kick_target;
             board.last_motion_type = Some(types::motion_type::MotionType::Kick);
-            board.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-                board.body_motion.clone().unwrap(),
-                types::motion_command::HeadMotion::LookAround,
-            );
+            board.last_motion_command =
+                Some(types::motion_command::MotionCommand::from_partial_motions(
+                    board.body_motion.clone().unwrap(),
+                    types::motion_command::HeadMotion::LookAround,
+                ));
             board.kick_target = None;
             board.body_motion = None;
             tree.tick_with_trace(&mut board);
@@ -1624,9 +1625,8 @@ mod tests {
             assert_eq!(board.kick_target, target);
             assert!(matches!(
                 board.body_motion,
-                Some(BodyMotion::Kick {
-                    strong: false,
-                    soft: false,
+                Some(BodyMotion::VisualKick {
+                    kick_power: KickPower::Rumpelstilzchen,
                     ..
                 })
             ));
@@ -1669,7 +1669,7 @@ mod tests {
         let mut blackboard = blackboard();
         let ball = point![-3.8, -0.8];
         blackboard.ball.as_mut().unwrap().position = ball;
-        blackboard.parameters.kicking.kick_activation_distance = 5.0;
+        blackboard.parameters.kicking.distance_for_kick = 5.0;
         blackboard.world_state.obstacles = [
             point![-3.123_852, -0.981_173],
             point![-3.193_782, -0.45],
@@ -1701,7 +1701,7 @@ mod tests {
     #[test]
     fn kick_handoff_uses_close_visual_ball_and_ignores_distant_percept() {
         let mut blackboard = blackboard();
-        blackboard.parameters.kicking.kick_activation_distance = 1.0;
+        blackboard.parameters.kicking.distance_for_kick = 1.0;
         blackboard.visual_kick_ball_position = Some(BallPosition {
             position: point![0.5, 0.0],
             velocity: Default::default(),
@@ -1711,7 +1711,7 @@ mod tests {
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { ball_position, .. }) if ball_position == point![0.5, 0.0]
+            Some(BodyMotion::VisualKick { ball_position, .. }) if ball_position == point![0.5, 0.0]
         ));
 
         blackboard.ball.as_mut().unwrap().position = point![0.5, 0.0];
@@ -1724,7 +1724,7 @@ mod tests {
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { ball_position, .. }) if ball_position == point![0.5, 0.0]
+            Some(BodyMotion::VisualKick { ball_position, .. }) if ball_position == point![0.5, 0.0]
         ));
     }
 
@@ -1754,8 +1754,8 @@ mod tests {
             ball_in_field: point![-0.55, 0.2],
             ..Default::default()
         });
-        blackboard.parameters.kicking.kick_activation_distance = 1.0;
-        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.distance_for_kick = 1.0;
+        blackboard.parameters.kicking.kick_position_ball_distance = 0.3;
         blackboard.walking_velocity_limits.angular_velocity_limit = 2.0;
         select_ball_action(&mut blackboard);
         assert_eq!(execute_ball_action(&mut blackboard), Status::Success);
@@ -1769,8 +1769,8 @@ mod tests {
     #[test]
     fn execution_approaches_ball_revalidates_and_kicks_to_advance() {
         let mut blackboard = blackboard();
-        blackboard.parameters.kicking.kick_activation_distance = 1.0;
-        blackboard.parameters.kicking.approach_ball_standoff = 0.3;
+        blackboard.parameters.kicking.distance_for_kick = 1.0;
+        blackboard.parameters.kicking.kick_position_ball_distance = 0.3;
         blackboard
             .parameters
             .walking
@@ -1822,12 +1822,12 @@ mod tests {
         let expected = linear_algebra::Orientation2::from_vector(
             transform.inverse() * (target - point![2.0, 0.0]),
         );
-        blackboard.parameters.kicking.kick_activation_distance = 3.0;
+        blackboard.parameters.kicking.distance_for_kick = 3.0;
         tree.tick_with_trace(&mut blackboard);
-        let Some(BodyMotion::Kick {
+        let Some(BodyMotion::VisualKick {
             kick_direction,
             ball_position,
-            ball_velocity,
+            target_position,
             ..
         }) = blackboard.body_motion
         else {
@@ -1836,14 +1836,18 @@ mod tests {
         assert!((blackboard.kick_target.unwrap() - transform.inverse() * target).norm() < 1e-6);
         assert!((kick_direction.angle() - expected.angle()).abs() < 1e-6);
         assert_eq!(ball_position, observed);
-        assert_eq!(ball_velocity, velocity);
+        assert!((target_position - blackboard.kick_target.unwrap()).norm() < 1e-6);
+        assert!(
+            (kick_direction.as_unit_vector() - (target_position - ball_position).normalize())
+                .norm()
+                < 1e-6
+        );
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick {
-                strong: false,
-                soft: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));
@@ -1869,46 +1873,44 @@ mod tests {
             0.2,
             0.2,
         )];
-        blackboard.parameters.kicking.kick_activation_distance = 5.0;
+        blackboard.parameters.kicking.distance_for_kick = 5.0;
         tree.tick_with_trace(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
         assert!((transform * blackboard.kick_target.unwrap()).x() > -3.8);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { .. })
+            Some(BodyMotion::VisualKick { .. })
         ));
 
         // The recorded stall had 6 cm lateral error; kick-policy alignment must handle it.
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
-        blackboard.parameters.kicking.kick_activation_distance = 2.0;
+        blackboard.parameters.kicking.distance_for_kick = 2.0;
         blackboard.ball.as_mut().unwrap().position = point![0.51, -0.06];
         blackboard.world_state.obstacles.clear();
-        blackboard.parameters.kicking.allow_strong_kicks = true;
+        blackboard.parameters.kicking.allow_schlong = true;
         blackboard
             .parameters
             .kicking
-            .strong_kick_min_target_distance = 0.1;
-        blackboard.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
-            BodyMotion::Kick {
-                ball_position: point![0.51, -0.06],
-                ball_velocity: Default::default(),
-                target_speed: 1.0,
-                soft: false,
-                quick: false,
-                kick_direction: Default::default(),
-                strong: true,
-            },
-            types::motion_command::HeadMotion::Center {
-                image_region_target: Default::default(),
-            },
-        );
+            .target_distance_kick_power_threshold = 0.1;
+        blackboard.last_motion_command =
+            Some(types::motion_command::MotionCommand::from_partial_motions(
+                BodyMotion::VisualKick {
+                    ball_position: point![0.51, -0.06],
+                    kick_direction: Default::default(),
+                    target_position: point![1.51, -0.06],
+                    robot_theta_to_field: Default::default(),
+                    kick_power: KickPower::Schlong,
+                },
+                types::motion_command::HeadMotion::Center {
+                    image_region_target: types::motion_command::ImageRegion::Center,
+                },
+            ));
         tree.tick_with_trace(&mut blackboard);
         assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick {
-                strong: false,
-                soft: false,
+            Some(BodyMotion::VisualKick {
+                kick_power: KickPower::Rumpelstilzchen,
                 ..
             })
         ));

@@ -198,7 +198,7 @@ fn election_input(blackboard: &mut Blackboard) -> Option<ElectionInput> {
     {
         return None;
     }
-    let own_number = world.robot.player_number;
+    let own_number = blackboard.player_number;
     let regular_keeper = blackboard.parameters.goalkeeper.player_number;
     let timeout = blackboard
         .parameters
@@ -528,14 +528,14 @@ mod tests {
         board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
         board.parameters.network.hsl_striker_message_receive_timeout = Duration::from_secs(3);
         board.world_state.now = now;
-        board.world_state.robot.player_number = number;
+        board.player_number = number;
         board.world_state.robot.primary_state = PrimaryState::Playing;
         board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
             game_state: FilteredGameState::Playing {
                 ball_is_free: true,
                 kick_off: false,
             },
-            ..Default::default()
+            ..crate::test_support::game_controller_state()
         });
         board.world_state.fall_detection = Some(FallDetection {
             time: now,
@@ -1007,7 +1007,10 @@ mod tests {
                         kick_off: true,
                     }
                 }
-                _ => board.parameters.control.injected_motion_command = Some(Default::default()),
+                _ => {
+                    board.parameters.control.injected_motion_command =
+                        Some(types::motion_command::MotionCommand::Damping)
+                }
             }
             refresh_replacement_goalkeeper_role(&mut board);
             assert!(

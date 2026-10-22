@@ -42,6 +42,7 @@ impl SimulatedBall {
             ball_in_ground_velocity: ground_to_world.inverse() * self.velocity,
             last_seen_ball: now,
             field_side: self.field_side,
+            source: types::world_state::BallSource::Own,
         }
     }
 }

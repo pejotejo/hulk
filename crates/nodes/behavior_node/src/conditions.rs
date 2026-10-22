@@ -23,9 +23,8 @@ use crate::{
 };
 
 pub fn should_yield_goalkeeper_clearance(blackboard: &mut Blackboard) -> bool {
-    let world = &blackboard.world_state;
     let keeper_number = blackboard.parameters.goalkeeper.player_number;
-    if world.robot.player_number == keeper_number
+    if blackboard.player_number == keeper_number
         || blackboard.last_motion_type == Some(MotionType::Kick)
         || is_in_sub_state(blackboard)
         || is_pass_receiver(blackboard)
@@ -75,7 +74,7 @@ pub(crate) fn goalkeeper_clearance_direction(blackboard: &Blackboard) -> Option<
         return None;
     }
     if keeper.inner.pass.is_some_and(|pass| {
-        pass.receiver == world.robot.player_number
+        pass.receiver == blackboard.player_number
             && world.now.duration_since(keeper.time) < hsl_network_messages::PassIntent::TIMEOUT
             && pass.target.inner.iter().all(|value| value.is_finite())
             && pass.target.x().abs() < field.length / 2.0
@@ -297,8 +296,7 @@ pub fn is_close_to_ball_aligned(blackboard: &mut Blackboard) -> bool {
 pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     if outgoing_pass_in_flight(blackboard)
         || (!is_finishing_striker_kick(blackboard)
-            && blackboard.player_number
-                != blackboard.parameters.goalkeeper.player_number
+            && blackboard.player_number != blackboard.parameters.goalkeeper.player_number
             && teammate_controls_ball(blackboard))
     {
         blackboard.last_closest_to_ball = false;
@@ -370,7 +368,7 @@ fn teammate_controls_ball(blackboard: &Blackboard) -> bool {
     }
     let own_distance = (transform.as_pose().position() - ball.position).norm();
     world.player_states.iter().any(|(number, state)| {
-        number != world.robot.player_number
+        number != blackboard.player_number
             && number != blackboard.parameters.goalkeeper.player_number
             && Some(number) != blackboard.replacement_goalkeeper_coordinator.keeper()
             && world
@@ -394,8 +392,8 @@ fn teammate_controls_ball(blackboard: &Blackboard) -> bool {
                         .inner
                         .iter()
                         .all(|value| value.is_finite())
-                    && distance <= blackboard.parameters.kicking.kick_activation_distance
-                    && distance + blackboard.parameters.kicking.approach_ball_standoff
+                    && distance <= blackboard.parameters.kicking.distance_for_kick
+                    && distance + blackboard.parameters.kicking.kick_position_ball_distance
                         < own_distance
             })
     })
@@ -554,7 +552,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        board.world_state.robot.player_number = player;
+        board.player_number = player;
         board.world_state.robot.ground_to_field = Some(Default::default());
         board.parameters.ball.closest_to_ball.enter_duration = Duration::from_millis(300);
         board.parameters.ball.closest_to_ball.exit_duration = Duration::from_millis(150);
@@ -588,12 +586,12 @@ mod tests {
             ..Default::default()
         };
         board.world_state.now = board.world_state.now + Duration::from_secs(1);
-        board.world_state.robot.player_number = PlayerNumber::Two;
+        board.player_number = PlayerNumber::Two;
         board.world_state.robot.ground_to_field = Some(Default::default());
         board.parameters.goalkeeper.player_number = PlayerNumber::One;
         board.parameters.ball.last_ball_timeout = Duration::from_secs(5);
-        board.parameters.kicking.kick_activation_distance = 1.3;
-        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.kicking.distance_for_kick = 1.3;
+        board.parameters.kicking.kick_position_ball_distance = 0.3;
         board
             .parameters
             .kicking
@@ -634,7 +632,7 @@ mod tests {
                                 }),
                                 ..Default::default()
                             },
-                            ..Default::default()
+                            ..crate::test_support::game_controller_state()
                         });
                 }
                 3 => peer.time = available.world_state.now + Duration::from_secs(1),
