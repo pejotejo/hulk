@@ -679,6 +679,22 @@ mod clearance_tests {
             })
         ));
 
+        // A previous trapping kick must not keep a subsequent long clearance weak.
+        let mut previous = keeper.body_motion.clone().unwrap();
+        if let BodyMotion::Kick { strong, .. } = &mut previous {
+            *strong = false;
+        }
+        keeper.last_motion_type = Some(MotionType::Kick);
+        keeper.last_motion_command = types::motion_command::MotionCommand::from_partial_motions(
+            previous,
+            keeper.head_motion.unwrap(),
+        );
+        tree.tick_with_trace(&mut keeper);
+        assert!(matches!(
+            keeper.body_motion,
+            Some(BodyMotion::Kick { strong: true, .. })
+        ));
+
         // Prepare before launch, while the keeper winds up and support could walk into its lane.
         for number in [PlayerNumber::Two, PlayerNumber::Three] {
             let mut preparing = three_players();
