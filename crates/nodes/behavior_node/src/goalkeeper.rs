@@ -631,6 +631,18 @@ fn is_ball_close_enough_to_goal_to_become_striker(blackboard: &mut Blackboard) -
         let maximum_ball_x = own_goal_x + blackboard.parameters.goalkeeper.striker_distance;
 
         ball.position.x() < maximum_ball_x
+            || (crate::replacement_goalkeeper::has_goal_cover(blackboard)
+                && ball.age <= blackboard.world_state.now
+                && blackboard.world_state.now.duration_since(ball.age)
+                    < crate::node::ball_timeout(&blackboard.parameters, ball.source)
+                && blackboard
+                    .world_state
+                    .robot
+                    .ground_to_field
+                    .is_some_and(|transform| {
+                        (ball.position - transform.as_pose().position()).norm()
+                            < blackboard.parameters.goalkeeper.striker_distance
+                    }))
     })
 }
 
@@ -949,6 +961,83 @@ mod tests {
         board.parameters.walking.path_planning.ball_obstacle_radius = 0.05;
         board.parameters.walking.speed.velocity_fade_distance = 3.0;
         board
+    }
+
+    #[test]
+    fn keeper_can_follow_possession_upfield_only_with_confirmed_goal_cover() {
+        let mut board = clearance_board();
+        board.field_dimensions.length = 22.0;
+        board.field_dimensions.width = 14.0;
+        board.field_dimensions.goal_inner_width = 3.0;
+        board.world_state.now = board.world_state.now + Duration::from_secs(10);
+        board.world_state.robot.primary_state = PrimaryState::Playing;
+        board.world_state.robot.ground_to_field =
+            Some(Isometry2::from_parts(vector![0.0, 0.0], 0.0));
+        board.parameters.goalkeeper.striker_distance = 3.5;
+        board.parameters.goalkeeper.x_offset = 0.3;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.network.hsl_striker_message_receive_timeout = Duration::from_secs(3);
+        board.ball.as_mut().unwrap().position = point![0.6, 0.0];
+        board.ball.as_mut().unwrap().age = board.world_state.now;
+        board.world_state.filtered_game_controller_state = Some(FilteredGameControllerState {
+            game_state: FilteredGameState::Playing {
+                ball_is_free: true,
+                kick_off: false,
+            },
+            ..crate::test_support::filtered_game_controller_state()
+        });
+        board.world_state.fall_detection = Some(types::fall_detection::FallDetection {
+            time: board.world_state.now,
+            valid_until: board.world_state.now + Duration::from_secs(10),
+            posture: types::fall_detection::Posture::Upright,
+        });
+        for (number, position) in [
+            (PlayerNumber::Two, point![-10.7, 0.0]),
+            (PlayerNumber::Three, point![-2.0, 3.0]),
+        ] {
+            board.world_state.player_states[number] = Some(TimeWrapper {
+                time: board.world_state.now,
+                inner: PlayerState {
+                    pose: position.into(),
+                    replacement_goalkeeper_claim: number == PlayerNumber::Two,
+                    ..crate::test_support::player_state()
+                },
+            });
+        }
+        assert!(!super::is_ball_close_enough_to_goal_to_become_striker(
+            &mut board
+        ));
+        crate::replacement_goalkeeper::refresh_replacement_goalkeeper_role(&mut board);
+        board.world_state.now = board.world_state.now + Duration::from_millis(500);
+        crate::replacement_goalkeeper::refresh_replacement_goalkeeper_role(&mut board);
+        assert!(super::is_ball_close_enough_to_goal_to_become_striker(
+            &mut board
+        ));
+        for case in 0..5 {
+            let mut invalid = board.clone();
+            let replacement = invalid.world_state.player_states.two.as_mut().unwrap();
+            match case {
+                0 => replacement.time = invalid.world_state.now - Duration::from_secs(3),
+                1 => replacement.inner.replacement_goalkeeper_claim = false,
+                2 => replacement.inner.pose = point![-5.0, 0.0].into(),
+                3 => {
+                    invalid
+                        .world_state
+                        .filtered_game_controller_state
+                        .as_mut()
+                        .unwrap()
+                        .penalties
+                        .two = Some(hsl_network_messages::Penalty::PickUp {
+                        remaining: Duration::from_secs(1),
+                    })
+                }
+                _ => invalid.ball.as_mut().unwrap().position = point![6.0, 0.0],
+            }
+            assert!(
+                !super::is_ball_close_enough_to_goal_to_become_striker(&mut invalid),
+                "case {case}"
+            );
+        }
     }
 
     #[test]
@@ -1833,14 +1922,9 @@ mod tests {
             panic!("blocked planner fallback must not use deadline velocity");
         };
         let [types::path::PathSegment::LineSegment(line)] = path.segments.as_slice() else {
-            panic!("expected planner failure's direct-path fallback");
+            panic!("expected a hold when no safe planned route exists");
         };
-        assert!(
-            board
-                .path_obstacles_output
-                .iter()
-                .any(|obstacle| obstacle.shape.intersects_line_segment(*line))
-        );
+        assert_eq!(line.0, line.1);
         board.world_state.rule_obstacles.clear();
 
         board.world_state.now = ros_z::time::Time::from_nanos(1_000_000_000);

@@ -41,8 +41,6 @@ pub struct BehaviorInputs {
     ball: Reference<Option<BallPosition<Ground>>>,
     visual_ball: Reference<Option<BallPosition<Ground>>>,
     obstacles: Reference<Vec<Obstacle>>,
-    humanoid_obstacles: Reference<Vec<Obstacle>>,
-    stationary_obstacles: Reference<Vec<Obstacle>>,
     humanoids: Reference<Vec<HumanoidTruth>>,
     humanoid_tracks: Reference<TrackedObjects<HumanoidTrack>>,
     interest: Publisher<Point2<Ground>>,
@@ -56,15 +54,9 @@ impl BehaviorInputs {
             ball: Reference::new(node, "ball_filter/ball_position", profile).await?,
             visual_ball: Reference::new(node, "visual_kick/ball_position", profile).await?,
             obstacles: Reference::new(node, "obstacles", profile).await?,
-            humanoid_obstacles: Reference::new(node, "humanoid_filter/obstacles", profile).await?,
-            stationary_obstacles: Reference::new(
-                node,
-                "stationary_object_filter/obstacles",
-                profile,
-            )
-            .await?,
             humanoids: Reference::new(node, "humanoids", profile).await?,
-            humanoid_tracks: Reference::new(node, "humanoid_filter/tracks", profile).await?,
+            humanoid_tracks: Reference::new(node, "obstacle_filter/humanoid_tracks", profile)
+                .await?,
             selected_ball: node
                 .subscriber("ball_filter/ball_position")
                 .cache(1)
@@ -89,16 +81,11 @@ impl BehaviorInputs {
             .map(|ball| ball_in_ground(ground_to_world, ball.position, ball.velocity, time));
         let obstacles_needed = self.obstacles.needed();
         let mut obstacles = Vec::new();
-        if obstacles_needed || self.stationary_obstacles.needed() {
+        if obstacles_needed {
             let goal_post_obstacles = goal_posts_in_ground(&frame.field, side, ground_to_world);
-            self.stationary_obstacles
-                .publish(&goal_post_obstacles, time)
-                .await?;
-            if obstacles_needed {
-                obstacles.extend(goal_post_obstacles);
-            }
+            obstacles.extend(goal_post_obstacles);
         }
-        if obstacles_needed || self.humanoid_obstacles.needed() {
+        if obstacles_needed {
             let inverse = ground_to_world.inverse();
             let robot_obstacles: Vec<_> = frame
                 .robots
@@ -108,12 +95,7 @@ impl BehaviorInputs {
                     Obstacle::robot(point![p.x, p.y], 0.2, 0.25)
                 })
                 .collect();
-            self.humanoid_obstacles
-                .publish(&robot_obstacles, time)
-                .await?;
-            if obstacles_needed {
-                obstacles.extend(robot_obstacles);
-            }
+            obstacles.extend(robot_obstacles);
         }
         if self.humanoids.needed() || self.humanoid_tracks.needed() {
             let inverse = ground_to_world.inverse();

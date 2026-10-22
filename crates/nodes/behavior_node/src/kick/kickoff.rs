@@ -374,7 +374,7 @@ mod tests {
     use std::time::Duration;
 
     use hsl_network_messages::{HulkMessage, Penalty};
-    use linear_algebra::Pose2;
+    use linear_algebra::{Isometry2, Pose2, vector};
     use types::{
         fall_detection::{FallDetection, Posture},
         field_dimensions::{FieldDimensions, Side},
@@ -385,7 +385,7 @@ mod tests {
         path::PathSegment,
         primary_state::PrimaryState,
         time_wrapper::TimeWrapper,
-        world_state::{BallSource, PlayerState},
+        world_state::{BallSource, BallState, PlayerState},
     };
 
     use crate::node::LastBall;
@@ -614,6 +614,54 @@ mod tests {
         board.ball.as_mut().unwrap().velocity = linear_algebra::vector![0.0, -2.4];
         board.world_state.now = now + Duration::from_millis(501);
         assert!(is_own_kickoff(&mut board));
+    }
+
+    #[test]
+    fn released_kickoff_receiver_shoots_with_observed_pair_and_outgoing_direction() {
+        let mut board = blackboard();
+        board.player_number = kickoff_receiver(&board).unwrap();
+        board.last_motion_type = Some(MotionType::Walk);
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        board.parameters.kicking.kick_activation_distance = 1.3;
+        board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        let position = point![0.4, 0.05];
+        let velocity = vector![-0.2, 0.1];
+        for side in [-1.0, 1.0] {
+            let transform = Isometry2::from_parts(vector![-0.3, side * 2.0], -side * 0.35);
+            board.world_state.robot.ground_to_field = Some(transform);
+            // The cached field estimate still belongs to the preceding receiving pose.
+            board.ball.as_mut().unwrap().position = point![1.2, 0.8];
+            board.ball.as_mut().unwrap().velocity = vector![3.0, 0.0];
+            board.world_state.ball = Some(BallState {
+                ball_in_ground: position,
+                ball_in_ground_velocity: velocity,
+                ball_in_field: transform * position,
+                last_seen_ball: board.world_state.now.to_wallclock(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            });
+            assert!(!is_own_kickoff(&mut board));
+            board.ball_action = Some(BallAction::ShootAtGoalCenter);
+            assert_eq!(execute_ball_action(&mut board), Status::Success);
+            let Some(BodyMotion::Kick {
+                ball_position,
+                ball_velocity,
+                kick_direction,
+                strong: true,
+                soft: false,
+                ..
+            }) = board.body_motion
+            else {
+                panic!("expected receiver's outgoing goal shot")
+            };
+            assert_eq!(ball_position, position);
+            assert_eq!(ball_velocity, velocity);
+            let outgoing = Orientation2::from_vector(
+                transform.inverse() * point![board.field_dimensions.length / 2.0, 0.0] - position,
+            );
+            assert!(kick_direction.rotation_to(outgoing).angle().abs() < 1e-6);
+        }
     }
 
     #[test]

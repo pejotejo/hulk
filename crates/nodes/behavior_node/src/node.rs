@@ -33,7 +33,7 @@ use types::{
     motion_command::{BodyMotion, HeadMotion, MotionCommand},
     motion_type::MotionType,
     obstacles::Obstacle,
-    parameters::{BehaviorParameters, ObstacleSource},
+    parameters::BehaviorParameters,
     path_obstacles::PathObstacle,
     players::Players,
     primary_state::PrimaryState,
@@ -396,20 +396,10 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         .cache(1)
         .build()
         .await?;
-    let humanoid_obstacles_cache = node
-        .subscriber::<Vec<Obstacle>>("humanoid_filter/obstacles")
-        .cache(1)
-        .build()
-        .await?;
     let humanoid_tracks_cache = node
-        .subscriber::<TrackedObjects<HumanoidTrack>>("humanoid_filter/tracks")
+        .subscriber::<TrackedObjects<HumanoidTrack>>("obstacle_filter/humanoid_tracks")
         .cache(1)
         .with_stamp(|tracks: &TrackedObjects<HumanoidTrack>| tracks.time)
-        .build()
-        .await?;
-    let stationary_obstacles_cache = node
-        .subscriber::<Vec<Obstacle>>("stationary_object_filter/obstacles")
-        .cache(1)
         .build()
         .await?;
     let position_of_interest_cache = node
@@ -650,20 +640,10 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         blackboard.world_state.humanoid_tracks = humanoid_tracks_cache
             .get_latest()
             .map(|tracks| tracks.as_ref().clone());
-        let latest_obstacles = |cache: &ros_z::cache::Cache<Vec<Obstacle>>| {
-            cache
-                .get_latest()
-                .map(|obstacles| obstacles.as_ref().clone())
-                .unwrap_or_default()
-        };
-        blackboard.world_state.obstacles = match blackboard.parameters.obstacle_source {
-            ObstacleSource::Legacy => latest_obstacles(&obstacles_cache),
-            ObstacleSource::ObjectFilters => {
-                let mut obstacles = latest_obstacles(&humanoid_obstacles_cache);
-                obstacles.extend(latest_obstacles(&stationary_obstacles_cache));
-                obstacles
-            }
-        };
+        blackboard.world_state.obstacles = obstacles_cache
+            .get_latest()
+            .map(|obstacles| obstacles.as_ref().clone())
+            .unwrap_or_default();
         blackboard.world_state.player_states = player_states;
         blackboard.world_state.position_of_interest = position_of_interest_cache
             .get_latest()

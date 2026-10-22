@@ -10,7 +10,7 @@ use types::{
     motion_type::MotionType,
     obstacles::ObstacleKind,
     parameters::VoronoiParameters,
-    path::{Path, direct_path, traits::PathProgress},
+    path::{Path, PathSegment, direct_path, traits::Project},
 };
 use voronoi::{Ownership, VoronoiGrid};
 
@@ -25,6 +25,7 @@ use crate::{
     },
     kick::{
         execution::execute_ball_action,
+        kick_ball_position_in_ground,
         kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
     },
     node::{Blackboard, ball_timeout},
@@ -99,7 +100,11 @@ pub(crate) fn plan_interception(
     target_in_ground: Point2<Ground>,
     ground_to_field: Isometry2<Ground, Field>,
 ) -> Path {
-    plan_with_ball_obstacle(blackboard, target_in_ground, ground_to_field, false)
+    let contested = opponent_near_ball(
+        blackboard,
+        blackboard.parameters.kicking.strategy.pressure_distance,
+    );
+    plan_with_ball_obstacle(blackboard, target_in_ground, ground_to_field, contested)
 }
 
 fn plan_with_ball_obstacle(
@@ -175,27 +180,69 @@ fn plan_with_ball_obstacle(
         })
         .filter(|position| position.inner.iter().all(|value| value.is_finite()));
 
-    if avoid_ball && let Some(ball_position) = ball_obstacle {
-        planner.with_ball(
-            ball_position,
-            parameters.ball_obstacle_radius,
-            parameters.robot_radius,
-        );
-    }
-
     let x_max = field_dimensions.length / 2.0 + field_dimensions.border_strip_width;
     let y_max = field_dimensions.width / 2.0 + field_dimensions.border_strip_width;
-    let clamped_target_in_robot = ground_to_field.inverse()
+    let mut clamped_target_in_robot = ground_to_field.inverse()
         * point![
             target_in_field.x().clamp(-x_max, x_max),
             target_in_field.y().clamp(-y_max, y_max)
         ];
 
+    if avoid_ball && let Some(ball_position) = ball_obstacle {
+        let ball_radius = parameters
+            .ball_obstacle_radius
+            .max(field_dimensions.ball_radius);
+        planner.with_ball(ball_position, ball_radius, parameters.robot_radius);
+        // Match the planner's target margin without shrinking the ball obstacle at contact.
+        let clearance = 1.1 * (parameters.robot_radius + ball_radius);
+        let offset = clamped_target_in_robot - ball_position;
+        if offset.norm() < clearance {
+            let side = offset
+                .try_normalize(f32::EPSILON)
+                .or_else(|| (-ball_position.coords()).try_normalize(f32::EPSILON))
+                .unwrap_or_else(|| linear_algebra::vector![1.0, 0.0]);
+            clamped_target_in_robot = ball_position + side * clearance;
+        }
+    }
+
     let path = planner
         .plan(Point::origin(), clamped_target_in_robot)
         .unwrap();
     blackboard.path_obstacles_output = planner.obstacles;
-    path.unwrap_or_else(|| direct_path(Point::origin(), target_in_ground))
+    path.filter(|path| {
+        !avoid_ball
+            || ball_obstacle.is_none_or(|ball| {
+                // Overlapping obstacles can shrink the planner's ball circle at the target.
+                path_keeps_ball_clearance(
+                    path,
+                    ball,
+                    (parameters.robot_radius + field_dimensions.ball_radius)
+                        .min(ball.coords().norm()),
+                )
+            })
+    })
+    .unwrap_or_else(|| {
+        // A failed avoidance plan must not fall back to walking through the ball.
+        direct_path(
+            Point::origin(),
+            if avoid_ball {
+                Point::origin()
+            } else {
+                target_in_ground
+            },
+        )
+    })
+}
+
+fn path_keeps_ball_clearance(path: &Path, ball: Point2<Ground>, clearance: f32) -> bool {
+    path.segments.iter().all(|segment| {
+        let distance = match segment {
+            // Projecting the center of an arc would normalize a zero vector.
+            PathSegment::Arc(arc) if arc.circle.center == ball => arc.circle.radius,
+            _ => (segment.project(ball) - ball).norm(),
+        };
+        distance + 1e-5 >= clearance
+    })
 }
 
 pub fn walk_to(
@@ -259,10 +306,12 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
         &blackboard.world_state.robot.ground_to_field,
     ) {
         let field_to_ground = ground_to_field.inverse();
+        let observed_ball = kick_ball_position_in_ground(blackboard, ground_to_field)
+            .unwrap_or(field_to_ground * ball.position);
         let ball_in_ground =
             field_to_ground * blackboard.projected_ball_position(ball.position, ball.velocity);
         let goal_position = field_to_ground * point!(blackboard.field_dimensions.length / 2.0, 0.0);
-        let orientation = Orientation2::from_vector(goal_position - ball_in_ground);
+        let orientation = Orientation2::from_vector(observed_ball.coords());
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;
 
@@ -273,7 +322,10 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
             blackboard,
             Pose2::from_parts(target_position, orientation),
             kicking_speed,
-            OrientationMode::AlignWithPath,
+            OrientationMode::LookAt {
+                target: observed_ball,
+                tolerance: walk_and_stand.orientation_tolerance,
+            },
             walk_and_stand.normal_distance_to_be_aligned,
             walk_and_stand.hysteresis,
         )
@@ -323,24 +375,23 @@ pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
     let walking = blackboard.parameters.walking.walk_and_stand;
     blackboard.ball_action = None;
     blackboard.kick_target = None;
-    let path = plan_interception(blackboard, target, transform);
-    let forward = path.forward(Point2::origin());
-    if forward.x() < 0.0 {
+    if ball.x() < 0.0 {
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: Vector2::zeros(),
             angular_velocity: blackboard
                 .walking_velocity_limits
-                .scale_angular_axis(Orientation2::from_vector(forward).angle()),
+                .scale_angular_axis(Orientation2::from_vector(ball.coords()).angle()),
         });
         return Status::Success;
     }
+    let path = plan(blackboard, target, transform);
     blackboard.body_motion = Some(BodyMotion::Walk {
         path,
         orientation_mode: OrientationMode::LookAt {
             target: ball,
             tolerance: walking.orientation_tolerance,
         },
-        target_orientation: Orientation2::from_vector(ball - target),
+        target_orientation: Orientation2::from_vector(ball.coords()),
         distance_to_be_aligned: walking.normal_distance_to_be_aligned,
         speed: blackboard.parameters.walking.speed.kicking,
     });
@@ -372,7 +423,7 @@ pub fn walk_to_block_position(blackboard: &mut Blackboard) -> Status {
         blackboard.world_state.robot.ground_to_field,
     ) {
         let ball_position = ground_to_field.inverse() * ball.position;
-        let orientation = Orientation2::from_vector(ball_position - *block_position);
+        let orientation = Orientation2::from_vector(ball_position.coords());
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let blocking_speed = blackboard.parameters.walking.speed.blocking;
 
@@ -811,7 +862,132 @@ fn target_player_position(
 
 #[cfg(test)]
 mod ball_support_tests {
+    use std::time::Duration;
+
+    use crate::node::LastBall;
+    use geometry::{arc::Arc, circle::Circle, direction::Direction, line_segment::LineSegment};
+    use types::{
+        field_dimensions::Side,
+        path::traits::{EndPoints, PathProgress, Project},
+        world_state::BallSource,
+    };
+
     use super::*;
+
+    #[test]
+    fn ball_centered_arc_keeps_clearance_without_accepting_unsafe_segments() {
+        let ball = point![0.3, 0.9];
+        let mut path = Path {
+            segments: vec![PathSegment::Arc(Arc {
+                circle: Circle::new(ball, 0.45),
+                start: Orientation2::new(-std::f32::consts::FRAC_PI_4),
+                end: Orientation2::new(std::f32::consts::FRAC_PI_2),
+                direction: Direction::Counterclockwise,
+            })],
+        };
+        assert!(path_keeps_ball_clearance(&path, ball, 0.45));
+        assert!(!path_keeps_ball_clearance(&path, ball, 0.46));
+        path.segments.push(PathSegment::LineSegment(LineSegment(
+            Point2::origin(),
+            ball,
+        )));
+        assert!(!path_keeps_ball_clearance(&path, ball, 0.45));
+    }
+
+    #[test]
+    fn predicted_approach_faces_observed_ball_before_and_after_overshoot() {
+        for robot_x in [0.0, 3.0] {
+            let transform = Isometry2::from_parts(linear_algebra::vector![robot_x, 0.0], 0.0);
+            let mut board = Blackboard {
+                field_dimensions: FieldDimensions::SPL_2025,
+                ..Default::default()
+            };
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+            board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+            board.parameters.kicking.approach_ball_standoff = 0.3;
+            board.parameters.walking.path_planning.robot_radius = 0.4;
+            board.parameters.walking.path_planning.ball_obstacle_radius = 0.1;
+            board.ball = Some(LastBall {
+                position: point![1.0, 0.4],
+                velocity: linear_algebra::vector![-3.0, 0.0],
+                age: board.world_state.now,
+                field_side: Side::Left,
+                source: BallSource::Own,
+            });
+            board.last_ball = board.ball.clone();
+            assert_eq!(walk_to_ball(&mut board), Status::Success);
+            let Some(BodyMotion::Walk {
+                path,
+                orientation_mode: OrientationMode::LookAt { target, .. },
+                target_orientation,
+                ..
+            }) = &board.body_motion
+            else {
+                panic!("expected approach facing the observed ball")
+            };
+            let observed = transform.inverse() * point![1.0, 0.4];
+            approx::assert_relative_eq!(*target, observed);
+            approx::assert_relative_eq!(
+                target_orientation.as_unit_vector(),
+                observed.coords().normalize()
+            );
+            assert!(path.forward(Point2::origin()).x() < 0.0);
+            assert!((transform * path.end_point()).x() < 0.0);
+        }
+    }
+
+    #[test]
+    fn far_stationary_ball_approach_walks_to_clearance_on_requested_side() {
+        for obstacle_radius in [0.0, 0.05, 0.5] {
+            let transform = Isometry2::identity();
+            let ball = point![3.0, 0.0];
+            let mut board = Blackboard {
+                player_number: PlayerNumber::Two,
+                field_dimensions: FieldDimensions::SPL_2025,
+                last_motion_type: Some(MotionType::Walk),
+                ball_action: Some(crate::kick::strategy::BallAction::ShootAtGoalCenter),
+                ..Default::default()
+            };
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.parameters.goalkeeper.player_number = PlayerNumber::One;
+            board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+            board.parameters.kicking.kick_activation_distance = 1.3;
+            board.parameters.kicking.approach_ball_standoff = 0.3;
+            board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+            board.parameters.walking.path_planning.robot_radius = 0.4;
+            board.parameters.walking.path_planning.ball_obstacle_radius = obstacle_radius;
+            board.parameters.walking.speed.kicking = 1.8;
+            board.ball = Some(LastBall {
+                position: transform * ball,
+                velocity: Vector2::zeros(),
+                age: board.world_state.now,
+                field_side: Side::Left,
+                source: BallSource::Own,
+            });
+            let clearance = 0.4 + obstacle_radius.max(board.field_dimensions.ball_radius);
+            assert_eq!(execute_ball_action(&mut board), Status::Success);
+            let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+                panic!("far stationary ball must retain a walking approach")
+            };
+            approx::assert_relative_eq!(
+                path.end_point(),
+                point![3.0 - 1.1 * clearance, 0.0],
+                epsilon = 1e-5
+            );
+            assert!(path.forward(Point2::origin()).x() > 0.0);
+            assert!((path.project(ball) - ball).norm() >= clearance - 1e-5);
+            assert!((path.end_point() - ball).norm() < 1.3);
+
+            let far_side = plan(&mut board, point![3.3, 0.0], transform);
+            approx::assert_relative_eq!(
+                far_side.end_point(),
+                point![3.0 + 1.1 * clearance, 0.0],
+                epsilon = 1e-5
+            );
+            assert!((far_side.project(ball) - ball).norm() >= clearance - 1e-5);
+        }
+    }
 
     #[test]
     fn blocking_steps_are_small_in_front_and_fast_for_offset_or_distant_balls() {
@@ -999,6 +1175,7 @@ mod ball_support_tests {
             source: BallSource::Own,
         });
         blackboard.parameters.kicking.strategy.pressure_distance = 0.8;
+        blackboard.parameters.ball.last_ball_timeout = std::time::Duration::from_secs(1);
         blackboard.parameters.kicking.approach_ball_standoff = 0.3;
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
         blackboard.parameters.walking.path_planning.robot_radius = 0.4;
@@ -1036,7 +1213,16 @@ mod ball_support_tests {
             assert!((transform * endpoint).x() < 2.0);
             assert!((endpoint - ball).norm() < 1.3);
             assert!((endpoint - blackboard.world_state.obstacles[0].position).norm() >= 0.6);
-            assert!((transform * target_orientation.as_unit_vector()).x() > 0.0);
+            approx::assert_relative_eq!(
+                target_orientation.as_unit_vector(),
+                ball.coords().normalize()
+            );
+            assert!(
+                (path.project(ball) - ball).norm()
+                    >= blackboard.parameters.walking.path_planning.robot_radius
+                        + blackboard.field_dimensions.ball_radius
+                        - 1e-5
+            );
             approx::assert_relative_eq!(*target, ball);
             assert_eq!(*speed, 1.8);
         }
@@ -1054,6 +1240,46 @@ mod ball_support_tests {
         assert_eq!(block_opponent_with_ball(&mut blackboard), Status::Success);
         assert!(matches!(blackboard.body_motion,
             Some(BodyMotion::WalkWithVelocity { velocity, .. }) if velocity == Vector2::zeros()));
+    }
+
+    #[test]
+    fn contested_interception_avoids_ball_and_holds_if_route_is_blocked() {
+        let mut board = Blackboard {
+            player_number: PlayerNumber::Two,
+            field_dimensions: FieldDimensions::SPL_2025,
+            ..Default::default()
+        };
+        board.world_state.robot.ground_to_field = Some(Isometry2::identity());
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.path_planning.ball_obstacle_radius = 0.1;
+        board.parameters.kicking.strategy.pressure_distance = 0.8;
+        board.ball = Some(LastBall {
+            position: point![2.0, 0.0],
+            velocity: linear_algebra::vector![-1.0, 0.0],
+            age: board.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        board.world_state.obstacles = vec![types::obstacles::Obstacle::robot(
+            point![2.2, 0.0],
+            0.2,
+            0.2,
+        )];
+        let target = point![3.5, 0.0];
+        let path = plan_interception(&mut board, target, Isometry2::identity());
+        assert!((path.project(point![2.0, 0.0]) - point![2.0, 0.0]).norm() >= 0.5 - 1e-5);
+        board
+            .world_state
+            .rule_obstacles
+            .push(types::rule_obstacles::RuleObstacle::Rectangle(
+                geometry::rectangle::Rectangle {
+                    min: point![3.0, -1.0],
+                    max: point![4.0, 1.0],
+                },
+            ));
+        let blocked = plan_interception(&mut board, target, Isometry2::identity());
+        assert_eq!(blocked, direct_path(Point2::origin(), Point2::origin()));
     }
 
     #[test]

@@ -316,7 +316,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
             if needs_outgoing_turn {
                 orientation
             } else {
-                Orientation2::from_vector(projected.coords())
+                Orientation2::from_vector(ball.coords())
             },
         ),
         blackboard.parameters.walking.speed.kicking,
@@ -326,7 +326,10 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
                 tolerance: walk.orientation_tolerance,
             }
         } else {
-            OrientationMode::AlignWithPath
+            OrientationMode::LookAt {
+                target: ball,
+                tolerance: walk.orientation_tolerance,
+            }
         },
         walk.normal_distance_to_be_aligned,
         walk.hysteresis,
@@ -342,7 +345,7 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
                 velocity: Vector2::zeros(),
                 angular_velocity: blackboard
                     .walking_velocity_limits
-                    .scale_angular_axis(Orientation2::from_vector(forward).angle()),
+                    .scale_angular_axis(Orientation2::from_vector(ball.coords()).angle()),
             });
         }
     }
@@ -652,6 +655,11 @@ mod tests {
             ));
             board.world_state.robot.ground_to_field =
                 Some(Isometry2::from_parts(vector![-1.05, 0.0], 0.0));
+            if let Some(ball) = &mut board.world_state.ball {
+                let transform = board.world_state.robot.ground_to_field.unwrap();
+                ball.ball_in_ground = transform.inverse() * position;
+                ball.ball_in_ground_velocity = transform.inverse() * velocity;
+            }
             execute_ball_action(&mut board);
             assert!(matches!(
                 board.body_motion,
@@ -662,6 +670,55 @@ mod tests {
                 })
             ));
         }
+    }
+
+    #[test]
+    fn forecast_pursuit_and_overshoot_keep_facing_observed_ball() {
+        let mut board = Blackboard {
+            player_number: PlayerNumber::Two,
+            field_dimensions: FieldDimensions::SPL_2025,
+            last_motion_type: Some(MotionType::Walk),
+            ball_action: Some(BallAction::Dribble),
+            ball: Some(LastBall {
+                position: point![2.0, 0.2],
+                velocity: vector![0.0, 2.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        board.world_state.robot.ground_to_field = Some(Default::default());
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.ball.pursuit_lookahead = Duration::from_secs(1);
+        board.parameters.kicking.kick_activation_distance = 0.5;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+        board.parameters.kicking.strategy.maximum_dribble_distance = 1.0;
+        board.walking_velocity_limits.angular_velocity_limit = 2.0;
+        assert_eq!(execute_ball_action(&mut board), Status::Success);
+        let Some(BodyMotion::Walk {
+            orientation_mode: OrientationMode::LookAt { target, .. },
+            target_orientation,
+            ref path,
+            ..
+        }) = board.body_motion
+        else {
+            panic!("expected forecast pursuit facing the observed ball")
+        };
+        assert_eq!(target, point![2.0, 0.2]);
+        assert!(path.end_point().y() > target.y());
+        assert!((target_orientation.angle() - target.y().atan2(target.x())).abs() < 1e-6);
+
+        board.ball.as_mut().unwrap().position = point![1.0, 0.7];
+        board.ball.as_mut().unwrap().velocity = vector![-3.0, -3.0];
+        board.ball_action = Some(BallAction::Dribble);
+        assert_eq!(execute_ball_action(&mut board), Status::Success);
+        assert!(matches!(board.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, angular_velocity })
+            if velocity == Vector2::zeros()
+                && (angular_velocity - 2.0 * 0.7_f32.atan2(1.0)).abs() < 1e-6));
     }
 
     #[test]

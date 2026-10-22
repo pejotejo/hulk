@@ -5849,7 +5849,6 @@ dependencies = [
  "ground_provider",
  "hardware_interface",
  "head_motion",
- "humanoid_filter",
  "image_receiver",
  "kinematics_provider",
  "led_handler",
@@ -5873,7 +5872,6 @@ dependencies = [
  "rule_obstacle_composer",
  "safe_pose_checker",
  "search_suggestor",
- "stationary_object_filter",
  "stereo_visual_odometry",
  "support_foot_estimator",
  "team_ball_filter",
@@ -5894,27 +5892,6 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "nucleo-matcher",
-]
-
-[[package]]
-name = "humanoid_filter"
-version = "0.1.0"
-dependencies = [
- "approx",
- "color-eyre",
- "coordinate_systems",
- "geometry",
- "hsl_network_messages",
- "json5",
- "linear_algebra",
- "nalgebra 0.34.2",
- "object_tracking",
- "projection",
- "ros-z",
- "ros-z-streams",
- "serde",
- "tokio",
- "types",
 ]
 
 [[package]]
@@ -8435,25 +8412,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "object_tracking"
-version = "0.1.0"
-dependencies = [
- "approx",
- "coordinate_systems",
- "geometry",
- "linear_algebra",
- "nalgebra 0.34.2",
- "projection",
- "ros-z",
- "serde",
- "types",
-]
-
-[[package]]
 name = "obstacle_filter"
 version = "0.1.0"
 dependencies = [
- "booster",
  "color-eyre",
  "coordinate_systems",
  "filtering",
@@ -11152,7 +11113,6 @@ dependencies = [
  "hardware_interface",
  "head_motion",
  "hsl_network_messages",
- "humanoid_filter",
  "image",
  "json5",
  "jsonschema",
@@ -11195,7 +11155,6 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "socket2 0.6.5",
- "stationary_object_filter",
  "support_foot_estimator",
  "team_ball_filter",
  "tempfile",
@@ -11514,26 +11473,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "stationary_object_filter"
-version = "0.1.0"
-dependencies = [
- "approx",
- "color-eyre",
- "coordinate_systems",
- "geometry",
- "json5",
- "linear_algebra",
- "nalgebra 0.34.2",
- "object_tracking",
- "projection",
- "ros-z",
- "ros-z-streams",
- "serde",
- "tokio",
- "types",
 ]
 
 [[package]]

@@ -293,36 +293,25 @@ pub(crate) fn kick_ball_in_ground(
     blackboard: &Blackboard,
     ground_to_field: &Isometry2<Ground, Field>,
 ) -> Option<(Point2<Ground>, Vector2<Ground>)> {
-    let velocity = blackboard
+    // Keep the observed position and velocity in their shared Ground frame.
+    blackboard
         .world_state
         .ball
-        .map(|ball| ball.ball_in_ground_velocity)
+        .map(|ball| (ball.ball_in_ground, ball.ball_in_ground_velocity))
         .or_else(|| {
-            blackboard
-                .ball
-                .as_ref()
-                .map(|ball| ground_to_field.inverse() * ball.velocity)
+            let ball = blackboard.ball.as_ref()?;
+            let field_to_ground = ground_to_field.inverse();
+            Some((
+                field_to_ground * ball.position,
+                field_to_ground * ball.velocity,
+            ))
         })
-        .filter(|velocity| velocity.inner.iter().all(|value| value.is_finite()))
-        .unwrap_or_else(Vector2::zeros);
-    // Percepts provide the close position; their selector does not estimate velocity.
-    blackboard
-        .visual_kick_ball_position
-        .as_ref()
-        .filter(|ball| {
-            ball.age_at(blackboard.world_state.now)
-                .is_some_and(|age| age <= std::time::Duration::from_millis(100))
-                && ball.position.inner.iter().all(|value| value.is_finite())
-                && ball.position.coords().norm()
-                    <= blackboard.parameters.kicking.kick_activation_distance
-                        + blackboard.parameters.kicking.kick_activation_hysteresis
-        })
-        .map(|ball| (ball.position, velocity))
-        .or_else(|| {
-            blackboard
-                .ball
-                .as_ref()
-                .map(|ball| (ground_to_field.inverse() * ball.position, velocity))
+        .filter(|(position, velocity)| {
+            position
+                .inner
+                .iter()
+                .chain(velocity.inner.iter())
+                .all(|value| value.is_finite())
         })
 }
 
@@ -375,9 +364,10 @@ pub(super) fn pass_receiver_position(
 mod tests {
     use linear_algebra::vector;
     use types::{
+        ball_position::BallPosition,
         field_dimensions::{FieldDimensions, Side},
         obstacles::Obstacle,
-        world_state::BallSource,
+        world_state::{BallSource, BallState},
     };
 
     use crate::node::LastBall;
@@ -385,46 +375,79 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_close_percept_overrides_position_without_erasing_rolling_velocity() {
-        use std::time::Duration;
-        use types::{ball_position::BallPosition, world_state::BallState};
-        let mut board = Blackboard::default();
-        board.parameters.kicking.kick_activation_distance = 1.3;
-        board.ball = Some(LastBall {
-            position: point![1.0, 0.2],
-            velocity: vector![-1.5, 0.0],
-            age: Default::default(),
-            field_side: Side::Left,
-            source: BallSource::Own,
-        });
+    fn kick_preserves_world_ball_pair_despite_cached_pose_and_visual_disagreement() {
+        let mut board = Blackboard {
+            ball: Some(LastBall {
+                position: point![2.0, 1.2],
+                velocity: vector![0.0, -1.5],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
         board.world_state.ball = Some(BallState {
-            ball_in_ground_velocity: vector![-1.5, 0.0],
-            ..types::world_state::BallState::new_at_center(Default::default())
+            ball_in_ground: point![0.6, 0.1],
+            ball_in_ground_velocity: vector![-1.5, 0.3],
+            ..BallState::new_at_center(Default::default())
         });
         board.visual_kick_ball_position = Some(BallPosition {
             position: point![0.4, 0.1],
             velocity: Vector2::zeros(),
             last_seen: Default::default(),
         });
-        assert_eq!(
-            kick_ball_in_ground(&board, &Isometry2::identity()),
-            Some((point![0.4, 0.1], vector![-1.5, 0.0]))
-        );
-        board.world_state.now = board.world_state.now + Duration::from_millis(101);
-        assert_eq!(
-            kick_ball_in_ground(&board, &Isometry2::identity())
-                .unwrap()
-                .0,
-            point![1.0, 0.2]
-        );
-        board.visual_kick_ball_position.as_mut().unwrap().last_seen = board.world_state.now;
-        board.visual_kick_ball_position.as_mut().unwrap().position = point![3.0, 0.0];
-        assert_eq!(
-            kick_ball_in_ground(&board, &Isometry2::identity())
-                .unwrap()
-                .0,
-            point![1.0, 0.2]
-        );
+        for transform in [
+            Isometry2::identity(),
+            Isometry2::from_parts(vector![1.0, 2.0], std::f32::consts::FRAC_PI_2),
+            Isometry2::from_parts(vector![-0.5, 0.3], -std::f32::consts::FRAC_PI_2),
+        ] {
+            board.world_state.robot.ground_to_field = Some(transform);
+            assert_eq!(kick(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::Kick { ball_position, ball_velocity, .. })
+                if ball_position == point![0.6, 0.1] && ball_velocity == vector![-1.5, 0.3]));
+        }
+    }
+
+    #[test]
+    fn cached_ball_rebases_position_and_velocity_together_without_lookahead() {
+        let mut board = Blackboard::default();
+        board.parameters.ball.pursuit_lookahead = std::time::Duration::from_secs(1);
+        board.ball = Some(LastBall {
+            position: point![1.0, 2.0],
+            velocity: vector![3.0, 4.0],
+            age: Default::default(),
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
+        for (angle, expected_position, expected_velocity) in [
+            (
+                std::f32::consts::FRAC_PI_2,
+                point![2.0, 0.0],
+                vector![4.0, -3.0],
+            ),
+            (
+                -std::f32::consts::FRAC_PI_2,
+                point![-2.0, 0.0],
+                vector![-4.0, 3.0],
+            ),
+        ] {
+            let transform = Isometry2::from_parts(vector![1.0, 0.0], angle);
+            let (position, velocity) = kick_ball_in_ground(&board, &transform).unwrap();
+            assert!((position - expected_position).norm() < 1e-6);
+            assert!((velocity - expected_velocity).norm() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn invalid_observed_velocity_does_not_become_a_stationary_kick() {
+        let mut board = Blackboard::default();
+        board.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.6, 0.1],
+            ball_in_ground_velocity: vector![f32::NAN, 0.0],
+            ..BallState::new_at_center(Default::default())
+        });
+        assert!(kick_ball_in_ground(&board, &Isometry2::identity()).is_none());
     }
 
     #[test]

@@ -169,6 +169,33 @@ pub fn refresh_replacement_goalkeeper_role(blackboard: &mut Blackboard) -> Statu
     Status::Success
 }
 
+pub(crate) fn has_goal_cover(blackboard: &Blackboard) -> bool {
+    let Some(number) = blackboard.replacement_goalkeeper_coordinator.keeper() else {
+        return false;
+    };
+    let world = &blackboard.world_state;
+    let field = &blackboard.field_dimensions;
+    number != blackboard.parameters.goalkeeper.player_number
+        && world.player_states[number]
+            .as_ref()
+            .is_some_and(|replacement| {
+                replacement.time <= world.now
+                    && world.now.duration_since(replacement.time)
+                        < blackboard
+                            .parameters
+                            .network
+                            .hsl_striker_message_receive_timeout
+                    && replacement.inner.replacement_goalkeeper_claim
+                    && world
+                        .filtered_game_controller_state
+                        .as_ref()
+                        .is_none_or(|game| game.penalties[number].is_none())
+                    && replacement.inner.pose.position().x() >= -field.length / 2.0
+                    && (replacement.inner.pose.position() - point![-field.length / 2.0, 0.0]).norm()
+                        <= field.goal_inner_width / 2.0 + blackboard.parameters.goalkeeper.x_offset
+            })
+}
+
 fn election_input(blackboard: &mut Blackboard) -> Option<ElectionInput> {
     let protected_ball_action =
         is_finishing_striker_kick(blackboard) || is_pass_receiver(blackboard);

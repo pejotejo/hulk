@@ -1477,10 +1477,10 @@ mod tests {
 
         // Strategy and execution must use the same observed ball, not disagree on range.
         blackboard.world_state.obstacles.clear();
-        blackboard.visual_kick_ball_position = Some(BallPosition {
-            position: point![2.0, 0.0],
-            velocity: Default::default(),
-            last_seen: Default::default(),
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![2.0, 0.0],
+            ball_in_field: point![2.0, 0.0],
+            ..BallState::new_at_center(Default::default())
         });
         select_ball_action(&mut blackboard);
         assert!(matches!(
@@ -1771,22 +1771,30 @@ mod tests {
     }
 
     #[test]
-    fn kick_handoff_uses_close_visual_ball_and_ignores_distant_percept() {
+    fn kick_handoff_uses_coherent_world_ball_and_cached_fallback() {
         let mut blackboard = blackboard();
         blackboard.parameters.kicking.kick_activation_distance = 1.0;
         blackboard.visual_kick_ball_position = Some(BallPosition {
-            position: point![0.5, 0.0],
+            position: point![0.9, 0.0],
             velocity: Default::default(),
             last_seen: Default::default(),
+        });
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.5, 0.0],
+            ball_in_field: point![0.5, 0.0],
+            ball_in_ground_velocity: linear_algebra::vector![0.4, 0.1],
+            ..BallState::new_at_center(Default::default())
         });
         select_ball_action(&mut blackboard);
         execute_ball_action(&mut blackboard);
         assert!(matches!(
             blackboard.body_motion,
-            Some(BodyMotion::Kick { ball_position, .. }) if ball_position == point![0.5, 0.0]
+            Some(BodyMotion::Kick { ball_position, ball_velocity, .. })
+                if ball_position == point![0.5, 0.0] && ball_velocity == linear_algebra::vector![0.4, 0.1]
         ));
 
         blackboard.ball.as_mut().unwrap().position = point![0.5, 0.0];
+        blackboard.world_state.ball = None;
         blackboard
             .visual_kick_ball_position
             .as_mut()
@@ -1884,7 +1892,7 @@ mod tests {
             panic!("expected approach")
         };
         let ball_in_ground = transform.inverse() * point![2.0, 0.5];
-        let facing_ball = linear_algebra::Orientation2::from_vector(ball_in_ground.coords());
+        let facing_ball = linear_algebra::Orientation2::from_vector(observed.coords());
         assert!((target_orientation.angle() - facing_ball.angle()).abs() < 1e-6);
         let expected_approach = ball_in_ground - ball_in_ground.coords().normalize() * 0.3;
         let types::path::PathSegment::LineSegment(last) = path.last_segment() else {
@@ -1954,6 +1962,11 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.kicking.kick_activation_distance = 2.0;
         blackboard.ball.as_mut().unwrap().position = point![0.51, -0.06];
+        blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.51, -0.06],
+            ball_in_field: point![0.51, -0.06],
+            ..BallState::new_at_center(Default::default())
+        });
         blackboard.world_state.obstacles.clear();
         blackboard.parameters.kicking.allow_strong_kicks = true;
         blackboard

@@ -427,22 +427,36 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
         return false;
     }
     let own_player_number = blackboard.player_number;
-
-    let raw_is_closest = is_finishing_striker_kick(blackboard)
-        || if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
+    let mut predictive_entry = false;
+    let elected_owner =
+        if let (Some(ball), Some(voronoi_map)) = (&blackboard.ball, &blackboard.voronoi_map) {
             // Ownership must not depend on each robot's close-range pursuit cutoff.
             let projected = blackboard.ball_pursuit_position(ball.position, ball.velocity);
-            let ownership_at_ball = voronoi_map.ownership_at(projected);
-            match ownership_at_ball {
-                Some(Ownership::Robot(player_number)) if player_number == own_player_number => true,
-                Some(Ownership::Blocked) => voronoi_map
-                    .nearest_non_blocked_ownership(projected)
-                    .is_some_and(|ownership| ownership == Ownership::Robot(own_player_number)),
-                _ => false,
+            predictive_entry = ball.age <= blackboard.world_state.now
+                && blackboard.world_state.now.duration_since(ball.age)
+                    < ball_timeout(&blackboard.parameters, ball.source)
+                && ball.velocity.norm()
+                    > blackboard
+                        .parameters
+                        .ball
+                        .interception
+                        .minimum_ball_velocity
+                && projected != ball.position;
+            match voronoi_map.ownership_at(projected) {
+                Some(Ownership::Robot(player_number)) => Some(player_number),
+                Some(Ownership::Blocked) => {
+                    match voronoi_map.nearest_non_blocked_ownership(projected) {
+                        Some(Ownership::Robot(player_number)) => Some(player_number),
+                        _ => None,
+                    }
+                }
+                _ => None,
             }
         } else {
-            false
+            None
         };
+    let raw_is_closest =
+        is_finishing_striker_kick(blackboard) || elected_owner == Some(own_player_number);
 
     let now = blackboard.world_state.now;
     if raw_is_closest {
@@ -458,12 +472,15 @@ pub fn is_closest_to_ball(blackboard: &mut Blackboard) -> bool {
     let parameters = blackboard.parameters.ball.closest_to_ball;
     let is_closest = if blackboard.last_closest_to_ball {
         raw_is_closest
-            || blackboard
-                .closest_to_ball_left_area_since
-                .is_some_and(|since| now.duration_since(since) < parameters.exit_duration)
+            // A new elected owner cancels the old forecast without overlapping exit grace.
+            || (elected_owner.is_none()
+                && blackboard
+                    .closest_to_ball_left_area_since
+                    .is_some_and(|since| now.duration_since(since) < parameters.exit_duration))
     } else {
         raw_is_closest
-            && (is_ball_interception_candidate(blackboard)
+            && (predictive_entry
+                || is_ball_interception_candidate(blackboard)
                 || blackboard.ball.as_ref().is_some_and(|ball| {
                     ball.age <= now
                         && now.duration_since(ball.age)
@@ -921,6 +938,81 @@ mod tests {
             }
         }
         assert_eq!(owners, vec![PlayerNumber::Two]);
+    }
+
+    #[test]
+    fn future_region_handoff_cancels_previous_owner_and_invalidated_forecasts() {
+        let sites = [
+            (linear_algebra::Pose2::default(), PlayerNumber::Two),
+            (point![2.0, 0.0].into(), PlayerNumber::Three),
+        ];
+        let mut peers = Vec::new();
+        for (pose, player) in sites {
+            let mut board = Blackboard {
+                player_number: player,
+                field_dimensions: FieldDimensions::SPL_2025,
+                last_closest_to_ball: player == PlayerNumber::Two,
+                ..Default::default()
+            };
+            board.world_state.robot.ground_to_field = Some(pose.as_transform());
+            board.parameters.goalkeeper.player_number = PlayerNumber::One;
+            board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+            board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+            board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+            board.parameters.ball.closest_to_ball.enter_duration = Duration::from_millis(300);
+            board.parameters.ball.closest_to_ball.exit_duration = Duration::from_millis(150);
+            board.parameters.kicking.kick_activation_distance = 0.3;
+            board.parameters.kicking.approach_ball_standoff = 0.3;
+            board.parameters.voronoi.grid_resolution = 0.1;
+            board.parameters.voronoi.padding = 0.5;
+            board
+                .parameters
+                .kicking
+                .strategy
+                .passing
+                .maximum_receiver_age = Duration::from_secs(1);
+            board.ball = Some(LastBall {
+                position: point![0.8, 0.0],
+                velocity: vector![2.0, 0.0],
+                age: board.world_state.now,
+                field_side: Side::Left,
+                source: BallSource::Own,
+            });
+            for (peer_pose, peer) in sites {
+                if peer != player {
+                    board.world_state.player_states[peer] = Some(TimeWrapper {
+                        time: board.world_state.now,
+                        inner: PlayerState {
+                            pose: peer_pose,
+                            ..crate::test_support::player_state()
+                        },
+                    });
+                }
+            }
+            assert_eq!(
+                crate::voronoi::calculate_voronoi_grid(&mut board),
+                Status::Success
+            );
+            assert_eq!(
+                board
+                    .voronoi_map
+                    .as_ref()
+                    .unwrap()
+                    .ownership_at(point![0.8, 0.0]),
+                Some(Ownership::Robot(PlayerNumber::Two))
+            );
+            assert!(!is_ball_interception_candidate(&mut board));
+            let elected = is_closest_to_ball(&mut board);
+            assert_eq!(elected, player == PlayerNumber::Three);
+            peers.push(board);
+        }
+        for velocity in [Vector2::zeros(), vector![-2.0, 0.0], vector![f32::NAN, 0.0]] {
+            let mut invalidated = peers[1].clone();
+            invalidated.ball.as_mut().unwrap().velocity = velocity;
+            assert!(!is_closest_to_ball(&mut invalidated));
+        }
+        peers[0].ball.as_mut().unwrap().velocity = vector![-2.0, 0.0];
+        assert!(is_closest_to_ball(&mut peers[0]));
     }
 
     #[test]

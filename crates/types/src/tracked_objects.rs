@@ -1,4 +1,4 @@
-//! Published outputs of the humanoid and stationary object filters.
+//! Published humanoid and stationary tracks from the obstacle filter.
 //!
 //! Track states are expressed in the continuous odometry frame. Ground and field positions are
 //! derived at publication time and are not part of the filter state.

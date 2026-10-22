@@ -55,7 +55,7 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
         .build()
         .await?;
     let _humanoid_tracks_sub = node
-        .subscriber::<TrackedObjects<HumanoidTrack>>("humanoid_filter/tracks")
+        .subscriber::<TrackedObjects<HumanoidTrack>>("obstacle_filter/humanoid_tracks")
         .build()
         .await?;
     let _position_of_interest_sub = node

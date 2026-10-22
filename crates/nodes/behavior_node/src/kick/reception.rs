@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use coordinate_systems::Ground;
 use kinematics::robot_dimensions::RobotDimensions;
 use linear_algebra::{Orientation2, Point2, Vector2, point, vector};
@@ -156,27 +154,7 @@ fn fresh_ball_in_ground(blackboard: &Blackboard) -> Option<(Point2<Ground>, Vect
         ball.age <= now
             && now.duration_since(ball.age) < ball_timeout(&blackboard.parameters, ball.source)
     });
-    let fresh_visual = blackboard
-        .visual_kick_ball_position
-        .as_ref()
-        .is_some_and(|ball| {
-            ball.position == position
-                && position.coords().norm()
-                    <= blackboard.parameters.kicking.kick_activation_distance
-                        + blackboard.parameters.kicking.kick_activation_hysteresis
-                && ball
-                    .age_at(now)
-                    .is_some_and(|age| age <= Duration::from_millis(100))
-        });
-    if !fresh_ball && !fresh_visual {
-        return None;
-    }
-    position
-        .inner
-        .iter()
-        .chain(velocity.inner.iter())
-        .all(|value| value.is_finite())
-        .then_some((position, velocity))
+    fresh_ball.then_some((position, velocity))
 }
 
 pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
@@ -373,7 +351,8 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
         // Turning and translation are independent; do not back into a rolling ball.
         blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
             velocity: Vector2::zeros(),
-            angular_velocity: limits.scale_angular_axis(Orientation2::from_vector(forward).angle()),
+            angular_velocity: limits
+                .scale_angular_axis(Orientation2::from_vector(position.coords()).angle()),
         });
         return Status::Success;
     }
@@ -386,9 +365,13 @@ pub fn receive_rolling_ball(blackboard: &mut Blackboard) -> Status {
                 direction,
                 tolerance: walking.orientation_tolerance,
             },
-            None => OrientationMode::AlignWithPath,
+            None => OrientationMode::LookAt {
+                target: position,
+                tolerance: walking.orientation_tolerance,
+            },
         },
-        target_orientation: kick_orientation.unwrap_or_else(|| Orientation2::from_vector(forward)),
+        target_orientation: kick_orientation
+            .unwrap_or_else(|| Orientation2::from_vector(position.coords())),
         distance_to_be_aligned: walking.normal_distance_to_be_aligned,
         speed: walk_speed.min(target.coords().norm() / 0.35),
     });
@@ -856,6 +839,78 @@ mod tests {
     }
 
     #[test]
+    fn side_arrivals_use_quick_deflection_only_inside_existing_contact_window() {
+        let mut board = addressed_receiver();
+        board.world_state.player_states.three = None;
+        for side in [-1.0, 1.0] {
+            let position = point![0.3, side * 0.6];
+            let velocity = vector![0.0, -side * 2.5];
+            board.last_motion_type = Some(MotionType::Walk);
+            board.ball.as_mut().unwrap().position = position;
+            board.ball.as_mut().unwrap().velocity = velocity;
+            assert_eq!(receive_rolling_ball(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::Kick { ball_position, ball_velocity, kick_direction,
+                    quick: true, strong: false, soft: false, .. })
+                if ball_position == board.world_state.robot.ground_to_field.unwrap().inverse() * position
+                    && ball_velocity == board.world_state.robot.ground_to_field.unwrap().inverse() * velocity
+                    && kick_direction == Orientation2::default()));
+            for missed in [
+                point![0.8, side * 0.6],
+                point![0.3, -side * 0.6],
+                point![0.3, side * 0.9],
+            ] {
+                board.body_motion = None;
+                board.ball.as_mut().unwrap().position = missed;
+                receive_rolling_ball(&mut board);
+                assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            }
+        }
+
+        let mut addressed = addressed_receiver();
+        addressed.ball.as_mut().unwrap().position = point![0.3, -0.6];
+        addressed.ball.as_mut().unwrap().velocity = vector![0.0, 2.5];
+        assert!(super::super::passing::is_pass_receiver(&mut addressed));
+        assert_eq!(receive_rolling_ball(&mut addressed), Status::Success);
+        assert!(matches!(addressed.body_motion,
+            Some(BodyMotion::WalkWithVelocity { velocity, .. }) if velocity == Vector2::zeros()));
+    }
+
+    #[test]
+    fn side_arriving_keeper_clearance_is_excluded_from_deflection() {
+        let mut board = addressed_receiver();
+        board.world_state.player_states.three = None;
+        let transform =
+            linear_algebra::Isometry2::from_parts(vector![-3.0, -0.3], std::f32::consts::FRAC_PI_2);
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.ball.as_mut().unwrap().position = point![-3.6, 0.0];
+        board.ball.as_mut().unwrap().velocity = vector![2.5, 0.0];
+        board
+            .parameters
+            .kicking
+            .strategy
+            .passing
+            .maximum_receiver_age = Duration::from_secs(3);
+        board.world_state.player_states.one = Some(types::time_wrapper::TimeWrapper {
+            time: board.world_state.now,
+            inner: types::world_state::PlayerState {
+                pose: point![-4.2, 0.0].into(),
+                ..crate::test_support::player_state()
+            },
+        });
+        let ball = board.ball.as_ref().unwrap();
+        assert!(is_on_contact_path(
+            &board,
+            transform.inverse() * ball.position,
+            transform.inverse() * ball.velocity
+        ));
+        assert!(goalkeeper_clearance_direction(&board).is_some());
+        assert!(!is_receiving_ball(&board));
+        assert_eq!(receive_rolling_ball(&mut board), Status::Failure);
+        assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+    }
+
+    #[test]
     fn walks_to_incoming_ball_and_hands_off_close_ball() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
@@ -878,17 +933,15 @@ mod tests {
         assert_eq!(receive_rolling_ball(&mut blackboard), Status::Success);
         let Some(BodyMotion::Walk {
             target_orientation,
-            orientation_mode: OrientationMode::AlignWithPath,
-            ref path,
+            orientation_mode: OrientationMode::LookAt { target, .. },
             ..
         }) = blackboard.body_motion
         else {
-            panic!("expected path-facing interception")
+            panic!("expected ball-facing interception")
         };
+        assert_eq!(target, point![2.0, 0.3]);
         assert!(
-            (target_orientation.angle()
-                - Orientation2::from_vector(path.forward(Point2::origin())).angle())
-            .abs()
+            (target_orientation.angle() - Orientation2::from_vector(target.coords()).angle()).abs()
                 < 1e-6
         );
 
@@ -1194,13 +1247,13 @@ mod tests {
     }
 
     #[test]
-    fn turns_before_approaching_a_goalward_ball_behind_the_body() {
+    fn overshot_interception_turns_toward_observed_ball_before_approaching() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             last_motion_type: Some(MotionType::Walk),
             ball: Some(LastBall {
-                position: point![-1.5, 0.4],
-                velocity: vector![-0.4, 0.0],
+                position: point![-0.5, 1.0],
+                velocity: vector![0.6, -2.0],
                 age: Default::default(),
                 field_side: Side::Left,
                 source: BallSource::Own,
@@ -1332,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_close_percept_can_receive_without_a_filtered_position() {
+    fn raw_visual_percept_cannot_supply_a_mixed_reception_state() {
         let mut blackboard = Blackboard {
             field_dimensions: FieldDimensions::SPL_2025,
             visual_kick_ball_position: Some(types::ball_position::BallPosition {
@@ -1344,10 +1397,22 @@ mod tests {
         };
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.5, 0.05],
             ball_in_ground_velocity: vector![-0.5, 0.0],
             ..types::world_state::BallState::new_at_center(Default::default())
         });
         blackboard.parameters.kicking.kick_activation_distance = 1.3;
+        assert!(!is_receiving_ball(&blackboard));
+        assert!(!is_ready_to_receive_kick(&blackboard));
+
+        blackboard.parameters.ball.last_ball_timeout = Duration::from_millis(100);
+        blackboard.ball = Some(LastBall {
+            position: point![0.5, 0.05],
+            velocity: vector![-0.5, 0.0],
+            age: blackboard.world_state.now,
+            field_side: Side::Left,
+            source: BallSource::Own,
+        });
         assert!(is_receiving_ball(&blackboard));
         assert!(is_ready_to_receive_kick(&blackboard));
 
