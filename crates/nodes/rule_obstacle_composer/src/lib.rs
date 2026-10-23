@@ -213,3 +213,76 @@ fn create_penalty_box(
         ],
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hsl_network_messages::{GamePhase, Half};
+    use types::{field_dimensions::GlobalFieldSide, players::Players};
+
+    #[test]
+    fn opponent_goal_kick_excludes_the_whole_penalty_area_with_or_without_a_ball() {
+        let mut game = FilteredGameControllerState {
+            game_state: FilteredGameState::Playing {
+                ball_is_free: false,
+                kick_off: false,
+            },
+            opponent_game_state: FilteredGameState::Playing {
+                ball_is_free: false,
+                kick_off: false,
+            },
+            half: Half::First,
+            remaining_time_in_half: Default::default(),
+            game_phase: GamePhase::Normal,
+            kicking_team: Some(Team::Opponent),
+            penalties: Players::new(None),
+            remaining_number_of_messages: 1000,
+            sub_state: Some(SubState::GoalKick),
+            global_field_side: GlobalFieldSide::Home,
+            new_own_penalties_last_cycle: Default::default(),
+            new_opponent_penalties_last_cycle: Default::default(),
+        };
+        let parameters = Parameters {
+            center_circle_obstacle_radius_increase: 0.2,
+            center_circle_ballspace_free_obstacle_radius: 0.2,
+            penaltykick_box_extension: 0.2,
+        };
+        for field in [
+            FieldDimensions::SPL_2025,
+            FieldDimensions {
+                length: 14.0,
+                width: 9.0,
+                penalty_area_length: 3.0,
+                penalty_area_width: 6.0,
+                ..FieldDimensions::SPL_2025
+            },
+        ] {
+            for ball in [None, Some(BallState::new_at_center(Default::default()))] {
+                let obstacles = compose_rule_obstacles(&game, ball, &field, &parameters);
+                assert_eq!(obstacles.len(), if ball.is_some() { 2 } else { 1 });
+                let RuleObstacle::Rectangle(area) = obstacles.last().unwrap() else {
+                    panic!("missing penalty area")
+                };
+                assert_eq!(area.min, field.penalty_box_corner(Opponent, Right));
+                assert_eq!(
+                    area.max,
+                    field.penalty_box_goal_line_intersection(Opponent, Left)
+                );
+                assert!(!area.contains(point![0.0, 0.0]));
+                if let Some(ball) = ball {
+                    assert!(matches!(obstacles[0], RuleObstacle::Circle(circle)
+                        if circle.center == ball.ball_in_field && circle.radius == field.center_circle_diameter / 2.0));
+                }
+            }
+        }
+        game.kicking_team = Some(Team::Hulks);
+        assert!(
+            compose_rule_obstacles(&game, None, &FieldDimensions::SPL_2025, &parameters).is_empty()
+        );
+        game.kicking_team = Some(Team::Opponent);
+        game.sub_state = None;
+        assert!(
+            compose_rule_obstacles(&game, None, &FieldDimensions::SPL_2025, &parameters).is_empty()
+        );
+    }
+}

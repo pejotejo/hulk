@@ -43,8 +43,8 @@ use crate::{
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
     walk::{
-        block_opponent_with_ball, recover_goal_side, walk_alternatives_subtree,
-        walk_to_kickoff_pose, walk_to_voronoi_position,
+        block_opponent_with_ball, leave_opponent_penalty_area, recover_goal_side,
+        walk_alternatives_subtree, walk_to_kickoff_pose, walk_to_voronoi_position,
     },
 };
 
@@ -139,6 +139,7 @@ fn playing_subtree() -> Node<Blackboard> {
             condition!(is_penalty_shootout),
             subtree!(penalty_shootout_subtree)
         ),
+        action!(leave_opponent_penalty_area),
         subtree!(kickoff_subtree),
         sequence!(
             condition!(is_active_replacement_goalkeeper),
@@ -312,6 +313,7 @@ mod clearance_tests {
         motion_command::BodyMotion,
         obstacles::Obstacle,
         parameters::{KickStrategyParameters, PassingParameters},
+        path::traits::EndPoints,
         rule_obstacles::RuleObstacle,
         time_wrapper::TimeWrapper,
         walking_velocity_limits::WalkingVelocityLimits,
@@ -693,6 +695,117 @@ mod clearance_tests {
                 assert_eq!(player.world_state.rule_obstacles.len(), 1);
             }
         }
+    }
+
+    #[test]
+    fn opponent_goal_kick_makes_every_role_leave_the_penalty_area_even_without_a_ball() {
+        for number in [
+            PlayerNumber::One,
+            PlayerNumber::Two,
+            PlayerNumber::Three,
+            PlayerNumber::Four,
+            PlayerNumber::Five,
+        ] {
+            for ball_position in [None, Some(point![6.0, 0.0]), Some(point![3.2, 1.0])] {
+                let mut board = three_players();
+                board.player_number = number;
+                let transform = Pose2::new(point![6.0, 1.0], 1.2).as_transform();
+                board.world_state.robot.ground_to_field = Some(transform);
+                let game = board
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_mut()
+                    .unwrap();
+                game.kicking_team = Some(Team::Opponent);
+                game.sub_state = Some(SubState::GoalKick);
+                board.world_state.rule_obstacles =
+                    vec![RuleObstacle::Rectangle(geometry::rectangle::Rectangle {
+                        min: point![4.0, -3.0],
+                        max: point![7.0, 3.0],
+                    })];
+                board.ball.as_mut().unwrap().position = ball_position.unwrap_or(point![6.0, 0.0]);
+                board.ball.as_mut().unwrap().velocity = vector![0.0, 0.0];
+                board.last_ball = board.ball.clone();
+                if ball_position.is_none() {
+                    board.ball = None;
+                    board.last_ball = None;
+                }
+                let (_, trace) = create_tree().tick_with_trace(&mut board);
+                assert!(succeeded(&trace, "leave_opponent_penalty_area"));
+                let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+                    panic!("robot did not retreat")
+                };
+                let end = transform * path.last_segment().end_point();
+                assert!(
+                    end.x() < 4.0 - board.parameters.walking.path_planning.robot_radius,
+                    "{end:?}"
+                );
+                assert_eq!(board.world_state.rule_obstacles.len(), 1);
+                board
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_mut()
+                    .unwrap()
+                    .kicking_team = Some(Team::Hulks);
+                assert_eq!(
+                    crate::walk::leave_opponent_penalty_area(&mut board),
+                    Status::Failure
+                );
+                board
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_mut()
+                    .unwrap()
+                    .kicking_team = Some(Team::Opponent);
+                board
+                    .world_state
+                    .filtered_game_controller_state
+                    .as_mut()
+                    .unwrap()
+                    .sub_state = None;
+                assert_eq!(
+                    crate::walk::leave_opponent_penalty_area(&mut board),
+                    Status::Failure
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn opponent_goal_kick_block_position_stays_outside_the_penalty_area() {
+        let mut board = three_players();
+        board.ball.as_mut().unwrap().position = point![6.9, 0.0];
+        let game = board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap();
+        game.kicking_team = Some(Team::Opponent);
+        game.sub_state = Some(SubState::GoalKick);
+        assert_eq!(
+            crate::substates::set_block_position_field(&mut board),
+            Status::Success
+        );
+        let target =
+            board.world_state.robot.ground_to_field.unwrap() * board.walk_position.unwrap();
+        assert!(target.x() < 4.0 - board.parameters.walking.path_planning.robot_radius);
+        let transform = Pose2::new(point![3.0, 1.0], 0.7).as_transform();
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.last_ball = board.ball.clone();
+        board.world_state.rule_obstacles =
+            vec![RuleObstacle::Rectangle(geometry::rectangle::Rectangle {
+                min: point![4.0, -3.0],
+                max: point![7.0, 3.0],
+            })];
+        let (_, trace) = create_tree().tick_with_trace(&mut board);
+        assert!(succeeded(&trace, "walk_to_block_position"));
+        let Some(BodyMotion::Walk { path, .. }) = &board.body_motion else {
+            panic!("robot did not block the goal kick")
+        };
+        assert!(
+            (transform * path.end_point()).x()
+                < 4.0 - board.parameters.walking.path_planning.robot_radius
+        );
     }
 
     #[test]

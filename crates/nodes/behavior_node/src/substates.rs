@@ -1,11 +1,15 @@
 use std::time::Duration;
 
 use coordinate_systems::Field;
+use geometry::rectangle::Rectangle;
 use hsl_network_messages::{PlayerNumber, SubState, Team};
 use linear_algebra::{Point2, Rotation2, point};
 use types::{
-    behavior_tree::Status, field_dimensions::Side,
-    filtered_game_controller_state::FilteredGameControllerState, obstacles::ObstacleKind,
+    behavior_tree::Status,
+    field_dimensions::{Half, Side},
+    filtered_game_controller_state::FilteredGameControllerState,
+    filtered_game_state::FilteredGameState,
+    obstacles::ObstacleKind,
 };
 
 use crate::{
@@ -329,6 +333,36 @@ pub fn is_sub_state(blackboard: &mut Blackboard, sub_state: SubState) -> bool {
     )
 }
 
+pub(crate) fn opponent_goal_kick_exclusion_area(
+    blackboard: &Blackboard,
+) -> Option<Rectangle<Field>> {
+    let game = blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()?;
+    if game.sub_state != Some(SubState::GoalKick)
+        || game.kicking_team != Some(Team::Opponent)
+        || !matches!(game.game_state, FilteredGameState::Playing { .. })
+    {
+        return None;
+    }
+    let field = &blackboard.field_dimensions;
+    // Arrival tolerance must leave the whole body outside the penalty-area line.
+    let clearance = blackboard.parameters.walking.path_planning.robot_radius
+        + blackboard
+            .parameters
+            .walking
+            .walk_and_stand
+            .target_reached_thresholds
+            .x
+        + 0.05;
+    let margin = linear_algebra::vector![clearance, clearance];
+    Some(Rectangle {
+        min: field.penalty_box_corner(Half::Opponent, Side::Right) - margin,
+        max: field.penalty_box_goal_line_intersection(Half::Opponent, Side::Left) + margin,
+    })
+}
+
 pub fn set_block_position_field(blackboard: &mut Blackboard) -> Status {
     if let (Some(ball), Some(ground_to_field)) = (
         &blackboard.ball,
@@ -346,7 +380,13 @@ pub fn set_block_position_field(blackboard: &mut Blackboard) -> Status {
                     + blackboard.parameters.walking.path_planning.robot_radius,
             );
 
-        blackboard.walk_position = Some(ball_in_ground + (direction * distance_to_ball));
+        let mut target = ground_to_field * (ball_in_ground + direction * distance_to_ball);
+        if let Some(area) = opponent_goal_kick_exclusion_area(blackboard)
+            && area.contains(target)
+        {
+            target.inner.x = area.min.x();
+        }
+        blackboard.walk_position = Some(ground_to_field.inverse() * target);
 
         Status::Success
     } else {
@@ -425,9 +465,12 @@ pub fn set_block_position_goal_kick(blackboard: &mut Blackboard) -> Status {
             return Status::Failure;
         }
 
-        let blocking_x = field_dimensions.length / 2.0
-            - field_dimensions.penalty_area_length
-            - blackboard.parameters.walking.path_planning.robot_radius;
+        let blocking_x = opponent_goal_kick_exclusion_area(blackboard).map_or(
+            field_dimensions.length / 2.0
+                - field_dimensions.penalty_area_length
+                - blackboard.parameters.walking.path_planning.robot_radius,
+            |area| area.min.x(),
+        );
         let distance_along_line = (blocking_x - ball_position.x()) / direction.x();
         let blocking_position = ball_position + direction * distance_along_line;
 

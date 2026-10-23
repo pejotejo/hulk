@@ -31,7 +31,9 @@ use crate::{
         strategy::BallAction,
     },
     node::{Blackboard, ball_timeout},
-    selection, sequence, subtree,
+    selection, sequence,
+    substates::opponent_goal_kick_exclusion_area,
+    subtree,
     switch_motion_type::{is_allowed_to_switch, is_last_motion_type, switch_motion_type},
     voronoi::collect_sites,
 };
@@ -152,11 +154,28 @@ fn plan_with_ball_obstacle(
         };
         planner.with_obstacles(&[obstacle], robot_radius);
     }
-    planner.with_rule_obstacles(
-        ground_to_field.inverse(),
-        &blackboard.world_state.rule_obstacles,
-        parameters.robot_radius,
-    );
+    for obstacle in &blackboard.world_state.rule_obstacles {
+        if opponent_goal_kick_exclusion_area(blackboard).is_some()
+            && let types::rule_obstacles::RuleObstacle::Rectangle(rectangle) = obstacle
+        {
+            let margin = linear_algebra::vector![parameters.robot_radius, parameters.robot_radius];
+            let expanded = geometry::rectangle::Rectangle {
+                min: rectangle.min - margin,
+                max: rectangle.max + margin,
+            };
+            if expanded.contains(ground_to_field * Point::origin())
+                && !expanded.contains(target_in_field)
+            {
+                // Allow leaving a newly restricted area without fencing the robot inside it.
+                continue;
+            }
+        }
+        planner.with_rule_obstacles(
+            ground_to_field.inverse(),
+            std::slice::from_ref(obstacle),
+            parameters.robot_radius,
+        );
+    }
     planner.with_field_borders(
         ground_to_field,
         field_dimensions.length,
@@ -204,6 +223,17 @@ fn plan_with_ball_obstacle(
                 .or_else(|| (-ball_position.coords()).try_normalize(f32::EPSILON))
                 .unwrap_or_else(|| linear_algebra::vector![1.0, 0.0]);
             clamped_target_in_robot = ball_position + side * clearance;
+            if let Some(area) = opponent_goal_kick_exclusion_area(blackboard)
+                && area.contains(ground_to_field * clamped_target_in_robot)
+            {
+                let ball_in_field = ground_to_field * ball_position;
+                let target_in_field = ground_to_field * clamped_target_in_robot;
+                clamped_target_in_robot = ground_to_field.inverse()
+                    * point![
+                        area.min.x().min(ball_in_field.x() - clearance),
+                        target_in_field.y()
+                    ];
+            }
         }
     }
 
@@ -547,6 +577,29 @@ pub fn walk_alternatives_subtree() -> Node<Blackboard> {
             action!(execute_ball_action)
         ),
         action!(stand)
+    )
+}
+
+pub fn leave_opponent_penalty_area(blackboard: &mut Blackboard) -> Status {
+    let (Some(area), Some(transform)) = (
+        opponent_goal_kick_exclusion_area(blackboard),
+        blackboard.world_state.robot.ground_to_field,
+    ) else {
+        return Status::Failure;
+    };
+    let position = transform * Point2::origin();
+    if !area.contains(position) {
+        return Status::Failure;
+    }
+    let target = transform.inverse() * point![area.min.x(), position.y()];
+    let walking = blackboard.parameters.walking.walk_and_stand;
+    walk_to(
+        blackboard,
+        Pose2::from_parts(target, Orientation2::from_vector(target.coords())),
+        blackboard.parameters.walking.speed.blocking,
+        OrientationMode::AlignWithPath,
+        walking.normal_distance_to_be_aligned,
+        walking.hysteresis,
     )
 }
 
