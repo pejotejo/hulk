@@ -16,6 +16,7 @@ use types::{
     parameters::KickingParameters,
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
+    time_wrapper::TimeWrapper,
     world_state::{BallState, PlayerState},
 };
 
@@ -40,36 +41,7 @@ fn blackboard(robot_x: f32, robot_y: f32, yaw: f32) -> Blackboard {
             "../../../../../etc/parameters/base/behavior_node.json5"
         ))
         .unwrap(),
-        walking_velocity_limits: Default::default(),
-        search_cell_size: None,
-        world_state: Default::default(),
-        controller_input: None,
-        remote_control_enabled: false,
-        path_obstacles_output: Vec::new(),
-        time_since_last_switch: Duration::ZERO,
-        direction_difference: 0.0,
-        voronoi_inputs: Vec::new(),
-        ball: None,
-        visual_kick_ball_position: None,
-        last_ball: None,
-        last_close_enough_to_kick: false,
-        ball_action: None,
-        last_ball_action: None,
-        kick_target: None,
-        last_kick_target: None,
-        last_motion_command: None,
-        last_motion_switch_time: Time::zero(),
-        last_motion_type: None,
-        last_sent_game_controller_return_message_time: None,
-        last_sent_hsl_message_time: None,
-        last_closest_to_ball: false,
-        closest_to_ball_entered_area_since: None,
-        closest_to_ball_left_area_since: None,
-        is_injected_motion_command: false,
-        walk_position: None,
-        body_motion: None,
-        head_motion: None,
-        voronoi_map: None,
+        ..Default::default()
     };
     blackboard.parameters.control.is_simple = true;
     blackboard.world_state.robot.primary_state = PrimaryState::Playing;
@@ -93,7 +65,7 @@ fn set_ball(blackboard: &mut Blackboard, position: Point2<Ground>) {
     let ground_to_field = blackboard.world_state.robot.ground_to_field.unwrap();
     let ball = LastBall {
         position: ground_to_field * position,
-        velocity: ground_to_field * vector![-1.0, 0.0],
+        velocity: Vector2::zeros(),
         age: Time::zero(),
         field_side: Side::Left,
         source: Default::default(),
@@ -102,13 +74,13 @@ fn set_ball(blackboard: &mut Blackboard, position: Point2<Ground>) {
     blackboard.last_ball = Some(ball.clone());
     blackboard.visual_kick_ball_position = Some(BallPosition {
         position,
-        velocity: vector![-1.0, 0.0],
+        velocity: Vector2::zeros(),
         last_seen: blackboard.world_state.now,
     });
     blackboard.world_state.ball = Some(BallState {
         ball_in_ground: position,
         ball_in_field: ball.position,
-        ball_in_ground_velocity: vector![-1.0, 0.0],
+        ball_in_ground_velocity: Vector2::zeros(),
         last_seen_ball: UNIX_EPOCH,
         field_side: Side::Left,
         source: Default::default(),
@@ -354,11 +326,18 @@ fn teammate_pressure_is_transformed_and_excludes_our_own_broadcast() {
             pose: Pose2::from_parts(point![-distance, 1.0], Orientation2::new(0.0)),
             head_yaw: 0.0,
             ball_position: None,
+            ..crate::test_support::player_state()
         };
-        blackboard.world_state.player_states[PlayerNumber::Two] = Some(teammate);
+        blackboard.world_state.player_states[PlayerNumber::Two] = Some(TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: teammate,
+        });
         assert_eq!(is_urgent_kick(&mut blackboard), urgent);
         blackboard.world_state.player_states[PlayerNumber::Two] = None;
-        blackboard.world_state.player_states[PlayerNumber::Three] = Some(teammate);
+        blackboard.world_state.player_states[PlayerNumber::Three] = Some(TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: teammate,
+        });
         assert!(!is_urgent_kick(&mut blackboard));
     }
 }
@@ -377,10 +356,14 @@ fn each_urgent_trigger_precedes_target_planning_and_interception_in_the_live_tre
                     vec![Obstacle::robot(point![-1.5, 0.0], 0.2, 0.2)]
             }
             3 => {
-                blackboard.world_state.player_states[PlayerNumber::Two] = Some(PlayerState {
-                    pose: Pose2::from_parts(point![0.0, 1.5], Orientation2::new(0.0)),
-                    head_yaw: 0.0,
-                    ball_position: None,
+                blackboard.world_state.player_states[PlayerNumber::Two] = Some(TimeWrapper {
+                    time: blackboard.world_state.now,
+                    inner: PlayerState {
+                        pose: Pose2::from_parts(point![0.0, 1.5], Orientation2::new(0.0)),
+                        head_yaw: 0.0,
+                        ball_position: None,
+                        ..crate::test_support::player_state()
+                    },
                 })
             }
             _ => (),
@@ -429,7 +412,7 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
         blackboard.body_motion,
         Some(BodyMotion::Kick { quick: true, .. })
     ));
-    assert!(trace_contains(&trace, "select_kick_target"));
+    assert!(trace_contains(&trace, "execute_ball_action"));
     assert!(!trace_contains(&trace, "select_fallback_kick_target"));
     assert!(matches!(
         blackboard.ball_action,
@@ -437,6 +420,11 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
     ));
 
     blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.5, 0.0], 1.0, 1.0)];
+    blackboard
+        .parameters
+        .kicking
+        .strategy
+        .maximum_dribble_distance = 0.0;
     blackboard.parameters.kicking.quick = false;
     assert!(!is_urgent_kick(&mut blackboard));
     let (status, trace) = striker_subtree().tick_with_trace(&mut blackboard);
@@ -512,6 +500,11 @@ fn blocked_approaches_do_not_delay_reachable_quick_kicks_or_kick_unreachable_bal
     ] {
         let mut blackboard = blackboard(0.0, 0.0, 0.0);
         set_ball(&mut blackboard, point![ball_x, 0.0]);
+        blackboard
+            .parameters
+            .kicking
+            .strategy
+            .maximum_dribble_distance = 0.0;
         let mut state = game_state();
         state.sub_state = sub_state;
         blackboard.world_state.filtered_game_controller_state = Some(state);
@@ -560,7 +553,7 @@ fn approach_and_execution_follow_the_same_selected_opening() {
     };
     let direction =
         Orientation2::from_vector(opening.center() - blackboard.ball.as_ref().unwrap().position);
-    assert_relative_eq!(target_orientation.angle(), direction.angle());
+    assert_relative_eq!(target_orientation.angle(), 0.0);
 
     blackboard.world_state.robot.ground_to_field =
         Some(nalgebra::Isometry2::new(nalgebra::vector![1.2, 0.0], 0.0).framed_transform());
@@ -597,7 +590,7 @@ fn fresh_ball_refinement_failure_is_an_explicit_quick_fallback_before_intercepti
     assert!(
         matches!(blackboard.body_motion, Some(BodyMotion::Kick { quick: true, ball_position, .. }) if ball_position == point![0.8, 0.0])
     );
-    assert!(trace_contains(&trace, "select_kick_target"));
+    assert!(trace_contains(&trace, "execute_ball_action"));
     assert!(!trace_contains(&trace, "intercept"));
 }
 

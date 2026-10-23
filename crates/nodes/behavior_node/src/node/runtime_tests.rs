@@ -44,6 +44,10 @@ async fn real_search_and_behavior_nodes_start_and_share_live_cell_geometry() -> 
         .qos(retained)
         .build()
         .await?;
+    let pose_pub = fixture
+        .publisher::<Isometry2<Ground, Field>>("ground_to_field")
+        .build()
+        .await?;
     let blackboards = fixture
         .subscriber::<Blackboard>("behavior/blackboard")
         .build()
@@ -67,6 +71,25 @@ async fn real_search_and_behavior_nodes_start_and_share_live_cell_geometry() -> 
     assert_eq!(size, grid_cell_size(field, 28));
     // Behavior starts after publication and must receive the retained geometry.
     nodes.spawn(run(context));
+    tokio::time::timeout(Duration::from_secs(5), blackboards.recv()).await??;
+    // A delayed pose must retain its acquisition time rather than becoming fresh on receipt.
+    let acquired = fixture.clock().now() - Duration::from_secs(7);
+    pose_pub
+        .publish_with_source_time(&Isometry2::identity(), acquired)
+        .await?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let board = blackboards.recv().await.unwrap();
+            if board.localization_time == Some(acquired) {
+                assert_eq!(
+                    board.world_state.robot.ground_to_field,
+                    Some(Isometry2::identity())
+                );
+                break;
+            }
+        }
+    })
+    .await?;
     let client = RemoteParameterClient::new(fixture, "/search_suggestor")?;
     for cells in [28, 30] {
         if cells == 30 {
