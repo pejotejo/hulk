@@ -113,6 +113,8 @@ pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
     {
         return Status::Failure;
     }
+    let mut target = point![blackboard.field_dimensions.length / 2.0, 0.0];
+    let mut speed = blackboard.parameters.kicking.target_speed;
     if super::strategy::select_ball_action(blackboard) == Status::Success {
         let ready_pass = match blackboard.ball_action {
             Some(BallAction::Pass { receiver }) => resolve_target(blackboard)
@@ -127,16 +129,27 @@ pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
         {
             return execute_ball_action(blackboard);
         }
+        if blackboard.ball_action == Some(BallAction::Dribble)
+            && let Some(diagonal) = resolve_target(blackboard)
+        {
+            target = diagonal;
+            // A short dribble corridor does not guarantee room for a full-speed release.
+            speed = blackboard
+                .parameters
+                .kicking
+                .dribble_target_speed
+                .min(speed);
+        }
     }
-    // A ball inside the holder's obstacle has no open corridor; poke it out of their control.
+    // Contest blocked balls goalward even when our body faces a touchline.
     if super::kick(blackboard) == Status::Failure {
         return Status::Failure;
     }
+    super::apply_kick_target(blackboard, target);
     if let Some(BodyMotion::Kick {
         quick,
         strong,
         soft,
-        kick_direction,
         target_speed,
         ..
     }) = &mut blackboard.body_motion
@@ -144,8 +157,7 @@ pub fn challenge_opponent_ball(blackboard: &mut Blackboard) -> Status {
         *quick = true;
         *strong = false;
         *soft = false;
-        *kick_direction = Orientation2::default();
-        *target_speed = blackboard.parameters.kicking.target_speed;
+        *target_speed = speed;
     }
     Status::Success
 }
@@ -460,11 +472,13 @@ fn resolve_action_target(
             )
         }
     };
-    if action == BallAction::Dribble {
+    if matches!(action, BallAction::Dribble | BallAction::Clear) {
+        // Pressure releases should advance toward goal instead of favoring wide sideways gaps.
         let goal = point![field.length / 2.0, 0.0];
         return openings
             .into_iter()
             .map(|opening| goalward_target(ball, goal, opening))
+            .filter(|target| action != BallAction::Clear || target.x() > ball.x())
             .min_by(|a, b| {
                 (a - ball)
                     .angle(&(goal - ball))
@@ -474,34 +488,14 @@ fn resolve_action_target(
 
     openings
         .into_iter()
-        .filter_map(|mut opening| {
-            if action == BallAction::Clear {
-                if opening.0.x().max(opening.1.x()) <= ball.x() {
-                    return None;
-                }
-                if opening.0.x() < ball.x() || opening.1.x() < ball.x() {
-                    let forward_boundary = Line2 {
-                        point: ball,
-                        direction: vector![0.0, 1.0],
-                    };
-                    let intersection = Line2::from(opening).intersection(&forward_boundary);
-                    if opening.0.x() < ball.x() {
-                        opening.0 = intersection;
-                    } else {
-                        opening.1 = intersection;
-                    }
-                }
-            }
+        .filter_map(|opening| {
             // Bisect the visible angle to maximize angular edge clearance.
             let direction = (opening.0 - ball).normalize() + (opening.1 - ball).normalize();
             let target = Line2::from(opening).intersection(&Line2 {
                 point: ball,
                 direction,
             });
-            (target.x().is_finite()
-                && target.y().is_finite()
-                && (action != BallAction::Clear || target.x() > ball.x()))
-            .then_some((
+            (target.x().is_finite() && target.y().is_finite()).then_some((
                 target,
                 LineSegment(ball, opening.0).angle(LineSegment(ball, opening.1)),
             ))
@@ -546,6 +540,77 @@ mod tests {
         time_wrapper::TimeWrapper,
         world_state::{BallSource, BallState, PlayerState},
     };
+
+    #[test]
+    fn sideline_duels_use_an_open_diagonal_or_contest_goalward_instead_of_body_forward() {
+        for side in [-1.0, 1.0] {
+            for blocked_at_ball in [false, true] {
+                let field = FieldDimensions {
+                    length: 22.0,
+                    width: 14.0,
+                    goal_inner_width: 3.0,
+                    ball_radius: 0.11,
+                    ..FieldDimensions::SPL_2025
+                };
+                let ball = point![2.0, side * if blocked_at_ball { 5.8 } else { 0.8 }];
+                let transform = Isometry2::from_parts(
+                    vector![1.8, ball.y() - side * 0.55],
+                    side * 70.0_f32.to_radians(),
+                );
+                let opponent = if blocked_at_ball {
+                    ball + vector![0.25, 0.0]
+                } else {
+                    ball + vector![0.7, 0.0]
+                };
+                let mut board = Blackboard {
+                    field_dimensions: field,
+                    player_number: PlayerNumber::Two,
+                    last_motion_type: Some(MotionType::Walk),
+                    ball: Some(LastBall {
+                        position: ball,
+                        velocity: Vector2::zeros(),
+                        age: Default::default(),
+                        field_side: Side::Left,
+                        source: BallSource::Own,
+                    }),
+                    ..Default::default()
+                };
+                board.world_state.robot.ground_to_field = Some(transform);
+                board.world_state.obstacles =
+                    vec![Obstacle::robot(transform.inverse() * opponent, 0.2, 0.2)];
+                board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+                board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
+                board.parameters.kicking.strategy.obstacle_clearance = 0.05;
+                board.parameters.kicking.strategy.pressure_distance = 0.8;
+                board.parameters.kicking.kick_activation_distance = 1.3;
+                board.parameters.kicking.target_speed = 3.4;
+                board.parameters.kicking.dribble_target_speed = 0.5;
+
+                assert_eq!(challenge_opponent_ball(&mut board), Status::Success);
+                let Some(BodyMotion::Kick {
+                    kick_direction,
+                    quick: true,
+                    strong: false,
+                    soft: false,
+                    target_speed,
+                    ..
+                }) = board.body_motion
+                else {
+                    panic!("expected an immediate duel kick")
+                };
+                let direction = transform * kick_direction.as_unit_vector();
+                assert!(direction.x() > 0.0 && direction.y() * side < 0.0);
+                let target = transform * board.kick_target.unwrap();
+                if blocked_at_ball {
+                    assert!((target - point![11.0, 0.0]).norm() < 1e-5);
+                    assert_eq!(target_speed, 3.4);
+                } else {
+                    assert!(LineSegment(ball, target).distance_to(opponent) > 0.36);
+                    assert_eq!(target_speed, 0.5);
+                }
+            }
+        }
+    }
 
     #[test]
     fn calm_pass_receiver_gets_behind_ball_before_starting_a_rearward_shot() {

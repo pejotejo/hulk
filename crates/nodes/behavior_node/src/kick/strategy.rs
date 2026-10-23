@@ -373,7 +373,7 @@ mod tests {
     use std::time::Duration;
 
     use hsl_network_messages::Penalty;
-    use linear_algebra::Pose2;
+    use linear_algebra::{Pose2, vector};
     use types::{
         ball_position::BallPosition,
         fall_detection::{FallDetection, Posture},
@@ -1734,6 +1734,49 @@ mod tests {
             .kicking_team = Some(Team::Opponent);
         select_ball_action(&mut board);
         assert_eq!(board.ball_action, Some(BallAction::Clear));
+    }
+
+    #[test]
+    fn pressured_clearances_choose_goalward_diagonals_over_wide_sideways_gaps() {
+        for side in [-1.0, 1.0] {
+            let mut board = blackboard();
+            board.field_dimensions = FieldDimensions {
+                length: 22.0,
+                width: 14.0,
+                goal_inner_width: 3.0,
+                ball_radius: 0.11,
+                ..FieldDimensions::SPL_2025
+            };
+            let ball = point![-2.0, side * 5.8];
+            let transform = Isometry2::from_parts(vector![-2.6, ball.y()], 0.0);
+            let opponent = point![-1.3, side * 5.5];
+            board.world_state.robot.ground_to_field = Some(transform);
+            board.ball.as_mut().unwrap().position = ball;
+            board.world_state.obstacles =
+                vec![Obstacle::robot(transform.inverse() * opponent, 0.2, 0.2)];
+            board.parameters.kicking.strategy.maximum_shot_distance = 12.0;
+            board.parameters.kicking.kick_activation_distance = 1.3;
+            board.parameters.kicking.allow_strong_kicks = true;
+
+            assert_eq!(select_ball_action(&mut board), Status::Success);
+            assert_eq!(board.ball_action, Some(BallAction::Clear));
+            assert_eq!(execute_ball_action(&mut board), Status::Success);
+            let target = transform * board.kick_target.unwrap();
+            let direction = (target - ball).normalize();
+            assert!(direction.x() > 0.0 && direction.y() * side < 0.0);
+            assert!(direction.y().atan2(direction.x()).abs() < 55.0_f32.to_radians());
+            assert!(target.x().abs() < 11.0 && target.y().abs() < 7.0);
+            assert!(LineSegment(ball, target).distance_to(opponent) > 0.36);
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    quick: true,
+                    strong: true,
+                    soft: false,
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

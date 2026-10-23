@@ -16,12 +16,11 @@ Strategy reads `Blackboard` and updates `ball_action`. Execution refines a
 `kick_target` in Ground coordinates for the emitted motion. Distant approach walks
 toward the ball; the kick policy handles final alignment. Shots bisect the selected
 opening after rechecking geometry from the selected kick-ball position.
-Clearances choose an open corridor that advances the ball. Dribbling chooses
-the safe direction closest to the goal. Strategy and execution use the same ball position.
+Clearances and dribbling choose the safe direction closest to the goal; clearances
+also require forward progress. Strategy and execution use the same ball position.
 The walk-to-kick handoff uses that selected ball too. Strategy parameters must be
 finite and nonnegative; parameter updates reject invalid values, and invalid
-snapshots produce no plan. Clear openings are clipped to forward progress before
-choosing their angular midpoint.
+snapshots produce no plan.
 Dribbling uses the soft-kick policy, then follows the ball for the next kick.
 Execution uses the native `BodyMotion::Kick` API and the configured target speed.
 The existing motion-switch timing and strong-kick settings are reused. An unusable
@@ -30,6 +29,10 @@ corridor and range checks, so it can kick into an obstacle. Missing ball/localiz
 invalid parameters, and a ball on/outside the field still stop execution. Leaving
 ordinary striker play clears the intent. Remote control, set
 plays, penalties, goalkeeper clearance, and interception retain their own paths.
+
+Opponent duels use an available dribble corridor at the configured dribble speed.
+When fully blocked, quick pokes contest toward the opponent goal rather than the
+robot's current heading, which may face a touchline.
 
 Dribble execution checks corridors covering `kicking.strategy.maximum_dribble_distance`
 (provisionally 3 m, including travel uncertainty). The bound must cover the soft
