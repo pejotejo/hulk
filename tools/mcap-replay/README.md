@@ -14,6 +14,10 @@ The server starts a Zenoh router and prints a Twix connection command:
 
 Recordings need a summary and chunk indexes. Recover/reindex incomplete recordings first.
 
+Simulator recordings also accept `recording-segments.json` or its containing directory.
+Checkpoint segments share one replay timeline; simulator channels use recorded receipt time
+while preserving original source timestamps.
+
 ## Watch a directory
 
 ```sh

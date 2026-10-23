@@ -11,8 +11,9 @@ use configuration::{
     keys::KeybindAction,
 };
 use eframe::{
-    App, CreationContext, Frame, NativeOptions, Storage,
+    App, CreationContext, Frame, NativeOptions, Renderer, Storage,
     egui::{CentralPanel, Layout, Panel as EguiPanel, Ui},
+    egui_wgpu::{WgpuConfiguration, WgpuSetup},
     emath::Align,
     run_native,
 };
@@ -20,8 +21,8 @@ use hulk_widgets::CompletionEdit;
 use layout::{FocusDirection, TwixLayout};
 use log::{error, warn};
 use panels::{
-    AudioPanel, BehaviorTreePanel, ImagePanel, MapPanel, ParameterPanel, PlotPanel, TextPanel,
-    TimelinePanel,
+    AudioPanel, BehaviorTreePanel, ImagePanel, LogsPanel, Map3DPanel, MapPanel, ParameterPanel,
+    PlotPanel, SimulatorPanel, TextPanel, TimelinePanel,
 };
 use repository::{Repository, inspect_version::check_for_update};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -33,6 +34,7 @@ mod backend;
 mod configuration;
 mod graph;
 mod layout;
+mod namespace_discovery;
 mod panel;
 mod panels;
 mod presets;
@@ -44,13 +46,16 @@ mod visuals;
 
 impl_selectable_panel!(
     TextPanel,
+    LogsPanel,
     ImagePanel,
     MapPanel,
+    Map3DPanel,
     ParameterPanel,
     AudioPanel,
-    BehaviorTreePanel,
     PlotPanel,
-    TimelinePanel
+    BehaviorTreePanel,
+    TimelinePanel,
+    SimulatorPanel
 );
 
 #[derive(Debug, Clone, clap::Parser)]
@@ -61,6 +66,10 @@ struct Arguments {
     /// Router endpoint passed to ROS-Z, for example tcp/127.0.0.1:7447.
     #[arg(long)]
     router: Option<String>,
+
+    /// Global Zenoh key prefix, including discovery and raw SDK traffic.
+    #[arg(long)]
+    zenoh_namespace: Option<String>,
 
     /// Alternative repository root for local Twix version checks.
     #[arg(long)]
@@ -75,9 +84,14 @@ struct TwixApp {
     layout: TwixLayout,
     namespace_editor: String,
     _graph_repaint: ObservationRepaint,
+    namespace_focused: bool,
     visual: Visuals,
     backend: Arc<RobotBackend>,
     runtime: tokio::runtime::Runtime,
+    #[cfg(feature = "simulator")]
+    simulator_router: Option<Arc<RobotBackend>>,
+    #[cfg(feature = "simulator")]
+    pending_backend: Option<(String, tokio::task::JoinHandle<Result<RobotBackend>>)>,
 }
 
 impl TwixApp {
@@ -88,8 +102,24 @@ impl TwixApp {
         backend: Arc<RobotBackend>,
         configuration: Configuration,
     ) -> Self {
+        if let Some(renderer) = &creation_context.wgpu_render_state {
+            creation_context.egui_ctx.data_mut(|data| {
+                data.insert_temp(
+                    eframe::egui::Id::new(panels::simulator::RENDER_STATE_ID),
+                    renderer.clone(),
+                )
+            });
+        }
         let namespace_editor = backend.namespace();
         let graph_repaint = ObservationRepaint::graph(&backend, creation_context.egui_ctx.clone());
+        if let Some(render_state) = &creation_context.wgpu_render_state {
+            creation_context.egui_ctx.data_mut(|data| {
+                data.insert_temp(eframe::egui::Id::new("render_state"), render_state.clone());
+            });
+        }
+        if let Some(scope) = backend.transport_scope() {
+            log::info!("Zenoh transport namespace: {scope}");
+        }
 
         let layout = TwixLayout::load(
             creation_context.storage,
@@ -111,27 +141,101 @@ impl TwixApp {
         visual.set_visual(&creation_context.egui_ctx);
 
         Self {
+            #[cfg(feature = "simulator")]
+            simulator_router: (backend.transport_scope() == Some(simulate::ZENOH_NAMESPACE))
+                .then(|| backend.clone()),
+            #[cfg(feature = "simulator")]
+            pending_backend: None,
             layout,
             namespace_editor,
             _graph_repaint: graph_repaint,
+            namespace_focused: false,
             visual,
             backend,
             runtime,
+        }
+    }
+    fn namespace_completions(&self) -> Vec<String> {
+        #[cfg(feature = "simulator")]
+        if let Some(root) = &self.simulator_router {
+            return root.namespaces();
+        }
+        self.backend.namespaces()
+    }
+
+    #[cfg(feature = "simulator")]
+    fn synchronize_simulator_target(&mut self, context: &eframe::egui::Context) {
+        let Some(root) = &self.simulator_router else {
+            return;
+        };
+        let namespace = self.backend.namespace();
+        let number = simulate::robot_id(&namespace);
+        self.layout.select_simulator_robot(number);
+        let scope = number.map_or_else(
+            || simulate::ZENOH_NAMESPACE.to_owned(),
+            simulate::transport_scope,
+        );
+        if self
+            .pending_backend
+            .as_ref()
+            .is_some_and(|(pending, _)| *pending != scope)
+            && let Some((_, task)) = self.pending_backend.take()
+        {
+            task.abort();
+        }
+        if self
+            .pending_backend
+            .as_ref()
+            .is_some_and(|(_, task)| task.is_finished())
+        {
+            let (_, task) = self.pending_backend.take().unwrap();
+            match self.runtime.block_on(task) {
+                Ok(Ok(backend)) => {
+                    self.backend = Arc::new(backend);
+                    self._graph_repaint = ObservationRepaint::graph(&self.backend, context.clone());
+                    self.layout.reconnect(&self.backend, context);
+                }
+                Ok(Err(error)) => log::error!("Switching simulator connection: {error:#}"),
+                Err(error) => log::error!("Switching simulator task: {error}"),
+            }
+        }
+        if self.backend.transport_scope() != Some(scope.as_str()) && self.pending_backend.is_none()
+        {
+            let runtime = self.runtime.handle().clone();
+            let router = root.router().map(str::to_owned);
+            let requested_scope = scope.clone();
+            let repaint = context.clone();
+            self.pending_backend = Some((
+                scope,
+                self.runtime.spawn(async move {
+                    let result =
+                        RobotBackend::new_scoped(runtime, router, namespace, Some(requested_scope))
+                            .await;
+                    repaint.request_repaint();
+                    result
+                }),
+            ));
         }
     }
 }
 
 impl App for TwixApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
-        let _runtime_guard = self.runtime.enter();
+        let runtime_handle = self.runtime.handle().clone();
+        let _runtime_guard = runtime_handle.enter();
         let context = ui.ctx().clone();
         let shortcuts_enabled = !self.layout.dialog_open();
 
         EguiPanel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    // Follow namespace changes made elsewhere, e.g. by selecting a simulated
+                    // robot, unless the operator is editing the namespace.
+                    if !self.namespace_focused {
+                        self.namespace_editor = self.backend.namespace();
+                    }
                     ui.label("Namespace:");
-                    let namespaces = self.backend.namespaces();
+                    let namespaces = self.namespace_completions();
                     let namespace_response = ui
                         .add(
                             CompletionEdit::new(
@@ -147,7 +251,10 @@ impl App for TwixApp {
                         .on_hover_text(
                             "Discovered namespaces. You can also enter a namespace manually.",
                         );
-
+                    self.namespace_focused = namespace_response.has_focus();
+                    if self.namespace_focused {
+                        context.request_repaint_after(std::time::Duration::from_millis(250));
+                    }
                     if (namespace_response.changed() || namespace_response.lost_focus())
                         && self.namespace_editor != self.backend.namespace()
                         && let Err(error) =
@@ -155,6 +262,12 @@ impl App for TwixApp {
                     {
                         log::error!("failed to set namespace: {error:#}");
                         self.namespace_editor = self.backend.namespace();
+                    }
+                    #[cfg(feature = "simulator")]
+                    if let Some(name) = simulate::robot_id(&self.backend.namespace())
+                        .and_then(|id| self.layout.simulator_robot_name(id))
+                    {
+                        ui.weak(name);
                     }
                 });
 
@@ -176,6 +289,9 @@ impl App for TwixApp {
         });
 
         self.backend.replay().update(&context, &self.backend);
+
+        #[cfg(feature = "simulator")]
+        self.synchronize_simulator_target(&context);
 
         CentralPanel::default().show(ui, |ui| {
             let layout = &mut self.layout;
@@ -281,9 +397,31 @@ fn main() -> eframe::Result<()> {
         .expect("failed to build Tokio runtime");
     let runtime_handle = runtime.handle().clone();
 
-    run_native(
+    let mut wgpu_options = WgpuConfiguration::default();
+    if let WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        let previous = setup.device_descriptor.clone();
+        setup.device_descriptor = Arc::new(move |adapter| {
+            let mut descriptor = previous(adapter);
+            descriptor
+                .required_limits
+                .max_storage_buffers_per_shader_stage = 9;
+            descriptor
+        });
+    }
+
+    let result = run_native(
         "Twix",
-        NativeOptions::default(),
+        {
+            #[allow(unused_mut)]
+            let mut options = NativeOptions {
+                renderer: Renderer::Wgpu,
+                wgpu_options,
+                ..Default::default()
+            };
+            #[cfg(feature = "simulator")]
+            simulate::configure_renderer(&mut options);
+            options
+        },
         Box::new(move |creation_context| {
             egui_extras::install_image_loaders(&creation_context.egui_ctx);
             egui_material_icons::initialize(&creation_context.egui_ctx);
@@ -292,10 +430,11 @@ fn main() -> eframe::Result<()> {
                 .clone()
                 .or_else(|| creation_context.storage?.get_string("namespace"))
                 .unwrap_or_else(|| "/".to_string());
-            let backend = runtime.block_on(RobotBackend::new(
+            let backend = runtime.block_on(RobotBackend::new_scoped(
                 runtime_handle.clone(),
                 arguments.router.clone(),
                 namespace,
+                arguments.zenoh_namespace.clone(),
             ))?;
             Ok(Box::new(TwixApp::create(
                 creation_context,
@@ -305,5 +444,10 @@ fn main() -> eframe::Result<()> {
                 configuration,
             )))
         }),
-    )
+    );
+    #[cfg(feature = "simulator")]
+    for error in simulate::finish_recordings() {
+        log::error!("{error}");
+    }
+    result
 }

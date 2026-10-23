@@ -9,6 +9,8 @@ type CameraRecord = Arc<SampleRecord<TimeWrapper<CameraMatrix>>>;
 
 pub(super) struct CameraSample {
     pub horizon: Option<Horizon>,
+    pub robot_to_camera: Isometry3<coordinate_systems::Robot, coordinate_systems::Camera>,
+    pub intrinsics: projection::intrinsic::Intrinsic,
 }
 
 pub(super) fn interpolation_endpoints<T>(
@@ -42,7 +44,20 @@ pub(super) fn projected_camera_at(
 ) -> Option<CameraSample> {
     let (a, b, fraction) = interpolation_endpoints(samples, time);
     let (a, b) = (&a.inner, &b.inner);
-    if a.intrinsics != b.intrinsics || a.image_size != b.image_size {
+    if a.intrinsics != b.intrinsics
+        || a.image_size != b.image_size
+        || !a.intrinsics.is_valid()
+        || [
+            a.ground_to_robot.inner,
+            b.ground_to_robot.inner,
+            a.robot_to_head.inner,
+            b.robot_to_head.inner,
+            a.head_to_camera.inner,
+            b.head_to_camera.inner,
+        ]
+        .iter()
+        .any(|transform| !transform.to_homogeneous().iter().all(|v| v.is_finite()))
+    {
         return None;
     }
     let ground_to_robot = interpolate_transform(a.ground_to_robot, b.ground_to_robot, fraction);
@@ -50,6 +65,8 @@ pub(super) fn projected_camera_at(
     let head_to_camera = interpolate_transform(a.head_to_camera, b.head_to_camera, fraction);
     let robot_to_camera = head_to_camera * robot_to_head;
     Some(CameraSample {
+        robot_to_camera,
+        intrinsics: a.intrinsics,
         horizon: Horizon::from_parameters(robot_to_camera * ground_to_robot, &a.intrinsics),
     })
 }

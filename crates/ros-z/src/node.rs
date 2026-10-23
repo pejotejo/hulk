@@ -405,7 +405,7 @@ impl Node {
         &self.clock
     }
 
-    fn endpoint_builder_context(&self) -> EndpointBuilderContext {
+    pub(crate) fn endpoint_builder_context(&self) -> EndpointBuilderContext {
         EndpointBuilderContext::new(
             self.session.clone(),
             self.graph.clone(),
@@ -420,6 +420,22 @@ impl Node {
     // ========================================================================
     // Dynamic Message API
     // ========================================================================
+
+    /// Publish already serialized CDR with recorded/discovered type metadata.
+    /// The schema is validated and registered when the builder is built.
+    pub fn raw_publisher(
+        &self,
+        topic: &str,
+        type_info: TypeInfo,
+        schema: Schema,
+    ) -> crate::pubsub::RawPublisherBuilder {
+        crate::pubsub::RawPublisherBuilder::new(
+            self.endpoint_builder_context(),
+            topic.to_owned(),
+            type_info,
+            schema,
+        )
+    }
 
     /// Create a dynamic publisher builder for the given topic.
     ///

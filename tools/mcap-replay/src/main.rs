@@ -41,7 +41,7 @@ mod recording;
 #[derive(Parser)]
 #[command(about = "Serve indexed ROS-Z MCAP queries to Twix over Zenoh")]
 struct Arguments {
-    /// An indexed MCAP file, or a directory to watch recursively.
+    /// An indexed MCAP file, simulator segment manifest, or directory to watch recursively.
     file: PathBuf,
     /// Namespace or directory prefix: /replay or a namespace below it.
     #[arg(long, default_value = "/replay")]
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     let (cache, cleanup) = IndexCache::new(index_budget)?;
     let cache = Arc::new(cache);
     let result = async {
-        if args.file.is_dir() {
+        if args.file.is_dir() && !args.file.join("recording-segments.json").exists() {
             return directory::watch(&args.file, &namespace, &context, Arc::clone(&cache), router)
                 .await;
         }
