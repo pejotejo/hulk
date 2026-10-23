@@ -5,7 +5,7 @@ use linear_algebra::{Isometry2, Orientation2, Point, Point2, Pose2, Vector2, poi
 use path_planner::path_planner::PathPlanner;
 use types::{
     behavior_tree::Status,
-    field_dimensions::FieldDimensions,
+    field_dimensions::{FieldDimensions, Side},
     motion_command::{BodyMotion, MotionCommand, OrientationMode},
     motion_type::MotionType,
     obstacles::ObstacleKind,
@@ -25,7 +25,7 @@ use crate::{
     },
     kick::{
         execution::execute_ball_action,
-        kick_ball_position_in_ground,
+        kick_ball_in_ground, kick_ball_position_in_ground,
         kickoff::{kickoff_receiver, kickoff_receiver_position, kickoff_support_position},
     },
     node::{Blackboard, ball_timeout},
@@ -332,6 +332,137 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
     } else {
         Status::Failure
     }
+}
+
+pub(crate) fn recover_goal_side(blackboard: &mut Blackboard) -> Status {
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
+        || blackboard.last_motion_type == Some(MotionType::Kick)
+        || (blackboard.last_motion_type != Some(MotionType::Walk)
+            && !is_allowed_to_switch(blackboard))
+        || goalkeeper_clearance_direction(blackboard).is_some()
+        || crate::kick::passing::is_pass_receiver(blackboard)
+        || crate::kick::passing::outgoing_pass_in_flight(blackboard)
+    {
+        blackboard.ball_recovery_side = None;
+        blackboard.ball_recovery_lane_cleared = false;
+        return Status::Failure;
+    }
+    let sample = blackboard
+        .ball
+        .as_ref()
+        .filter(|ball| {
+            ball.age <= blackboard.world_state.now
+                && blackboard.world_state.now.duration_since(ball.age)
+                    < ball_timeout(&blackboard.parameters, ball.source)
+        })
+        .and_then(|_| {
+            let transform = blackboard.world_state.robot.ground_to_field?;
+            let (ball, velocity) = kick_ball_in_ground(blackboard, &transform)?;
+            Some((transform, ball, velocity))
+        });
+    let Some((transform, ball, velocity)) = sample else {
+        blackboard.ball_recovery_side = None;
+        blackboard.ball_recovery_lane_cleared = false;
+        return Status::Failure;
+    };
+    let position = transform.as_pose().position();
+    let ball_in_field = transform * ball;
+    let velocity_in_field = transform * velocity;
+    let parameters = &blackboard.parameters;
+    let walking = parameters.walking.walk_and_stand;
+    let speed = parameters.walking.speed.kicking;
+    let field = blackboard.field_dimensions;
+    let robot_radius = parameters.walking.path_planning.robot_radius;
+    let standoff = parameters.kicking.approach_ball_standoff;
+    let clearance = 1.1
+        * (robot_radius
+            + field
+                .ball_radius
+                .max(parameters.walking.path_planning.ball_obstacle_radius))
+        + standoff;
+    if !clearance.is_finite()
+        || clearance <= 0.0
+        || !field.length.is_finite()
+        || !field.width.is_finite()
+        || field.length <= 2.0 * clearance
+        || field.width <= 2.0 * clearance
+        || (velocity.norm() > parameters.ball.interception.minimum_ball_velocity
+            && velocity_in_field.x() >= -parameters.ball.interception.minimum_ball_velocity)
+        || position.x() <= ball_in_field.x() - robot_radius - field.ball_radius
+        || (blackboard.ball_recovery_side.is_none()
+            && position.x() <= ball_in_field.x() + field.ball_radius)
+    {
+        blackboard.ball_recovery_side = None;
+        blackboard.ball_recovery_lane_cleared = false;
+        return Status::Failure;
+    }
+    let predicted = blackboard.ball_pursuit_position(ball_in_field, velocity_in_field);
+    let side = blackboard.ball_recovery_side.unwrap_or_else(|| {
+        if (position.y() - predicted.y()).abs() > standoff {
+            if position.y() > predicted.y() {
+                Side::Left
+            } else {
+                Side::Right
+            }
+        } else if predicted.y() > 0.0 {
+            Side::Right
+        } else {
+            Side::Left
+        }
+    });
+    let mut lateral = match side {
+        Side::Left => clearance,
+        Side::Right => -clearance,
+    };
+    if (predicted.y() + lateral).abs() > field.width / 2.0 - robot_radius {
+        lateral = -lateral;
+    }
+    let side = if lateral > 0.0 {
+        Side::Left
+    } else {
+        Side::Right
+    };
+    let lateral_distance = (position.y() - predicted.y()) * lateral.signum();
+    let ball_clearance = robot_radius
+        + field
+            .ball_radius
+            .max(parameters.walking.path_planning.ball_obstacle_radius);
+    if blackboard.ball_recovery_side != Some(side) || lateral_distance < ball_clearance {
+        blackboard.ball_recovery_lane_cleared = false;
+    }
+    if lateral_distance >= ball_clearance + standoff / 2.0 {
+        blackboard.ball_recovery_lane_cleared = true;
+    }
+    blackboard.ball_recovery_side = Some(side);
+    let beside_ball = blackboard.ball_recovery_lane_cleared;
+    // Leave the ball's lane before walking past it; keep facing the observed ball throughout.
+    let target = point![
+        (if beside_ball {
+            predicted.x() - clearance
+        } else {
+            position.x().max(ball_in_field.x() + clearance)
+        })
+        .clamp(
+            -field.length / 2.0 + robot_radius,
+            field.length / 2.0 - robot_radius
+        ),
+        predicted.y() + lateral
+    ];
+    blackboard.ball_action = None;
+    blackboard.kick_target = None;
+    let target_in_ground = transform.inverse() * target;
+    let path = plan(blackboard, target_in_ground, transform);
+    blackboard.body_motion = Some(BodyMotion::Walk {
+        path,
+        orientation_mode: OrientationMode::LookAt {
+            target: ball,
+            tolerance: walking.orientation_tolerance,
+        },
+        target_orientation: Orientation2::from_vector(ball.coords()),
+        distance_to_be_aligned: walking.normal_distance_to_be_aligned,
+        speed: speed.min(target_in_ground.coords().norm() / 0.35),
+    });
+    Status::Success
 }
 
 pub fn block_opponent_with_ball(blackboard: &mut Blackboard) -> Status {
@@ -873,6 +1004,144 @@ mod ball_support_tests {
     };
 
     use super::*;
+
+    fn recovery_board() -> Blackboard {
+        let mut board = Blackboard {
+            player_number: PlayerNumber::Two,
+            field_dimensions: FieldDimensions {
+                length: 22.0,
+                width: 14.0,
+                ball_radius: 0.11,
+                ..FieldDimensions::SPL_2025
+            },
+            last_motion_type: Some(MotionType::Walk),
+            ball: Some(LastBall {
+                position: point![1.3, 0.0],
+                velocity: linear_algebra::vector![-0.8, 0.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        board.parameters.goalkeeper.player_number = PlayerNumber::One;
+        board.parameters.ball.last_ball_timeout = Duration::from_secs(1);
+        board.parameters.ball.pursuit_lookahead = Duration::from_millis(500);
+        board.parameters.ball.interception.minimum_ball_velocity = 0.3;
+        board.parameters.kicking.approach_ball_standoff = 0.3;
+        board.parameters.walking.path_planning.robot_radius = 0.4;
+        board.parameters.walking.path_planning.ball_obstacle_radius = 0.05;
+        board.parameters.walking.speed.velocity_fade_distance = 3.0;
+        board
+            .parameters
+            .walking
+            .walk_and_stand
+            .target_reached_thresholds
+            .x = 0.05;
+        board.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+            linear_algebra::vector![3.0, 0.0],
+            std::f32::consts::PI,
+        ));
+        board
+    }
+
+    #[test]
+    fn own_half_recovery_leaves_lane_before_circling_and_keeps_ball_facing() {
+        let mut board = recovery_board();
+        let tree = crate::tree::striker_subtree();
+        for (robot_x, robot_y, circling) in [
+            (3.0, 0.0, false),
+            (3.0, 0.9, true),
+            (3.0, 0.6, true),
+            (3.0, 0.4, false),
+            (3.0, 0.7, true),
+            (1.2, 0.7, true),
+        ] {
+            let transform = Isometry2::from_parts(
+                linear_algebra::vector![robot_x, robot_y],
+                std::f32::consts::PI,
+            );
+            board.world_state.robot.ground_to_field = Some(transform);
+            assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+            let Some(BodyMotion::Walk {
+                ref path,
+                orientation_mode: OrientationMode::LookAt { target, .. },
+                target_orientation,
+                speed,
+                ..
+            }) = board.body_motion
+            else {
+                panic!("recovery must approach around the ball instead of kicking or chasing it")
+            };
+            let end = transform * path.end_point();
+            assert!(end.y() > 0.8);
+            if !circling {
+                assert!(end.x() >= robot_x);
+                assert!(speed > 0.5);
+            } else {
+                assert!(end.x() < 1.3 - 0.8);
+            }
+            assert!(path_keeps_ball_clearance(
+                path,
+                transform.inverse() * point![1.3, 0.0],
+                0.51
+            ));
+            assert!((target - transform.inverse() * point![1.3, 0.0]).norm() < 1e-5);
+            assert_eq!(
+                target_orientation,
+                Orientation2::from_vector(target.coords())
+            );
+            assert_eq!(board.ball_recovery_side, Some(Side::Left));
+        }
+        board.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+            linear_algebra::vector![0.7, 0.9],
+            0.0,
+        ));
+        assert_eq!(recover_goal_side(&mut board), Status::Failure);
+        assert!(board.ball_recovery_side.is_none());
+        assert!(!board.ball_recovery_lane_cleared);
+        board.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+            linear_algebra::vector![3.0, 0.0],
+            0.0,
+        ));
+        assert_eq!(tree.tick_with_trace(&mut board).0, Status::Success);
+        let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
+            panic!("expected recovery for a ball behind the body")
+        };
+        let end = board.world_state.robot.ground_to_field.unwrap() * path.end_point();
+        assert!(end.x() >= 3.0 && end.y() > 0.8);
+    }
+
+    #[test]
+    fn goal_side_recovery_stays_infield_and_releases_invalid_or_incoming_balls() {
+        for y in [-6.5, 6.5] {
+            let mut board = recovery_board();
+            board.ball.as_mut().unwrap().position = point![1.3, y];
+            board.world_state.robot.ground_to_field = Some(Isometry2::from_parts(
+                linear_algebra::vector![3.0, y],
+                std::f32::consts::PI,
+            ));
+            assert_eq!(recover_goal_side(&mut board), Status::Success);
+            let Some(BodyMotion::Walk { ref path, .. }) = board.body_motion else {
+                panic!("expected recovery")
+            };
+            let target = board.world_state.robot.ground_to_field.unwrap() * path.end_point();
+            assert!(target.y().abs() < y.abs());
+        }
+        for case in 0..4 {
+            let mut board = recovery_board();
+            board.ball_recovery_side = Some(Side::Left);
+            match case {
+                0 => board.player_number = PlayerNumber::One,
+                1 => board.ball.as_mut().unwrap().velocity = linear_algebra::vector![2.0, 0.0],
+                2 => board.ball.as_mut().unwrap().velocity = linear_algebra::vector![0.0, 2.0],
+                _ => board.world_state.now = board.world_state.now + Duration::from_secs(2),
+            }
+            assert_eq!(recover_goal_side(&mut board), Status::Failure);
+            assert!(board.ball_recovery_side.is_none());
+            assert!(!board.ball_recovery_lane_cleared);
+        }
+    }
 
     #[test]
     fn ball_centered_arc_keeps_clearance_without_accepting_unsafe_segments() {

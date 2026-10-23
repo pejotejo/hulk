@@ -32,6 +32,8 @@ impl Default for Blackboard {
             visual_kick_ball_position: None,
             last_ball: None,
             last_close_enough_to_kick: false,
+            ball_recovery_side: None,
+            ball_recovery_lane_cleared: false,
             kick_target: None,
             ball_action: None,
             last_kick_target: None,

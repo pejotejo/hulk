@@ -42,8 +42,8 @@ use crate::{
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
     walk::{
-        block_opponent_with_ball, walk_alternatives_subtree, walk_to_kickoff_pose,
-        walk_to_voronoi_position,
+        block_opponent_with_ball, recover_goal_side, walk_alternatives_subtree,
+        walk_to_kickoff_pose, walk_to_voronoi_position,
     },
 };
 
@@ -221,6 +221,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
             sequence!(
                 negation!(condition!(is_in_sub_state)),
                 selection!(
+                    action!(recover_goal_side),
                     action!(finish_close_goal),
                     action!(challenge_opponent_ball),
                     action!(receive_rolling_ball),

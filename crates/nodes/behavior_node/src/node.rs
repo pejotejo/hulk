@@ -79,6 +79,8 @@ pub struct Blackboard {
     pub visual_kick_ball_position: Option<BallPosition<Ground>>,
     pub last_ball: Option<LastBall>,
     pub last_close_enough_to_kick: bool,
+    pub ball_recovery_side: Option<Side>,
+    pub ball_recovery_lane_cleared: bool,
     /// Target selected for this tick, used to choose kick strength.
     pub kick_target: Option<Point2<Ground>>,
     pub ball_action: Option<BallAction>,
@@ -504,6 +506,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         visual_kick_ball_position: None,
         last_ball: None,
         last_close_enough_to_kick: false,
+        ball_recovery_side: None,
+        ball_recovery_lane_cleared: false,
         kick_target: None,
         ball_action: None,
         last_kick_target: None,
