@@ -32,6 +32,9 @@ repository = { workspace = true }
 ros-z = { workspace = true }
 ros-z-debug = { workspace = true }
 ros2 = { workspace = true }
+simulate = { workspace = true, optional = true }
+ros-z-protocol = { workspace = true }
+zenoh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -42,3 +45,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 twix_visualization = { workspace = true }
 types = { workspace = true }
 uuid = { workspace = true }
+
+[features]
+simulator = ["dep:simulate"]
+bhuman = ["simulator", "simulate/bhuman"]

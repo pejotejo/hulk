@@ -18,6 +18,10 @@ use uuid::Uuid;
 
 pub struct RobotBackend {
     runtime_handle: Handle,
+    #[cfg_attr(not(feature = "simulator"), allow(dead_code))]
+    router: Option<String>,
+    transport_scope: Option<String>,
+    namespace_discovery: Option<crate::namespace_discovery::NamespaceDiscovery>,
     context: Arc<Context>,
     node: Arc<Node>,
     observer: TopicObserver,
@@ -29,24 +33,81 @@ pub struct RobotBackend {
 }
 
 impl RobotBackend {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn new(
         runtime_handle: Handle,
         router: Option<String>,
         namespace: String,
     ) -> Result<Self> {
+        Self::new_scoped(runtime_handle, router, namespace, None).await
+    }
+
+    pub async fn new_scoped(
+        runtime_handle: Handle,
+        router: Option<String>,
+        namespace: String,
+        transport_scope: Option<String>,
+    ) -> Result<Self> {
         let mut builder = ContextBuilder::default();
-        if let Some(router) = router {
+        if let Some(router) = &router {
             builder = builder
                 .with_router_endpoint(router)
                 .wrap_err("failed to configure ROS-Z router endpoint")?;
         }
 
+        if let Some(scope) = &transport_scope {
+            builder = builder.with_json("namespace", scope);
+        }
+        #[cfg(feature = "simulator")]
+        let local_simulator_router =
+            router.is_none() && transport_scope.as_deref() == Some(simulate::ZENOH_NAMESPACE);
+        #[cfg(feature = "simulator")]
+        if local_simulator_router {
+            builder = builder
+                .with_mode("router")
+                .disable_multicast_scouting()
+                .with_connect_endpoints(std::iter::empty::<&str>())
+                .with_listen_endpoints(["tcp/127.0.0.1:0"]);
+        }
         let context = Arc::new(
             builder
                 .build()
                 .await
                 .wrap_err("failed to build ROS-Z context")?,
         );
+        if let Some(scope) = &transport_scope {
+            color_eyre::eyre::ensure!(
+                context
+                    .session()
+                    .config()
+                    .get("namespace")
+                    .is_ok_and(
+                        |value| serde_json::from_str::<String>(&value).ok().as_ref() == Some(scope)
+                    ),
+                "ZENOH_CONFIG_OVERRIDE conflicts with --zenoh-namespace"
+            );
+        }
+        #[cfg(feature = "simulator")]
+        let router = if local_simulator_router {
+            Some(
+                context
+                    .session()
+                    .info()
+                    .locators()
+                    .await
+                    .first()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("simulator router has no listener"))?
+                    .to_string(),
+            )
+        } else {
+            router
+        };
+        let namespace_discovery = if transport_scope.as_deref() == Some("hulk_simulator") {
+            Some(crate::namespace_discovery::NamespaceDiscovery::new(context.session()).await?)
+        } else {
+            None
+        };
+
         let node_name = twix_node_name();
         let node = Arc::new(
             context
@@ -68,6 +129,9 @@ impl RobotBackend {
 
         Ok(Self {
             runtime_handle,
+            router,
+            transport_scope,
+            namespace_discovery,
             context,
             node,
             observer,
@@ -77,6 +141,16 @@ impl RobotBackend {
             connection: Mutex::new(connection),
             live,
         })
+    }
+
+    #[cfg_attr(not(feature = "simulator"), allow(dead_code))]
+    pub fn transport_scope(&self) -> Option<&str> {
+        self.transport_scope.as_deref()
+    }
+
+    #[cfg(feature = "simulator")]
+    pub fn router(&self) -> Option<&str> {
+        self.router.as_deref()
     }
 
     pub fn runtime_handle(&self) -> &Handle {
@@ -136,6 +210,9 @@ impl RobotBackend {
     }
 
     pub fn namespaces(&self) -> Vec<String> {
+        if let Some(discovery) = &self.namespace_discovery {
+            return discovery.namespaces();
+        }
         let graph = self.graph().lock();
         graph
             .nodes()

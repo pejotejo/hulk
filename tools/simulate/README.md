@@ -1,0 +1,527 @@
+# Simulator in Twix
+
+The Simulator panel runs one to five HULK K1 robots per team with independent real motion, inference, fall detection, behavior and HSL message nodes.
+Optional [B-Human 2026 opponents](bhuman/README.md) run their native behavior and motion with perfect world models.
+MuJoCo supplies physics and simulated sensor inputs.
+The panel reuses `egui_bevy::BevyWidget`, as the legacy simulator did.
+All simulator wiring and hardware substitutes live under `tools/simulate`; robotics crates need no simulator integration code.
+
+Select a HULK profile before starting.
+This testing branch restores the optional native B-Human opponent on top of `whirlwind-parameter`.
+It retains that branch's behavior and humanoid tracker and uses the current upstream robot APIs,
+including the existing localization backend; the separate localization-improvements implementation is not imported.
+Use **Motion & behavior** for behavior tests with ideal state inputs, or **Ball and obstacle filtering** to exercise the real tracker with synthetic detections.
+The localization presets use the upstream solver and do not inherit validation results from the former integration branch.
+The recorded one-frame startup-acquisition fixture requires `oleflb/feat/localization-improvements` and remains an explicit opt-in test here.
+The [profile plan](PROFILES.md) records topic ownership and validation contracts.
+
+| Preset | Additional real nodes | Remaining ideal inputs |
+| --- | --- | --- |
+| Motion & behavior | Common 24-node stack per robot, including search, raw sensor/button bridges, LED handler, whistle filter and HSL communications; one shared gamepad handler | Body geometry, odometry, field pose, first ball, other robots and fixed goalposts |
+| Ball and obstacle filtering | Ball filter, visual-kick selector and the combined obstacle filter | Body geometry, odometry and field pose; synthetic camera detections |
+| Body state & odometry | Kinematics, support foot, ground provider, camera matrix and odometry | Field pose; synthetic camera detections and camera calibration |
+| Localization | Field-mark association and 3D/2D localization | Synthetic camera detections, calibration and coherent camera-motion measurements |
+
+The profiles are cumulative: each adds the real nodes listed in its row to those of the preceding profiles.
+
+Behavior, `search_suggestor`, motion, protection and team/game handling run in every profile. The simulator supplies ideal outputs for disabled groups; enabled groups are their sole production publishers. Synthetic detections are supplied when either object filtering or localization is enabled, and simulated visual odometry when localization is enabled. The `ground_truth/` comparison topics remain discoverable in every profile and publish when an observer or recorder subscribes.
+
+Ideal ball/obstacle inputs are still scene-wide: the first ball is supplied regardless of visibility, and all robots and fixed goalposts become obstacles. Search runs in that mode, but visibility loss is only exercised with object filtering enabled. No hypothetical-ball messages are fabricated when the ball filter is off.
+
+Click the info button beside **Profile** for the selected profile's exact node list, the truth and synthetic inputs it publishes to production topics, and every `ground_truth/` reference, all read from the tables that launch it.
+Changing the profile requires Stop/Start.
+The selected profile persists with the panel; old layouts without a profile default to Motion & behavior.
+Vision and microphone processing remain out of scope.
+
+## Run
+
+Fetch Git LFS assets, including the K1 meshes and `etc/neural_networks/*.onnx`.
+The simulator needs MuJoCo 3.9 and a compatible ONNX Runtime shared library.
+`mujoco-rs` downloads MuJoCo during the first build.
+Set `ORT_DYLIB_PATH` to your ONNX Runtime library if it is not available in the loader's search path.
+
+```sh
+./twix --simulator /hulks/1
+```
+
+The launcher enables Twix's optional `simulator` Cargo feature and configures its MuJoCo library path.
+For native B-Human opponents on Linux x86-64, use
+`./twix --simulator --bhuman /hulks/1`. This also builds the pinned worker in the
+local cache, enables the B-Human selector and configures its paths and ONNX Runtime.
+See the [B-Human setup](bhuman/README.md) for build dependencies and overrides.
+Robot N uses global Zenoh prefix `hulk_simulator/hulks/N` and ROS namespace `/hulks/N`, including raw Booster topics, discovery, parameters and RPCs.
+The top-left namespace selector switches Twix and simulator body controls between `/hulks/1` through `/hulks/5` and `/opponents/1` through `/opponents/5`.
+The namespace selector autocompletes live graph namespaces, including robots discovered across the simulator scopes.
+Type to filter, use arrow keys and Enter or click a suggestion; Ctrl+Space opens completions without typing.
+Team names identify namespaces; GameController uses team 24 for HULKs and team 5 for opponents.
+Selecting an absent player dims its name and disables its body controls.
+Without `--router`, simulator mode starts a private loopback router automatically.
+Ordinary Twix builds keep their existing dependencies.
+With Cargo directly, enable `--features simulator`, pass `--zenoh-namespace hulk_simulator`, and set the MuJoCo library path yourself.
+The current Nix Twix package builds ordinary Twix; it does not bundle the simulator.
+
+Open the **Simulator** preset or add a **Simulator** panel.
+Select one to five HULKs, zero to five opponents, a field location, ball and profile, then press **Start simulator**.
+Clear **Record MCAP** before starting to improve performance while keeping robot logs.
+The choice persists with the panel and applies to both teams and robots added later.
+Stop and start the simulator to change it.
+The field preview draws the selected location's parameter dimensions and the spawn slots for both teams.
+Parameter and model directories are under **Parameter and model paths**.
+Twix selects the robot's namespace automatically.
+Only one simulator can run per Twix process.
+Restoring a saved layout does not start robotics or bind UDP sockets.
+
+HULK robots start upright and paused in **Initial**. B-Human players initialize their native game state on the first physics frame.
+Initial players alternate between both long touchlines in their own half, starting 0.5 m from the goal line and spaced 0.9 m toward midfield, facing inward.
+**Add robot** starts the next available player, at a vacant slot along the sideline, without moving existing robots.
+Placement follows the known GameController field side, defaulting to Home for HULKs and Away for opponents before the first packet.
+A running match continues during startup; a paused match keeps the existing clock and poses frozen.
+Reset pose returns the selected robot to its original spawn slot, mirrored if GameController has changed its field side.
+Floating player numbers use the GameController's field-player or goalkeeper jersey color, with the commanded LED color as a small highlight; the selected player's number is ringed.
+Click a number to select that robot in Twix.
+HULK startup uses the real button bridge, handler and safe-pose check to pass through Prepare to Initial.
+While running, the panel header is the toolbar.
+With Auto referee, its first row is the match: score, half, clock, state, active restart, **Stop play**, the next match step and the **Referee desk** toggle.
+The simulation row follows: **Run**/**Pause**, simulation time, **Add robot** and **Stop simulator**; External mode also offers **Whistle** and **Add ball**.
+The last row controls the selected player: LED, **F1**, **Stand**, **Walk**, **Reset pose**, the fly camera and, with Auto referee, its penalty and penalty calls.
+Narrow panels show icons for the scene and match actions; hover them for their names.
+Press **Run** to advance physics.
+The scene marks a paused simulation.
+If GameController is already running, its game state takes over.
+
+**F1**, **Stand** and **Walk** emit CDR `ButtonEventMsg` packets on `rt/button_event` within the simulator's global Zenoh scope.
+The unchanged `button_event_bridge` and `button_event_handler` process them.
+Tap F1 for Damping, tap Stand for Prepare; hold Stand for one second and release to enter Initial once the pose is safe.
+Hold Walk and release to enter Playing from Initial.
+The one-second hold threshold is a simulator convention.
+A bar under the held button fills toward the threshold.
+Short presses emit PressDown/PressUp/SingleClick; long presses emit PressDown/LongPressStart/LongPressHold/LongPressEnd/PressUp.
+The simulator implements passive damping and a two-second Prepare joint trajectory behind the existing Booster mode RPC, including requests from hardware_interface.
+These are approximations of the manufacturer's controller, not firmware emulation.
+See the [K1 body controls](https://docs.booster.tech/docs/product-manual/k1/basic-operations/body-operations/).
+HULK's long-press actions differ from Booster's default firmware WALK action.
+
+The header's **LED** rectangle displays the actual color commanded by `led_handler` through `hardware_interface` and `rt/LightControlApiTopicReq`.
+The simulator acknowledges the Booster light RPC and follows color changes and Stop-state blinking in every profile.
+Before the first command or after releasing LED control, the rectangle is neutral; the tooltip reports that no command is active.
+Firmware-owned LED colors after release are not simulated.
+Inspect primary state, localization and Game Controller connection status in Twix or GameController; the simulator header does not repeat them.
+
+The simulator runs one shared instance of the real controller handler on the Twix host.
+It routes input only to the robot selected in Twix.
+Release and press Start after switching robots to enable routing; holding Start across a switch does not activate the new robot.
+Subsequent Start presses toggle behavior's remote mode; walking axes, head controls and kicks use the existing robot mappings.
+Inactive robots receive disconnected controller inputs.
+Inspect `inputs/controller_input` and `behavior/blackboard.remote_control_enabled` in Twix to check capture and activation.
+Behavior stops using stale controller input after its existing 250 ms freshness window.
+No connected gamepad is required for startup.
+
+**Whistle** publishes a 750 ms detection pulse to every robot through the real whistle filter, with false samples between pulses.
+Repeated clicks extend the current pulse.
+The pulse spans the GameController's 500 ms update interval, because the state filter checks whistles when those updates arrive.
+Use the real GameController to enter Set before testing the whistle-to-Playing transition.
+
+Motion overrides use the Parameter panel: select the relative node `behavior_node`, path `control.injected_motion_command`.
+Set it to `null` to let behavior choose motion.
+The preset opens this parameter; press **Refresh** once the simulator has started.
+
+**M** or **Fly camera** captures/releases the mouse; **Esc** releases it.
+While captured, a legend at the bottom of the scene lists the movement keys.
+While captured, use W/A/S/D to move, Q/E for down/up, and Shift for faster movement.
+**Add ball** places a ball one meter from the origin.
+Select and drag it on the horizontal plane, or press **Delete** while pointing inside the scene to remove it.
+Select the robot to show translation arrows and rotation rings.
+Dragging pauses physics and restores its previous running state on release.
+Reset pose pauses and returns the robot to its standing spawn pose.
+Stop and Start rebuild the node stack and clear a latched emergency stop.
+Blue arrows show commanded translation, green shows yaw rate, amber shows kicks.
+
+The physics worker advances a shared ROS-Z logical clock independently of the visible panel and repaint rate.
+Each running physics step advances robotics time by the MuJoCo timestep, and every sensor view of that step shares its timestamp.
+The speed selector beside Run/Pause offers ¼×, ½×, 1×, 2× and 4×, and can be changed while running or paused.
+Speed changes wall pacing, keeping the physics timestep fixed.
+The achieved rate shows simulated seconds per real second; available compute may limit faster targets.
+Physics, robotics and all automatic GameController match timers advance together.
+Automatic GameController packets follow simulation time, with a real-time heartbeat retained during pauses and slow playback.
+Pause and scene recompilation freeze simulation time and sensor sampling.
+Resume continues from that time without catching up elapsed wall time; pose resets and scene edits never rewind the clock.
+A new robot initializes from stationary sensor samples at the shared clock time, then joins the common physics scene in Initial.
+Camera frames use simulation time at approximately 30 Hz.
+`diagnostics/camera_frames` reports capture/publication times and cumulative overwritten queued snapshots.
+A whistle clicked while paused is retained for resume; its 750 ms pulse uses simulation time.
+
+The external GameController keeps its own real-time match clock at every simulation speed, and incoming packets, Twix parameters and body buttons remain live while paused.
+The toolbar explicitly indicates this clock difference when External mode uses a speed other than 1×.
+Behavior-generated return messages pause with behavior, so the GameController may mark the robot disconnected during a long pause.
+Gamepad capture and its source timestamps use wall time, matching the existing behavior freshness check.
+LED blinking, transport deadlines and UI button holds also retain their existing wall-time behavior.
+This freezes robotics clock-driven processing; it does not suspend every asynchronous callback or promise deterministic execution.
+Neural policies and contacts still need validation against hardware.
+
+## GameController
+
+In External mode, use [RoboCup-HumanoidSoccerLeague/GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController).
+Start an actual game for team 24 with up to five players, and team 5 when opponents are enabled.
+A simulator-owned UDP relay receives state on UDP 3838 and forwards the original bytes to each production endpoint on a separate private port.
+Every robot parses the message, applies its own player number and emits a real return message, which the relay sends to the external sender on UDP 3939.
+Simulated teammates broadcast on an ephemeral shared port over loopback.
+The relay forwards a copy to GameController on UDP 10024 for accounting; ordinary robot broadcasts on 10024 do not enter the simulated team.
+
+The simulator runs `message_handler`, `message_filter`, `game_controller_filter`, `game_controller_state_filter`, `primary_state_filter`, `player_states_receiver` and `team_ball_filter`.
+Behavior sends the real return and team messages through that handler.
+The simulator does not publish fabricated filtered game or primary states.
+In External mode, use GameController for game phases, penalties, scores, sides and restarts.
+
+GameController and Twix can run on the same machine, in either startup order.
+Select a GameController network interface that can broadcast to the simulator host.
+When using separate machines, ensure UDP can cross the network.
+The automated roundtrip below runs both applications in one private network without changing the host's interfaces.
+
+## Parameters and observations
+
+The parameter layers are the selected root's `base`, this tool's `parameters`, the chosen `location`, private player/network/calibration overrides, then an empty writable session layer for each robot.
+Twix writes to the last layer, which is deleted when the simulator stops.
+Save an intentional tuning result separately if it should survive a restart.
+Repository robot parameters stay intact.
+
+Unobserved `ground_truth/` topics skip serialization and publication. Native subscription
+matching includes raw MCAP capture, so full recordings retain all comparison streams.
+Synthetic camera detection work is also skipped when neither a selected estimator nor
+an observer needs it. Production sensors and substitute inputs keep their existing rates.
+
+Select the ONNX model directory separately in the panel before starting.
+It defaults to the repository's `etc/neural_networks` and is resolved independently of the working directory.
+The tool calibrates safe-pose checks and the stand-up pose to its SDK preparation pose.
+These are simulated hardware calibration values, not changes to the checks.
+
+Use Twix's Parameter panel for behavior, motion, inference, fall detection and ball parameters.
+The location selector discovers all directories under the chosen parameter root's `location` directory.
+Field dimensions load from layered `global.json5` files and are passed to every robot's real global parameter provider.
+Goal height loads from the location's `simulator.json5` file.
+The added `hsl_small`, `hsl_middle` and `hsl_large` locations contain the exemplary 2026 HSL v1.1.1 fields of 9×6 m, 14×9 m and 22×14 m.
+Their balls follow the rules' Table 4: a FIFA mini ball of 14.6 cm for Small, size 4 for Middle and size 5 for Large.
+**Ball** keeps the location's ball or replaces it with a FIFA mini ball or size 3, 4 or 5, because divisions share field sizes.
+The chosen size reaches every robot's field dimensions, the physics scene and the referee alike.
+The rules do not give a mini ball diameter; 14.6 cm is the middle of the usual 43–48 cm circumference.
+Ball mass stays at `simulator.ball.mass`, editable in the Parameter panel.
+Add another location directory to make it available without changing simulator code.
+Field geometry is shared and selected before startup; edit the location files and restart to change it.
+Runtime goal-height edits are rejected, and changing a robot's global field dimensions stops the worker with an error to prevent divergent worlds.
+The simulator node owns ball contact and mass settings.
+Use Text, Plot, Map and Behavior tree panels for outputs.
+
+Every profile publishes independent references under `ground_truth/`, even when the corresponding real estimator runs.
+These include body/link/camera transforms, contact support, field pose, planar odometry, all scene balls with stable identities, scalar ball references, other-robot and fixed goalpost obstacles, identified other robots (`ground_truth/humanoids`), ideal visible detections and both camera-motion streams.
+Production nodes never consume this reference namespace.
+Profile 1 uses the first remaining ball in creation order for its scalar ball inputs; higher profiles observe all visible balls and let the real filter choose.
+
+Synthetic detections use the physical optical camera, image bounds and scene occlusion.
+Ball boxes preserve the projected 3D center; goalpost boxes preserve their ground-contact anchor.
+CameraInfo describes the simulator's actual intrinsics and zero distortion.
+The camera-motion substitute includes body and articulated head motion, with coherent delta/accumulated poses and a new epoch after a robot gizmo move or reset.
+Ball edits preserve the epoch.
+
+Set `simulator.observations.pixel_noise_std_dev`, `detection_dropout_probability` and `seed` through the Parameter panel for repeatable detection faults.
+Defaults are exact observations with no loss.
+Noise never changes ground truth.
+No producer is added for the obsolete `current_odometry_to_last_odometry` topic; the preferred obstacle filter uses absolute odometry.
+During a three-second simulated walking fixture, goalpost outputs differed from current truth by up to 6.11 cm.
+These outputs lack a measurement timestamp, so that diagnostic includes processing delay as well as hypothesis lag.
+The obstacle filter also places mapped posts 2 cm beyond the shared field helper's goal-line centers with the default field parameters.
+
+This tool hosts selected unchanged node entry points in Twix; it does not launch the complete `hulk_ros_z` executable.
+Image rendering/transport, neural detection and actual stereo VO are deferred to a later profile.
+See the [UI and multiple-robot audit](AUDIT.md) for the process boundary.
+
+## Self-play
+
+Set the opponent count above zero before starting, or choose **opponents** from **Add robot** during a session.
+Both teams run the same selected profile and share the ball, contacts, field and simulation clock.
+Each side uses player numbers 1 through 5 and starts on its own half's sidelines.
+Dynamic additions use the team's current GameController field side and skip occupied slots.
+Badges show H1–H5 or O1–O5 in the received jersey color, with an LED accent; hovering shows its namespace.
+Select `/opponents/N` in Twix to inspect or control an opponent, including the body buttons and local gamepad.
+Switching robots requires releasing and pressing Start again before gamepad input reaches the new robot.
+
+For External mode, run the HSL GameController with teams 24 and 5, matching the simulator's field class and player count.
+Use its normal controls for kickoff, penalties, goals and side assignment.
+Select Auto referee to use automatic scoring and referee decisions without an external controller.
+Before receiving GameController data, HULKs defaults to the home side and opponents to away.
+Changing sides through GameController changes the robots' field interpretation; reposition robots with the gizmo or reset pose as needed.
+
+The unmodified production protocol hardcodes HULKs' team number as 24.
+The simulator adapts opponents' incoming protocol-20 packets by exchanging team identifiers 24 and 5, including the kicking team, while preserving team order and all other fields.
+It rewrites opponents' protocol-4 return team identifier to 5; poses remain in the production team's coordinate frame.
+Each team has a separate private UDP teammate channel, with copies forwarded to GameController ports 10024 and 10005 for message accounting.
+Opponent adaptation rejects unsupported packet versions and other team pairings.
+All raw Booster and ROS traffic is scoped under `hulk_simulator/hulks/N` or `hulk_simulator/opponents/N`.
+No robotics source changes are required.
+
+[B-Human 2026 opponents](bhuman/README.md) run native behavior and motion in one
+process per robot, with perfect world models and native whistle, button and LED
+handlers. Launch with `./twix --simulator --bhuman /hulks/1`, then enable
+**B-Human 2026** below the opponent count. Vision and audio capture are excluded.
+
+## Verify
+
+```sh
+export MUJOCO_DOWNLOAD_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mujoco-rs"
+export LD_LIBRARY_PATH="$MUJOCO_DOWNLOAD_DIR/mujoco-3.9.0/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cargo test -p simulate --lib
+cargo test -p twix --features simulator --bin twix
+# With ONNX Runtime/models available and no simulator using the GameController ports:
+# The startup test covers all eight estimator combinations.
+cargo test -p simulate startup_pause_resume_and_scene_edits_preserve_time -- --ignored
+SIMULATOR_TEST_PROFILE=localization cargo test -p simulate five_players_dynamic -- --ignored
+SIMULATOR_TEST_OPPONENTS=2 SIMULATOR_TEST_ADD_RUNNING=1 cargo test -p simulate five_players_dynamic -- --ignored
+SIMULATOR_TEST_OPPONENTS=1 SIMULATOR_TEST_MCAP_ENABLED=false cargo test -p simulate five_players_dynamic -- --ignored
+
+git clone https://github.com/RoboCup-HumanoidSoccerLeague/GameController /tmp/hsl-game-controller
+HSL_PLAYERS=5 SIMULATOR_TEST_ROBOTS=5 SIMULATOR_TEST_OPPONENTS=5 HSL_TEST_FILTER=five_players_dynamic tools/simulate/tests/hsl/roundtrip.sh /tmp/hsl-game-controller
+```
+
+The last test requires Linux user/network namespaces, `ip`, Python 3, and the upstream Rust build dependencies including libclang.
+It compiles the upstream `game_controller_runtime` used by the GUI, drives its normal action API, and connects it to HULK's production message nodes in the same private network.
+It checks ten accepted return streams, team-specific pickup penalties and removal, kickoff ownership, opposing field sides, production walking commands, and a whistle-in-Set transition through the real state filters while upstream still reports Set.
+It then verifies that the upstream match countdown advances while robotics time is frozen, return messages stop, and connection status recovers after resume.
+No synthetic GameController packets are used in this test.
+The multi-robot runtime test also sends distinct teammate markers through the real message handlers and filters, requiring same-team delivery and rejecting cross-team delivery.
+The GUI itself is not driven.
+Tested against upstream commit `af7d12962c671b631dee7b293df70e6f7b8bb491`, protocol 20, return protocol 4.
+
+The ordinary unit suite also checks UDP team-message reception, SDK request/reply isolation for global Zenoh prefixes `42` and `43`, physics model recompilation, sensor transforms, command vectors, fall-detection poses, gizmo geometry, and raw body-button delivery through the real bridge, handler and primary-state filter.
+The optional startup test launches profiles sequentially and checks producer ownership, independent truth, whistles, controller input/disconnect, filtering and body estimation.
+Set `SIMULATOR_TEST_PROFILE` to `motion_behavior`, `filtering`, `body_state_odometry` or `localization` to select one.
+It pauses longer than a whistle pulse and verifies frozen physics, robotics time, sensor timestamps and behavior timers, followed by resume without a catch-up jump.
+It also holds the scene-edit lock for 300 ms and checks that the shared clock freezes, caches remain fresh in simulation time and camera frames resume coherently.
+For profile 4 it checks the live input chain, VO ingestion and acquisition status.
+The captured-frame regression `localization_startup_frame_acquires_with_production_parameters` now runs in the ordinary unit suite and passes with the new production association solver.
+Run `localization_acquisition_and_tracking` explicitly with `--ignored` to exercise live acquisition and walking with ONNX Runtime and motion models.
+OS gamepad capture could not be tested here because no input device or `uinput` was available; injected controller messages and the no-device local startup path were tested.
+
+On the tested Linux environment, dynamically loading ONNX Runtime 1.22.1 caused an exit-time crash in its global environment destructor.
+Preloading the same library made startup, rendering and shutdown succeed:
+
+```sh
+LD_PRELOAD="$ORT_DYLIB_PATH${LD_PRELOAD:+:$LD_PRELOAD}" ./twix --simulator /hulks/1
+```
+
+This is an environment-specific workaround, not a change to motion inference.
+
+## Automatic referee
+
+Select **Auto referee** before starting, then choose the HSL division and its Foundation or Advanced configuration independently of the field location and ball.
+All six presets are the upstream competition parameters, including player limits, durations and message budgets.
+Foundation and Advanced differ only in players per team: 4 or 7 in Small, and 3 or 5 in Middle and Large.
+Players numbered above the limit start as substitutes and are placed beside the field; the setup page warns before starting.
+Layouts saved before Foundation existed keep their Advanced preset.
+External GameController remains the default for saved layouts and existing workflows.
+Automatic mode embeds the [HSL GameController core and autoreferee](https://github.com/RoboCup-HumanoidSoccerLeague/GameController/tree/a6cc98bb9f7c0f03912134b333194af3fa880798) at revision `a6cc98bb9f7c0f03912134b333194af3fa880798`.
+Its copied competition YAML files retain the upstream MIT license in `src/autoref/LICENSE.upstream`.
+The message crate's build requires libclang, as does the upstream build.
+
+The core owns match state, clocks, scores, penalty durations, delayed Playing packets, halftime and message accounting.
+The upstream autoreferee owns boundary, restart, touch, positioning and motion judgments.
+The simulator handles local/global stuck timing using the same upstream distances and durations, with a separate local timer for each player.
+The simulator converts MuJoCo poses and contacts into its world observations, including field-coordinate and line-width conventions, and executes its ball placements, player placements and whistles.
+The simulator retains physical handling delays, halftime sideline placement, operator controls and transport.
+Rule context is the [HSL 2026 rules v1.1.1](https://github.com/RoboCup-HumanoidSoccerLeague/HSL-Rules/releases/tag/rules-2026-v1.1.1).
+It sends real UDP GameController packets through the same production message handlers and receives robot return traffic from both teams.
+Automatic mode uses private loopback ports and accepts state packets only from its embedded controller, so an external controller cannot take over the match.
+All match timers advance with simulation time and freeze when paused.
+An external controller continues using its own wall clock.
+
+Automatic mode creates one match ball and disables adding or deleting balls.
+Dragging it remains available for test setup; a drag starts a new scenario, clearing previous touch and restart history.
+Placing the ball outside the field cannot produce a goal or boundary call until it returns inside.
+The referee starts Ready, places the ball in Set and injects the existing ground-truth whistle output when starting play.
+Goals and whole-ball boundary crossings trigger kickoffs, kick-ins, corner kicks or goal kicks.
+Contacts identify the last touching team; when no contact is known, the upstream referee awards the exit restart to the defending team.
+Ordinary free kicks stop play, place the ball and resume without a kickoff whistle.
+Restart history preserves indirect-goal and second-touch restrictions after the core announces Ball Free.
+Local and global stuck situations, kickoff positioning, excess goal-area defenders, leaving the carpet and motion in Set or Stop have automatic checks.
+Local game stuck requires a player to stay within 0.5 m of the ball, measured from the player's footprint edge, for ten seconds while the ball stays within 0.1 m of its reference position.
+Approaching time outside that area does not count. Leaving it, moving the ball, or issuing a local-stuck penalty clears the corresponding timing; a newly approaching player never inherits the stationary ball's age.
+Stopped play and paused simulation do not advance these timers. Global game stuck retains the upstream thirty-second timeout when no active player is within 1 m of the ball.
+The upstream checks use robot poses with a 20 cm footprint radius and their own settling and contact debounce intervals.
+Distinct retouches count after the upstream debounce interval; continuous contact does not count as repeated kicks.
+At the end of a half, the referee waits for the ball to rest for one second, with a maximum delay of ten seconds.
+At halftime, the referee moves teams to the correct sidelines for the new ends and observes the full core break duration.
+
+Penalized robots acknowledge Penalized before physical removal, with a one-second fallback.
+The referee stands them outside their own penalty mark, avoids occupied slots, starts the core penalty timer after placement and releases them when that timer expires.
+They must walk back under their own control.
+Motion-in-Set penalties stay in place; sent-off robots remain removed.
+The running panel always shows team scores, the current half, remaining match or halftime time, game state and active restart.
+**Pause** freezes physics, robotics and every clock.
+**Stop play** is a referee call: the match halts while the simulation continues, and robots must stand still.
+The next-step button follows the GameController sequence: **Ready**, **Set**, **Whistle**, **Ball free** and **Second half**.
+The **Referee desk** groups match calls, each team's goal, restarts and timeout, and each player's penalties beside a decision log.
+It docks beside the scene, or below it in narrow panels.
+Calls the core does not accept in the current state stay visible but disabled, and their tooltip explains why.
+Click a player's badge to select that robot in Twix.
+While the pointer is over the panel, **Shift+Space** stops or resumes play, **N** takes the next step and **R** toggles the desk.
+Each shortcut requires a fresh key press; holding it does not repeat the action.
+Calls apply immediately, also while paused; ball placement, whistles and robot handling follow once the simulation runs.
+Accepted calls are confirmed over the scene and marked in the log, which also lists automatic decisions and actions the core did not apply.
+There is no undo, because undoing core state cannot reverse physical ball and robot handling.
+**Penalty kick** places the ball on the mark in front of the defending team's goal once Ready ends.
+When a timeout expires, automatic calls start the next kickoff.
+Turning off **Automatic calls** preserves UDP transport and penalty handling for manual experiments.
+
+This is a deterministic match referee, not a complete interpretation of every discretionary offense.
+Pushing, deliberate handling, holding, incapability, advantage and kickoff retakes are not automatically judged.
+Extra time and penalty shootouts are not offered.
+Use manual penalties and restart calls for these experiments; a manual pushing penalty does not also award its free kick.
+Judgments that depend on intent or a robot being pushed into an illegal position still require a human.
+
+Run the referee rule and private-UDP tests with `cargo test -p simulate autoref::tests`.
+With the motion models, MuJoCo and ONNX Runtime configured, the ignored roundtrip test starts two robots on each team, checks all return streams and delayed state packets, physically removes a penalized robot, checks pause timing and waits for penalty expiry.
+It also verifies received field-player and goalkeeper colors, second-half Ready without Stop/Resume, and pose agreement with the new field frame.
+In the Localization profile it requires a fresh tracking epoch after halftime.
+
+```sh
+for profile in motion_behavior filtering body_state_odometry localization; do
+  SIMULATOR_TEST_PROFILE="$profile" cargo test -p simulate automatic_referee_robot_roundtrip -- --ignored --nocapture
+done
+```
+
+## Robot logs and recordings
+
+By default every simulator robot records automatically, including robots added during a match.
+Sessions are stored in `logs/simulator/<session>/`, with separate `hulks/<player>/` and `opponents/<player>/` directories.
+Set `SIMULATOR_RECORDING_ROOT` before launching Twix to change the root directory.
+The recording label in the simulator header shows the selected robot's directory on hover.
+Each robot writes `logs.jsonl`, `recording.mcap`, a snapshot of its parameter layers and a final status file.
+Each robot also records its namespace, player identity and spawn time in `robot.json`.
+The session manifest records the selected profile, field, teams, model hashes, source revision and working-tree status.
+Recordings are retained until manually removed; the simulator never overwrites a previous session.
+
+Open Twix's **Logs** panel to follow the connected robot namespace.
+Changing namespaces clears the display and loads that robot's complete current-session log through the relative `logs/history` ROS-Z service.
+Severity, search, target and grouping filters affect only the viewer; collection continues while the list is scrolled away from the newest entry.
+History comes from the existing `logs.jsonl` file in bounded pages, including buffered writes, and continues from the same cursor as new entries arrive.
+The selected robot's full log remains searchable in the viewer, with no entry-count or age limit.
+Switching robots cancels the old request and frees its displayed history; switching back reloads every recorded entry, including those produced while another robot was selected.
+A new robot session resets the display even when it reuses the same namespace.
+The `logs` topic still retains 512 entries for ordinary subscribers, and older publishers without the history service retain the viewer's 4,096-entry live-tail fallback.
+After a session stops, use its saved MCAP recording for replay.
+Each row includes the complete message and structured fields; scroll horizontally for long entries.
+Hover a log entry to inspect every field, its wall timestamp and original line breaks.
+See the [Twix documentation](../../docs/tooling/twix.md#logs) for the viewer's controls.
+The same panel can display recorded logs through Twix's existing MCAP replay support.
+Physical robots do not publish this topic yet.
+
+The simulator owns a separate async runtime and log collector per robot, including nested async tasks and blocking workers.
+Shared host infrastructure and native library output that bypasses Rust logging remain in Twix's terminal.
+The `simulator_recording.json5` overlay uses the normal parameter layers, so a location can override its settings.
+By default `topics: ["**"]` captures every ROS-Z topic emitted in the robot's namespace, including `ground_truth/**`, node outputs and `logs`.
+The subscription starts before robotics nodes and covers publishers created later.
+The recorder retains schemas registered locally during capture, so queued samples remain decodable after their publisher exits.
+External publishers still need a reachable schema service at first discovery.
+Booster transport packets and service requests are not ROS-Z topics; their corresponding node inputs and outputs are recorded.
+`capture_level` controls collection at startup: Error=1, Warn=2, Info=3, Debug=4 and Trace=5.
+The default is Info, independently of the viewer's filter and Twix's terminal filter.
+`queue_capacity` bounds each recording queue and defaults to 8,192 samples.
+Edit these settings in the parameter files before starting; live changes are rejected.
+
+In Twix, use **Record MCAP** in the setup screen before starting.
+This choice overrides `mcap_enabled` in the parameter files for every robot in the session.
+For headless sessions, set `mcap_enabled: false` in the location's
+`simulator_recording.json5` overlay before starting. A ready-made overlay is in
+`tools/simulate/parameters/recording_presets/disabled.json5`. This skips the MCAP
+subscriber and writer; JSONL logs, live logs and parameter snapshots remain enabled.
+The toolbar shows **LOGS** instead of **REC**. Recording checkpoints and archive
+fallback are unavailable while MCAP is disabled. Removing the setting restores
+the default full recording on the next headless start.
+
+For experiments that only need logs and selected robot states, copy
+`tools/simulate/parameters/recording_presets/state_only.json5` to
+`etc/parameters/location/<location>/simulator_recording.json5` before starting.
+This opt-in preset records behavior, motion-inference status and timing, camera
+diagnostics, localization estimates, filtered balls and obstacles. It omits raw
+sensors, body geometry, ground truth and detailed inference traces. Robot nodes
+and their publications still run normally. Remove the location overlay to return
+to the default full recording.
+
+MCAP `log_time` is simulation time at receipt, so pauses and speed changes replay on the simulation timeline.
+MCAP `publish_time` preserves the publisher's original source timestamp, including wall-clock gamepad inputs.
+Simulator channels tell `mcap-replay` to publish using simulation receipt time, so wall-clock inputs stay on the simulation timeline in Twix.
+The MCAP retains their original source timestamps.
+The compressed `_recording/receipt` channel preserves wall arrival and transport timestamps together with channel, publisher and sequence identifiers.
+Stopping drains and finalizes the recordings in background workers while the panel displays **Finalizing recordings**.
+Recording failures and dropped samples appear in the simulator header and the final status files; they do not stop the match.
+Failure to create a recording destination prevents that robot from starting.
+MCAP replay is topic playback and does not reconstruct a deterministic physics run.
+
+## Agent access through MCP
+
+Run `./simulator-mcp` from an MCP client as a local stdio server. It launches its own headless simulator worker. The launcher sets the MuJoCo library path; the same models and ONNX Runtime setup described above are required. Set `ORT_DYLIB_PATH` when the runtime is not on the loader's search path. Scene rendering requires headless EGL. With ONNX Runtime 1.22.1 on the tested Linux system, also use the `LD_PRELOAD` workaround above to avoid its exit-time destructor crash; worker exit failures are reported by the stop operation.
+
+Example client configuration (replace the repository and library paths):
+
+```json
+{
+  "mcpServers": {
+    "simulator": {
+      "command": "/path/to/hulk/simulator-mcp",
+      "env": { "ORT_DYLIB_PATH": "/path/to/libonnxruntime.so" }
+    }
+  }
+}
+```
+
+Start with `server_info`, then `simulator_start` with a unique `request_id` and configuration such as `{"location":"hsl_middle","profile":"motion_behavior","referee":"automatic"}`. Startup returns an operation; poll `operation_status` for its session and target IDs. The session starts paused. Discover the graph and schemas, establish `rosz_observe` subscriptions, then advance or resume. Use a fresh request ID for each mutation; retries with the same arguments and ID return the original handle.
+
+`rosz_read` gets current state or retained history by target, topic, field path, and time range. Paths use `.field.subfield`, `[index]`, and `::Variant` syntax; empty selects the whole value. Wide integers are decimal strings. Present optional values use `{"$type":"some","value":...}`. The schema tool provides canonical schemas and topic examples. Writes use native ROS-Z publication, parameter transactions, and dynamically discovered services.
+
+Historical reads may explicitly set `allow_recording_fallback: true`. This finalizes a recording segment while simulation continues, then reads immutable segments. Each sample identifies its publication, receipts, and data source. The manifest `recording-segments.json` also lets `mcap-replay` replay the full session. Latest-state reads never use recordings. Observations and finalized recordings remain readable after the worker stops.
+
+Paginated replies include a `query_id`. Reading the last page releases the full snapshot automatically. If you abandon a query, call `query_release` with that ID and a fresh `request_id`. `server_info.query_budget` reports active snapshots and the separate, bounded last-page retry cache. See [pagination lifetime](../../docs/tooling/simulator_mcp_design.md#commands-and-completion) before reusing earlier cursors.
+
+For a long interval, use `rosz_export` with `target_id`, `sources`, `range`, and `request_id`. It streams JSONL by default, or CSV with `format: "csv"`, and returns an operation. The default `data_source: "observations"` exports retained observations; explicitly choose `"recording"` to export a finalized checkpoint, including during an active session. Export does not consume cursor capacity. Its data artifact and metadata artifact include local file paths. For remote reads, use the artifact's `read_uri_template` with byte offsets and chunks up to 1 MiB; concatenate decoded bytes before parsing. Unchunked resource reads are limited to 8 MiB.
+
+Before advancing an experiment that needs inference traces, call `rosz_observe` with `preset: "motion_inference"`, the target, and a request ID. This arms trace, status, and timing subscriptions. Keep the returned observation until capture is finished. Discovery alone does not activate subscriber-gated diagnostics, and recording filters can still exclude them. Archive coverage distinguishes `topic_never_recorded` from `no_samples_in_range`. Reads and exports return [verification evidence](../../docs/tooling/simulator_mcp_design.md#verification-evidence), including sequence gaps, recorder drops, schema hashes, and parameter revisions observed through MCP.
+
+`view_render` produces scene snapshots, data plots, simple coordinate maps, or real published images. `video_capture` produces an animated GIF of a future interval: wait for `armed`, then advance the simulator separately. Capture never advances physics. Read returned artifact URIs through MCP `resources/read`. Artifacts default to `logs/simulator-mcp/<id>`; `SIMULATOR_MCP_ARTIFACTS` overrides this directory.
+
+Follow the [developer walkthrough](../../docs/tooling/simulator_mcp_design.md#developer-walkthrough) for a worked session with tool calls. The [design and limitations](../../docs/tooling/simulator_mcp_design.md) and [machine-readable contract](../../docs/tooling/simulator_mcp_contract.schema.json) describe all 24 tools. To validate the real stdio server, including scene rendering:
+
+```sh
+cargo build -p simulate --bin simulator-mcp
+uv run --no-project --with jsonschema python tools/simulate/tests/mcp_smoke.py --render
+```
+
+Use the MuJoCo/ONNX environment above for both commands. Omit `--render` when EGL is unavailable. The test prints its temporary directory containing logs and inspection artifacts.
+
+## Performance comparison
+
+`tests/performance.py` compares saved simulator MCP binaries across all four
+profiles at 1v1, 2v2, 3v3 and 5v5. Save the baseline binary before rebuilding your
+changes, then run:
+
+```sh
+uv run --no-project --with jsonschema python tools/simulate/tests/performance.py \
+  --binary before=/path/to/baseline-simulator-mcp \
+  --binary after=/path/to/updated-simulator-mcp \
+  --output logs/simulator-performance/results.json
+```
+
+Use the same MuJoCo and ONNX environment as the MCP smoke test. Each session
+starts fresh, advances five simulation seconds to warm up, then measures three
+three-second wall-time windows at requested 4x playback. Robots remain in Initial
+with an external referee, rendering disabled and full topic recording enabled.
+The results measure standing simulation throughput and CPU cost; they do not
+measure a running match or GUI rendering.
+
+The script alternates binary order between cases and reports simulation speed,
+worker CPU seconds per simulation second, memory and recording drops. It checks
+recording finalization and removes its temporary recordings after each session.
+Results and stderr logs remain beside the output JSON. Rerunning the same command
+resumes completed cases. Use `--repeats` for additional fresh-session trials or
+`--profiles` and `--players` to select cases.
+
+To isolate MCAP overhead, use the same updated binary for both labels and add
+`--recording before=on --recording after=off`. The runner supplies temporary
+parameter overlays with identical settings apart from `mcap_enabled`, verifies
+that disabled sessions create no MCAP files, and keeps robot logs enabled.

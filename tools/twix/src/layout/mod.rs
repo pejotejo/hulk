@@ -33,6 +33,46 @@ pub struct TwixLayout {
 }
 
 impl TwixLayout {
+    #[cfg(feature = "simulator")]
+    pub fn simulator_robot_name(&self, id: simulate::RobotId) -> Option<String> {
+        self.tree.tiles.iter().find_map(|(_, tile)| {
+            if let egui_tiles::Tile::Pane(SelectablePanel::SimulatorPanel(panel)) = tile {
+                panel.robot_name(id)
+            } else {
+                None
+            }
+        })
+    }
+
+    #[cfg(feature = "simulator")]
+    pub fn select_simulator_robot(&mut self, number: Option<simulate::RobotId>) {
+        for (_, tile) in self.tree.tiles.iter_mut() {
+            if let egui_tiles::Tile::Pane(SelectablePanel::SimulatorPanel(panel)) = tile {
+                panel.select_robot(number);
+            }
+        }
+    }
+
+    #[cfg(feature = "simulator")]
+    pub fn reconnect(&mut self, backend: &Arc<RobotBackend>, context: &Context) {
+        for (_, tile) in self.tree.tiles.iter_mut() {
+            if let egui_tiles::Tile::Pane(panel) = tile {
+                if matches!(panel, SelectablePanel::SimulatorPanel(_)) {
+                    continue;
+                }
+                let saved = panel.save();
+                match SelectablePanel::new(crate::panel::PanelCreationContext {
+                    backend: backend.clone(),
+                    value: Some(&saved),
+                    egui_context: context.clone(),
+                }) {
+                    Ok(replacement) => *panel = replacement,
+                    Err(error) => log::error!("Reconnecting panel: {error:#}"),
+                }
+            }
+        }
+    }
+
     pub fn dialog_open(&self) -> bool {
         self.preset_ui.dialog_open()
     }

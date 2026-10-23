@@ -1,0 +1,867 @@
+//! Runs unmodified robot nodes against simulated sensors and the Booster transport.
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
+use bevy::prelude::Resource;
+use color_eyre::Result;
+use ros_z::{
+    parameter::NodeParameters,
+    prelude::*,
+    time::{Clock, Time},
+};
+use tokio::{runtime::Handle, sync::watch, task::JoinSet};
+use types::{
+    filtered_game_controller_state::FilteredGameControllerState, motion_command::MotionCommand,
+};
+
+use crate::{
+    observations::Frame, parameters::SimulatorParameters, profiles::Profile, robot_io::Observation,
+};
+
+#[derive(Clone, Debug, Default)]
+pub enum Opponent {
+    #[default]
+    Hulks,
+    #[cfg(all(feature = "bhuman", unix))]
+    BHuman {
+        executable: PathBuf,
+        source: PathBuf,
+    },
+}
+impl Opponent {
+    pub fn team_name(&self, team: crate::TeamId) -> &'static str {
+        match team {
+            crate::TeamId::Hulks => "HULKs",
+            crate::TeamId::Opponents => match self {
+                Self::Hulks => "Opponents",
+                #[cfg(all(feature = "bhuman", unix))]
+                Self::BHuman { .. } => "B-Human",
+            },
+        }
+    }
+
+    pub(crate) fn player_tag(&self, id: crate::RobotId) -> String {
+        format!("{:.1}{}", self.team_name(id.team), id.number)
+    }
+
+    pub fn player_name(&self, id: crate::RobotId) -> String {
+        format!("{} {}", self.team_name(id.team), id.number)
+    }
+}
+#[cfg(test)]
+use types::time_wrapper::TimeWrapper;
+
+#[derive(Clone)]
+pub struct Configuration {
+    pub referee: crate::RefereeMode,
+    pub competition: crate::Competition,
+    pub parameter_root: PathBuf,
+    pub model_directory: PathBuf,
+    pub router: Option<String>,
+    pub namespace: String,
+    pub location: Option<String>,
+    pub robot_count: u8,
+    pub opponent_count: u8,
+    pub opponent: Opponent,
+    pub field_configuration: Option<crate::FieldConfiguration>,
+    pub profile: Profile,
+    /// Overrides the recording parameter for this session; None uses the parameter layers.
+    pub mcap_enabled: Option<bool>,
+}
+
+#[derive(Resource, Clone)]
+pub struct Robotics(Arc<RobotStack>);
+impl std::ops::Deref for Robotics {
+    type Target = RobotStack;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+pub(crate) struct RobotSettings {
+    pub lease: Option<Arc<crate::Lease>>,
+    pub recording_directory: PathBuf,
+    pub default_away: bool,
+    pub player: hsl_network_messages::PlayerNumber,
+    pub scope: String,
+    pub clock: Clock,
+    pub ports: crate::network::Ports,
+}
+impl Robotics {
+    pub(crate) async fn new_robot(
+        configuration: Configuration,
+        settings: RobotSettings,
+    ) -> Result<Self> {
+        let startup = crate::telemetry::Startup::new(
+            settings.recording_directory.clone(),
+            settings.clock.clone(),
+        )?;
+        std::fs::write(
+            startup.directory.join("robot.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "namespace": configuration.namespace, "transport_scope": settings.scope,
+                "player": settings.player, "profile": configuration.profile,
+                "spawn_simulation_time": settings.clock.now().as_nanos(),
+            }))?,
+        )?;
+        let owned_runtime = Arc::new(crate::telemetry::RobotRuntime::new(
+            startup.capture.clone(),
+        )?);
+        let runtime = owned_runtime.handle();
+        let handle = runtime.clone();
+        let owner = owned_runtime.clone();
+        let task = tokio_util::task::AbortOnDropHandle::new(runtime.spawn(async move {
+            let mut stack =
+                RobotStack::new(handle, configuration, Some(settings), Some(startup)).await?;
+            stack.owned_runtime = Some(owner);
+            Ok::<_, color_eyre::Report>(stack)
+        }));
+        let stack = task.await??;
+        Ok(Self(Arc::new(stack)))
+    }
+    #[cfg(test)]
+    pub async fn new(runtime: Handle, configuration: Configuration) -> Result<Self> {
+        Ok(Self(Arc::new(
+            RobotStack::new(runtime, configuration, None, None).await?,
+        )))
+    }
+}
+
+pub struct RobotStack {
+    #[cfg(all(feature = "bhuman", unix))]
+    bhuman: Option<crate::bhuman::SimulatorRobot>,
+    owned_runtime: Option<Arc<crate::telemetry::RobotRuntime>>,
+    lease: Option<Arc<crate::Lease>>,
+    telemetry: Option<crate::telemetry::Telemetry>,
+    runtime: Handle,
+    context: Arc<Context>,
+    _node: Arc<Node>,
+    // The set owns every task, including the SDK receiver, through shutdown and failed startup.
+    tasks: Mutex<JoinSet<(&'static str, Result<()>)>>,
+    _overrides: Option<tempfile::TempDir>,
+    pub parameters: NodeParameters<SimulatorParameters>,
+    pub field_dimensions: types::field_dimensions::FieldDimensions,
+    pub profile: Profile,
+    whistle: watch::Sender<Option<Time>>,
+    frames: watch::Sender<Option<Frame>>,
+    body: Arc<crate::reference::BodyReferences>,
+    detection_demand: crate::demand::Demand,
+    sensors: tokio::sync::Mutex<crate::sensors::Sensors>,
+    readiness: crate::readiness::Readiness,
+    pub primary: ros_z::cache::Cache<types::primary_state::PrimaryState>,
+    pub inference: ros_z::cache::Cache<motion_inference::node::Status>,
+    pub safe_pose: ros_z::cache::Cache<bool>,
+    #[cfg(test)]
+    pub field: ros_z::cache::Cache<types::field_dimensions::FieldDimensions>,
+    default_away: bool,
+    game: Arc<ros_z::cache::Cache<FilteredGameControllerState>>,
+    game_state: ros_z::cache::Cache<Option<types::game_controller_state::GameControllerState>>,
+    motion: ros_z::cache::Cache<MotionCommand>,
+    emergency: ros_z::cache::Cache<()>,
+    commands: watch::Receiver<crate::simulated_sdk::Control>,
+    failure: Mutex<Option<String>>,
+}
+
+impl RobotStack {
+    async fn new(
+        runtime: Handle,
+        configuration: Configuration,
+        settings: Option<RobotSettings>,
+        telemetry_startup: Option<crate::telemetry::Startup>,
+    ) -> Result<Self> {
+        let overrides = tempfile::tempdir()?;
+        // Twix can write this last layer without changing the robot parameter files.
+        std::fs::write(
+            overrides.path().join("behavior_node.json5"),
+            r#"{control: {injected_motion_command: null}}"#,
+        )?;
+        std::fs::create_dir(overrides.path().join("live"))?;
+        if let Some(enabled) = configuration.mcap_enabled {
+            std::fs::write(
+                overrides.path().join("simulator_recording.json5"),
+                serde_json::to_vec(&serde_json::json!({"mcap_enabled": enabled}))?,
+            )?;
+        }
+        write_calibration(overrides.path())?;
+        std::fs::write(
+            overrides.path().join("motion_inference.json5"),
+            serde_json::to_vec(
+                &serde_json::json!({"neural_networks_folder": configuration.model_directory.canonicalize()?}),
+            )?,
+        )?;
+        let mut global = serde_json::Map::new();
+        if let Some(field) = &configuration.field_configuration {
+            field
+                .validate()
+                .map_err(|error| color_eyre::eyre::eyre!(error))?;
+            global.insert(
+                "field_dimensions".into(),
+                serde_json::to_value(field.dimensions)?,
+            );
+        }
+        if let Some(settings) = &settings {
+            global.insert(
+                "player_number".into(),
+                serde_json::to_value(settings.player)?,
+            );
+            std::fs::write(
+                overrides.path().join("message_receiver.json5"),
+                serde_json::to_vec(&serde_json::json!({
+                    "ports": {"game_controller_state": settings.ports.state, "game_controller_return": settings.ports.returns,
+                        "hsl": settings.ports.team, "hsl_broadcast_address": {"octets": [127,255,255,255]}}
+                }))?,
+            )?;
+        }
+        std::fs::write(
+            overrides.path().join("global.json5"),
+            serde_json::to_vec(&global)?,
+        )?;
+        let scope = settings
+            .as_ref()
+            .map_or(crate::ZENOH_NAMESPACE, |settings| settings.scope.as_str());
+        let mut layers = vec![
+            configuration.parameter_root.join("base"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("parameters"),
+        ];
+        if let Some(location) = &configuration.location {
+            layers.push(configuration.parameter_root.join("location").join(location));
+        }
+        layers.extend([overrides.path().to_owned(), overrides.path().join("live")]);
+        let mut builder = ContextBuilder::default()
+            .with_clock(settings.as_ref().map_or_else(
+                || Clock::logical(Clock::wallclock().now()),
+                |settings| settings.clock.clone(),
+            ))
+            .with_namespace(&configuration.namespace)
+            .with_parameter_layers(layers.clone());
+        if let Some(router) = &configuration.router {
+            builder = builder.with_router_endpoint(router)?;
+        }
+        // The physics worker advances this clock; the external GameController keeps wall time.
+        let context = Arc::new(builder.with_json("namespace", scope).build().await?);
+        // ROS-Z applies environment overrides after builder options. Reject a
+        // conflicting override before starting any node that can send SDK traffic.
+        color_eyre::eyre::ensure!(
+            context
+                .session()
+                .config()
+                .get("namespace")
+                .is_ok_and(
+                    |value| serde_json::from_str::<String>(&value).ok().as_deref() == Some(scope)
+                ),
+            "ZENOH_CONFIG_OVERRIDE conflicts with the simulator transport namespace"
+        );
+        let node = Arc::new(context.create_node("simulator").build().await?);
+        let telemetry = if let Some(startup) = telemetry_startup {
+            Some(
+                crate::telemetry::Telemetry::start(
+                    startup,
+                    &context,
+                    &configuration.namespace,
+                    &layers,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        match Self::start_nodes(
+            runtime,
+            context.clone(),
+            node,
+            configuration,
+            settings,
+            overrides,
+        )
+        .await
+        {
+            Ok(mut stack) => {
+                stack.telemetry = telemetry;
+                Ok(stack)
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "Robot startup failed");
+                if let Some(telemetry) = telemetry {
+                    telemetry
+                        .health
+                        .error(format!("Robot startup failed: {error:#}"));
+                    telemetry.finish().await;
+                }
+                let _ = context.shutdown();
+                Err(error)
+            }
+        }
+    }
+
+    async fn start_nodes(
+        runtime: Handle,
+        context: Arc<Context>,
+        node: Arc<Node>,
+        configuration: Configuration,
+        settings: Option<RobotSettings>,
+        overrides: tempfile::TempDir,
+    ) -> Result<Self> {
+        let default_away = settings
+            .as_ref()
+            .is_some_and(|settings| settings.default_away);
+        #[cfg(all(feature = "bhuman", unix))]
+        let bhuman = if default_away
+            && let Opponent::BHuman { executable, source } = &configuration.opponent
+        {
+            let settings = settings
+                .as_ref()
+                .ok_or_else(|| color_eyre::eyre::eyre!("B-Human requires a team session"))?;
+            Some(
+                crate::bhuman::SimulatorRobot::start(
+                    crate::bhuman::Configuration {
+                        executable: executable.clone(),
+                        source: source.clone(),
+                        player: settings.player as u8 + 1,
+                        team: 5,
+                        cognition: true,
+                        active: true,
+                        field: configuration.field_configuration.clone(),
+                        timeout: std::time::Duration::from_secs(30),
+                    },
+                    settings.ports,
+                    &node,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        #[cfg(all(feature = "bhuman", unix))]
+        let is_bhuman = bhuman.is_some();
+        #[cfg(not(all(feature = "bhuman", unix)))]
+        let is_bhuman = false;
+        let parameters = node.bind_parameter_as::<SimulatorParameters>("simulator")?;
+        parameters.add_validation_hook(SimulatorParameters::validate)?;
+        if let Some(field) = &configuration.field_configuration {
+            let height = field.goal_height;
+            parameters.add_validation_hook(move |parameters| {
+                if parameters.goal_height != height {
+                    return Err("Goal height is shared by all robots; change the location parameters and restart".into());
+                }
+                Ok(())
+            })?;
+        }
+        let inference = node
+            .subscriber(motion_inference::node::STATUS_TOPIC)
+            .qos(QosProfile {
+                durability: ros_z::qos::QosDurability::TransientLocal,
+                ..Default::default()
+            })
+            .cache(1)
+            .build()
+            .await?;
+        let primary = node
+            .subscriber("primary_state")
+            .qos(QosProfile {
+                durability: ros_z::qos::QosDurability::TransientLocal,
+                ..Default::default()
+            })
+            .cache(1)
+            .build()
+            .await?;
+        let safe_pose = node.subscriber("is_safe_pose").cache(1).build().await?;
+        let initial_field = node
+            .subscriber::<types::field_dimensions::FieldDimensions>("field_dimensions")
+            .qos(QosProfile {
+                durability: ros_z::qos::QosDurability::TransientLocal,
+                ..Default::default()
+            })
+            .build()
+            .await?;
+        #[cfg(test)]
+        let field = node
+            .subscriber("field_dimensions")
+            .qos(QosProfile {
+                durability: ros_z::qos::QosDurability::TransientLocal,
+                ..Default::default()
+            })
+            .cache(1)
+            .build()
+            .await?;
+        let body =
+            Arc::new(crate::reference::BodyReferences::new(&node, configuration.profile).await?);
+        let sensors = crate::sensors::Sensors::new(context.session()).await?;
+        let behavior =
+            crate::behavior_inputs::BehaviorInputs::new(&node, configuration.profile).await?;
+        let camera_inputs = crate::observations::CameraInputs::new(
+            &node,
+            configuration.profile,
+            parameters.clone(),
+        )
+        .await?;
+        let detection_demand = camera_inputs.detection_demand();
+        let readiness = crate::readiness::Readiness::new(&node, configuration.profile).await?;
+        let game = Arc::new(
+            node.subscriber::<FilteredGameControllerState>("filtered_game_controller_state")
+                .cache(1)
+                .build()
+                .await?,
+        );
+        let game_state = node
+            .subscriber("game_controller_state")
+            .cache(1)
+            .build()
+            .await?;
+        let motion = node
+            .subscriber("behavior/motion_command")
+            .cache(1)
+            .build()
+            .await?;
+        let emergency = node
+            .subscriber("motion/emergency_stop")
+            .cache(1)
+            .build()
+            .await?;
+        let mut tasks = JoinSet::new();
+        let commands = if is_bhuman {
+            watch::channel(crate::simulated_sdk::Control::default()).1
+        } else {
+            let (commands, sdk_task) = crate::simulated_sdk::start(&runtime, &context).await?;
+            // Abort the receiver if startup fails or the panel is closed.
+            let sdk_task = tokio_util::task::AbortOnDropHandle::new(sdk_task);
+            tasks.spawn(async move {
+                (
+                    "booster_sdk",
+                    async {
+                        sdk_task.await?;
+                        Ok(())
+                    }
+                    .await,
+                )
+            });
+            commands
+        };
+        let (whistle, pulse) = watch::channel(None);
+        let (frames, mut receiver) = watch::channel::<Option<Frame>>(None);
+        if !is_bhuman {
+            for spec in configuration.profile.nodes() {
+                let future = (spec.run)(context.clone());
+                tasks.spawn(async move {
+                    let result = future.await;
+                    if let Err(error) = &result {
+                        tracing::error!(node = spec.name, error = %error, "Robot node failed");
+                    }
+                    (spec.name, result)
+                });
+            }
+            let whistle_context = context.clone();
+            tasks.spawn(async move {
+                (
+                    "simulator_whistle",
+                    crate::whistle::run(&whistle_context, pulse).await,
+                )
+            });
+            let game_cache = game.clone();
+            let observation_body = body.clone();
+            tasks.spawn(async move {
+                let result = async {
+                    let mut camera_inputs = camera_inputs;
+                    loop {
+                        receiver.changed().await?;
+                        let frame = receiver.borrow_and_update().clone();
+                        let Some(frame) = frame else {
+                            continue;
+                        };
+                        let side = game_cache
+                            .get_latest()
+                            .map(|game| game.global_field_side)
+                            .unwrap_or(if default_away {
+                                types::field_dimensions::GlobalFieldSide::Away
+                            } else {
+                                types::field_dimensions::GlobalFieldSide::Home
+                            });
+                        behavior
+                            .publish(
+                                &frame,
+                                side,
+                                observation_body
+                                    .odometry_pose(frame.sample.ground_to_world)
+                                    .as_transform::<coordinate_systems::Ground>(),
+                            )
+                            .await?;
+                        camera_inputs.publish(&frame).await?;
+                    }
+                }
+                .await;
+                ("simulator_observations", result)
+            });
+        }
+        let field_dimensions = if is_bhuman {
+            configuration
+                .field_configuration
+                .as_ref()
+                .ok_or_else(|| color_eyre::eyre::eyre!("Missing B-Human field configuration"))?
+                .dimensions
+        } else {
+            tokio::time::timeout(std::time::Duration::from_secs(3), initial_field.recv()).await??
+        };
+        crate::parameters::validate_field_dimensions(&field_dimensions)
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        if settings.is_some() && !is_bhuman {
+            let expected = serde_json::to_value(field_dimensions)?;
+            tasks.spawn(async move {
+                let result: Result<()> = async {
+                    loop {
+                        let actual = initial_field.recv().await?;
+                        color_eyre::eyre::ensure!(serde_json::to_value(actual)? == expected,
+                            "Field dimensions changed while running; stop the simulator, edit the location parameters and restart");
+                    }
+                }.await;
+                ("shared_field_guard", result)
+            });
+        }
+        Ok(Self {
+            #[cfg(all(feature = "bhuman", unix))]
+            bhuman,
+            owned_runtime: None,
+            lease: settings
+                .as_ref()
+                .and_then(|settings| settings.lease.clone()),
+            telemetry: None,
+            runtime,
+            context,
+            _node: node,
+            tasks: Mutex::new(tasks),
+            _overrides: Some(overrides),
+            parameters,
+            field_dimensions,
+            profile: configuration.profile,
+            default_away,
+            whistle,
+            frames,
+            body,
+            detection_demand,
+            sensors: tokio::sync::Mutex::new(sensors),
+            readiness,
+            primary,
+            inference,
+            safe_pose,
+            #[cfg(test)]
+            field,
+            game,
+            game_state,
+            motion,
+            emergency,
+            commands,
+            failure: Mutex::new(None),
+        })
+    }
+
+    pub(crate) async fn recording_checkpoint(&self) -> Result<serde_json::Value> {
+        let telemetry = self
+            .telemetry
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Recording unavailable"))?;
+        let checkpoint = telemetry.recording_checkpoint().await?;
+        Ok(serde_json::to_value(checkpoint)?)
+    }
+
+    pub(crate) async fn controller_input(
+        &self,
+        value: types::controller_input::ControllerInput,
+        duration: std::time::Duration,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<()> {
+        let publisher = self
+            ._node
+            .publisher::<types::controller_input::ControllerInput>("inputs/controller_input")
+            .build()
+            .await?;
+        let deadline = tokio::time::Instant::now() + duration;
+        loop {
+            publisher.publish(&value).await?;
+            if tokio::time::Instant::now() >= deadline || cancel.is_cancelled() {
+                break;
+            }
+            tokio::select! {_ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}, _ = cancel.cancelled() => {}}
+        }
+        publisher
+            .publish(&types::controller_input::ControllerInput::default())
+            .await?;
+        Ok(())
+    }
+
+    pub fn recording_status(&self) -> Option<(&std::path::Path, Option<String>)> {
+        self.telemetry
+            .as_ref()
+            .map(|telemetry| (telemetry.directory.as_path(), telemetry.status()))
+    }
+
+    pub fn mcap_enabled(&self) -> bool {
+        self.telemetry
+            .as_ref()
+            .is_some_and(|telemetry| telemetry.mcap_enabled())
+    }
+
+    pub fn poll(&self) -> Option<String> {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.poll();
+        }
+        let mut tasks = self.tasks.lock().unwrap();
+        let mut failure = self.failure.lock().unwrap();
+        if failure.is_some() {
+            return failure.clone();
+        }
+        if let Some(result) = tasks.try_join_next() {
+            *failure = Some(match result {
+                Ok((name, Ok(()))) => format!("Simulator node {name} exited"),
+                Ok((name, Err(error))) => format!("Simulator node {name} failed: {error:#}"),
+                Err(error) => format!("Simulator task failed: {error}"),
+            });
+            tasks.abort_all();
+        }
+        failure.clone()
+    }
+
+    pub fn status(&self) -> String {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.status();
+        }
+        if let Some(failure) = &*self.failure.lock().unwrap() {
+            return failure.clone();
+        }
+        if self.emergency.get_latest().is_some() {
+            return "Emergency stop. Restart the simulator to clear it.".into();
+        }
+        if !self.ready() {
+            return format!(
+                "{} · {}",
+                self.profile.label(),
+                self.readiness.status(self.now())
+            );
+        }
+        let game = match self.game.latest_stamp() {
+            None => "Waiting for HSL Game Controller",
+            Some(stamp) if self.now().duration_since(stamp) > std::time::Duration::from_secs(3) => {
+                "HSL Game Controller state is stale"
+            }
+            Some(_) => "HSL Game Controller connected",
+        };
+        format!(
+            "{} · {} · {}",
+            self.profile.label(),
+            self.readiness.status(self.now()),
+            game,
+        )
+    }
+
+    pub fn actuator_control(&self) -> crate::simulated_sdk::Control {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.control();
+        }
+        self.commands.borrow().clone()
+    }
+
+    pub fn jersey_color(&self, player: u8) -> Option<hsl_network_messages::TeamColor> {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.jersey_color(player);
+        }
+        let state = self.game_state.get_latest()?;
+        let team = &state.as_ref().as_ref()?.hulks_team;
+        Some(
+            if team
+                .goal_keeper_player_number
+                .is_some_and(|number| number as u8 + 1 == player)
+            {
+                team.goal_keeper_color.clone()
+            } else {
+                team.field_player_color.clone()
+            },
+        )
+    }
+
+    pub fn led_color(&self) -> Option<booster::LedColor> {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.control().led;
+        }
+        self.commands.borrow().led
+    }
+
+    pub fn away(&self) -> bool {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.away();
+        }
+        self.game.get_latest().map_or(self.default_away, |game| {
+            game.global_field_side == types::field_dimensions::GlobalFieldSide::Away
+        })
+    }
+
+    pub fn active_motion(&self) -> MotionCommand {
+        self.motion
+            .get_latest()
+            .map(|value| value.as_ref().clone())
+            .unwrap_or(MotionCommand::Damping)
+    }
+
+    pub fn button_event(&self, button: i32, event: booster::ButtonEventType) -> Result<()> {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            return native.button(button, event);
+        }
+        self.runtime.block_on(crate::buttons::publish(
+            self.context.session(),
+            button,
+            event,
+        ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node(&self) -> &Node {
+        &self._node
+    }
+
+    pub fn now(&self) -> Time {
+        self.context.clock().now()
+    }
+
+    #[cfg(test)]
+    pub fn advance_time(&self, period: std::time::Duration) -> Result<()> {
+        self.context.clock().advance(period)?;
+        Ok(())
+    }
+
+    pub fn whistle(&self) {
+        #[cfg(all(feature = "bhuman", unix))]
+        if let Some(native) = &self.bhuman {
+            native.whistle();
+            return;
+        }
+        self.whistle
+            .send_replace(Some(self.now() + crate::whistle::PULSE_DURATION));
+    }
+
+    pub fn ready(&self) -> bool {
+        if self.is_bhuman() {
+            return true;
+        }
+        self.readiness.ready(self.now())
+    }
+
+    pub fn publish_observation(&self, observation: &Observation, time: Time) -> Result<()> {
+        self.runtime.block_on(async {
+            self.body.publish(observation, time).await?;
+            self.sensors
+                .lock()
+                .await
+                .publish(&observation.low_state, time)
+                .await
+        })
+    }
+
+    pub fn needs_detections(&self) -> bool {
+        self.profile.filtering() || self.profile.localization() || self.detection_demand.active()
+    }
+
+    pub fn is_bhuman(&self) -> bool {
+        #[cfg(all(feature = "bhuman", unix))]
+        {
+            self.bhuman.is_some()
+        }
+        #[cfg(not(all(feature = "bhuman", unix)))]
+        {
+            false
+        }
+    }
+
+    #[cfg(all(feature = "bhuman", unix))]
+    pub(crate) fn bhuman(&self) -> Option<&crate::bhuman::SimulatorRobot> {
+        self.bhuman.as_ref()
+    }
+
+    pub fn publish_frame(&self, frame: Frame) {
+        self.frames.send_replace(Some(frame));
+    }
+}
+
+impl Drop for RobotStack {
+    fn drop(&mut self) {
+        let mut tasks = std::mem::take(self.tasks.get_mut().unwrap());
+        if let Some(telemetry) = self.telemetry.take() {
+            let context = self.context.clone();
+            let node = self._node.clone();
+            let runtime = self.runtime.clone();
+            let owner = self.owned_runtime.take();
+            let lease = self.lease.take();
+            let overrides = self._overrides.take();
+            crate::telemetry::finalize(move || {
+                // Keep schema services and parameter layers alive until the recording drains.
+                let error = runtime.block_on(async {
+                    let error = telemetry.finish().await;
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    error
+                });
+                drop(node);
+                let shutdown_error = context.shutdown().err().map(|error| error.to_string());
+                drop(context);
+                drop(overrides);
+                drop(owner);
+                drop(lease);
+                error.or(shutdown_error)
+            });
+        } else {
+            tasks.abort_all();
+            let mut shutdown = || {
+                self.runtime
+                    .block_on(async { while tasks.join_next().await.is_some() {} })
+            };
+            if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(shutdown);
+            } else {
+                shutdown();
+            }
+            if let Err(error) = self.context.shutdown() {
+                log::error!("Simulator shutdown: {error:#}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn spawn_network(context: &Arc<Context>, tasks: &mut JoinSet<Result<()>>) {
+    for spec in crate::profiles::NETWORK {
+        tasks.spawn((spec.run)(context.clone()));
+    }
+}
+
+#[cfg(test)]
+#[path = "network_tests.rs"]
+mod network_tests;
+
+pub(crate) fn write_calibration(root: &std::path::Path) -> Result<()> {
+    // Calibrate the unmodified checks against our SDK Prepare pose, not a recorded robot.
+    let pose: kinematics::joints::Joints = crate::simulated_sdk::PREPARE_POSE.into_iter().collect();
+    let motors = pose.map(|position| booster::MotorState {
+        position,
+        ..Default::default()
+    });
+    std::fs::write(
+        root.join("safe_pose_checker.json5"),
+        serde_json::to_vec(&serde_json::json!({
+            "prep_mode_serial_motor_states": motors,
+            "prep_mode_imu_state": { "rpy": [0,0,0], "gyro": [0,0,0], "acc": [0,0,9.81] }
+        }))?,
+    )?;
+    std::fs::write(
+        root.join("fall_detection.json5"),
+        serde_json::to_vec(&serde_json::json!({"standing_up": {"start_pose": pose.body()}}))?,
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_transport(builder: ContextBuilder) -> ContextBuilder {
+    builder.with_json("namespace", crate::ZENOH_NAMESPACE)
+}
