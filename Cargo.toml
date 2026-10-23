@@ -19,7 +19,7 @@ members = [
   "crates/kinematics",
   "crates/linear_algebra",
   "crates/linear_sum_assignment",
-  "crates/localization-factrs",
+  "crates/localization-fagra",
   "crates/microphones",
   "crates/nodes/active_vision",
   "crates/nodes/ball_filter",
@@ -60,7 +60,6 @@ members = [
   "crates/nodes/rule_obstacle_composer",
   "crates/nodes/safe_pose_checker",
   "crates/nodes/search_suggestor",
-  "crates/search_heatmap",
   "crates/nodes/stereo_visual_odometry",
   "crates/nodes/support_foot_estimator",
   "crates/nodes/team_ball_filter",
@@ -82,6 +81,7 @@ members = [
   "crates/ros-z-schema",
   "crates/ros-z-streams",
   "crates/ros2",
+  "crates/search_heatmap",
   "crates/simulation_message",
   "crates/twix_visualization",
   "crates/types",
@@ -90,10 +90,12 @@ members = [
   "crates/zed",
   "tools/depp",
   "tools/hydra-bench",
+  "tools/localization_simulator",
   "tools/mcap-replay",
   "tools/mujoco-simulator/mujoco-rust-server",
   "tools/pepsi",
-  "tools/robot_viewer",
+  "tools/robot_logs",
+  "tools/simulate",
   "tools/tensorrt-compile",
   "tools/twix",
   "tools/widget_gallery",
@@ -162,6 +164,7 @@ enum-iterator = "2.1.0"
 enum_dispatch = "0.3.13"
 env_logger = "0.11.8"
 event-listener = "5"
+fagra = { git = "https://github.com/oleflb/fagra", rev = "7b37df61ed615c85f5d59265f5df53ff5d5dc1be" }
 fall_detection = { path = "crates/nodes/fall_detection" }
 fall_down_state_receiver = { path = "crates/nodes/fall_down_state_receiver" }
 field_mark_association = { path = "crates/nodes/field_mark_association" }
@@ -198,7 +201,7 @@ linear_algebra = { path = "crates/linear_algebra" }
 linear_sum_assignment = { path = "crates/linear_sum_assignment" }
 localization-2d = { path = "crates/nodes/localization-2d" }
 localization-3d = { path = "crates/nodes/localization-3d" }
-localization-factrs = { path = "crates/localization-factrs" }
+localization-fagra = { path = "crates/localization-fagra" }
 log = "0.4.25"
 low_state_bridge = { path = "crates/nodes/low_state_bridge" }
 mcap = "0.25.0"
@@ -260,7 +263,9 @@ rand_distr = "0.5.0"
 regex = "1.11.1"
 repository = { path = "crates/repository" }
 reqwest = { version = "0.12.28", features = ["blocking"] }
+rhai = { version = "1.26.1", features = ["serde"] }
 robot = { path = "crates/robot" }
+robot_logs = { path = "tools/robot_logs" }
 ros-z = { path = "crates/ros-z", features = ["nalgebra", "ndarray"] }
 ros-z-cdr = { path = "crates/ros-z-cdr" }
 ros-z-debug = { path = "crates/ros-z-debug" }
@@ -281,10 +286,12 @@ serde_json = "1.0.138"
 serial_test = "3.0"
 sha2 = "0.10.8"
 simba = "0.9.0"
+simulate = { path = "tools/simulate" }
 simulation_message = { path = "crates/simulation_message" }
 smallvec = "1.14.0"
+socket2 = { version = "0.6.4", features = ["all"] }
 splines = { version = "=4.2.0", features = ["serde"] }
-stereo_visual_odometry = { path = "crates/nodes/stereo_visual_odometry" }
+stereo_visual_odometry = { path = "crates/nodes/stereo_visual_odometry", default-features = false }
 support_foot_estimator = { path = "crates/nodes/support_foot_estimator" }
 syn = { version = "2.0.98", features = ["extra-traits", "full"] }
 team_ball_filter = { path = "crates/nodes/team_ball_filter" }

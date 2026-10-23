@@ -193,12 +193,13 @@ impl PrimaryStateFilter {
             (PrimaryState::Initial, game_state) => {
                 game_state_to_primary_state(game_state, is_penalized)
             }
+            (
+                PrimaryState::Finished,
+                game_state @ (FilteredGameState::Initial | FilteredGameState::Ready),
+            ) => game_state_to_primary_state(game_state, is_penalized),
             (PrimaryState::Ready, FilteredGameState::Set) if !is_penalized => PrimaryState::Set,
             (
-                PrimaryState::Ready
-                | PrimaryState::Playing
-                | PrimaryState::Set
-                | PrimaryState::Finished,
+                PrimaryState::Ready | PrimaryState::Playing | PrimaryState::Set,
                 FilteredGameState::Initial,
             ) if !is_penalized => PrimaryState::Initial,
             (PrimaryState::Set, FilteredGameState::Playing { .. }) if !is_penalized => {
@@ -310,6 +311,62 @@ fn game_state_to_primary_state(game_state: FilteredGameState, is_penalized: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn game_controller_state(game_state: FilteredGameState) -> FilteredGameControllerState {
+        FilteredGameControllerState {
+            game_state,
+            opponent_game_state: game_state,
+            half: hsl_network_messages::Half::First,
+            remaining_time_in_half: std::time::Duration::ZERO,
+            game_phase: GamePhase::Normal,
+            kicking_team: None,
+            penalties: Default::default(),
+            remaining_number_of_messages: 0,
+            sub_state: None,
+            global_field_side: types::field_dimensions::GlobalFieldSide::Home,
+            new_own_penalties_last_cycle: Default::default(),
+            new_opponent_penalties_last_cycle: Default::default(),
+        }
+    }
+
+    #[test]
+    fn finished_accepts_the_next_half_initial_and_ready_states() {
+        for (game_state, expected) in [
+            (FilteredGameState::Initial, PrimaryState::Initial),
+            (FilteredGameState::Ready, PrimaryState::Ready),
+        ] {
+            for penalized in [false, true] {
+                let mut filter = PrimaryStateFilter {
+                    primary_state: PrimaryState::Finished,
+                };
+                let mut game = game_controller_state(game_state);
+                game.penalties[PlayerNumber::One] = penalized.then(Default::default);
+                filter.update_with_filtered_game_controller_state(&game, PlayerNumber::One);
+                assert_eq!(
+                    filter.primary_state,
+                    if penalized {
+                        PrimaryState::Penalized
+                    } else {
+                        expected
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn next_half_packets_preserve_damping_and_prepare() {
+        for primary_state in [PrimaryState::Damping, PrimaryState::Prepare] {
+            for game_state in [FilteredGameState::Initial, FilteredGameState::Ready] {
+                let mut filter = PrimaryStateFilter { primary_state };
+                filter.update_with_filtered_game_controller_state(
+                    &game_controller_state(game_state),
+                    PlayerNumber::One,
+                );
+                assert_eq!(filter.primary_state, primary_state);
+            }
+        }
+    }
 
     #[test]
     fn update_with_buttons_enters_playing_from_initial_with_safe_long_stand_press() {

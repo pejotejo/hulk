@@ -82,6 +82,7 @@ mod history;
 mod observation;
 mod policy;
 pub mod query;
+pub mod replay;
 mod retention;
 mod sample;
 mod status;
@@ -100,7 +101,9 @@ pub use observation::{
     TopicObserver, TopicObserverOptions,
 };
 pub use policy::ObservationPolicy;
-pub use retention::{DEFAULT_TIME_WINDOW_MAX_SAMPLES, RetentionPolicy, RetentionWindow};
+pub use retention::{
+    DEFAULT_TIME_WINDOW_MAX_SAMPLES, RetentionClock, RetentionPolicy, RetentionWindow,
+};
 pub use ros_z::dynamic::{
     ByteRenderPolicy, DynamicJsonRenderPolicy as JsonRenderPolicy, NonFiniteFloatRenderPolicy,
     dynamic_payload_to_json, dynamic_value_to_json,
