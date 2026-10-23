@@ -3,6 +3,35 @@
 Status: geometry helpers and Blackboard-based shoot/dribble/clear strategy implemented;
 execution and behavior-tree integration remain planned. Passing remains deferred.
 
+Urgent quick-kick execution is now wired separately into the live striker tree.
+It takes priority over ordinary goal-opening selection and interception when the
+robot is at most 3 m from either goal mouth, or another robot is at most 1.5 m
+from us. The 3 m tuning initially matches `maximum_shot_distance`, but is an
+independent constant. Goal proximity is shortest Euclidean distance to the
+goal-mouth segment on the goal line, measured from the robot, not the ball.
+Robot pressure uses centre-to-centre distance, including known teammates except
+our own broadcast. Unaffiliated robot/person/unknown obstacles count conservatively;
+ball and goal-post obstacles do not.
+
+The urgent branch retains the ordinary ball-reach hysteresis, motion-switch
+gate, and outer game-state, set-play, fall-protection, and striker-role gates.
+Ordinary kicks choose the widest usable goal opening; urgent kicks aim directly
+at the opponent goal centre. A failed opening falls back to that quick kick only
+with a reachable ball. Reachable balls are handled before walking path planning,
+so an unavailable approach route cannot delay a quick kick. Unreachable balls
+with no route cannot fall through to a kick. Set-play alignment remains ahead
+of ordinary play. Path-planning failure no longer fabricates a direct walk.
+The fallback does not guarantee an obstacle-free ball trajectory.
+
+New requests default to `quick=true` and allow strong kicks. For targets on the
+opponent goal mouth or inside its net, strength uses the requested ball's shortest
+distance to that mouth: `strong=true` only above 2 m, and false at or below 2 m.
+`strong_kick_min_target_distance` configures this cutoff; non-goal targets retain
+the ball-to-target metric. `target_speed` remains independently configurable;
+motion inference still uses its maximum policy speed for strong kicks, and soft
+kicks still ignore strong/quick. Ongoing kicks retain their previous strong,
+soft, quick, and target-speed settings even when conditions or tuning change.
+
 The strategy in `crates/nodes/behavior_node/src/kick/strategy.rs` chooses emergency
 clearance under pressure near the own goal, otherwise a reachable goal opening,
 otherwise dribbling. It reads the remembered ball, world state, field dimensions,
@@ -45,7 +74,7 @@ Paths in this document are relative to the repository root.
 
 | Area | Current behavior | Planned change |
 | --- | --- | --- |
-| `crates/nodes/behavior_node/src/kick/mod.rs` | `select_kick_target()` aims at the goal center; target and power are filled after initializing a visual kick. | Consume a complete resolved plan and apply it atomically. |
+| `crates/nodes/behavior_node/src/kick/mod.rs` | Ordinary kicks choose a goal opening; urgent/fallback kicks aim at the goal center. Active kicks retain the selected target. | Consume a complete resolved plan and apply it atomically. |
 | `crates/nodes/behavior_node/src/walk.rs` | `walk_to_ball()` approaches along the goal-center direction; kick continuation reselects the target. | Use the selected plan for ordinary striker approach and every continuation path. |
 | `crates/nodes/behavior_node/src/tree.rs` | Striker behavior chooses approach before kick-target selection. | Update the selected intent before the ordinary approach/kick branch. |
 | `crates/nodes/behavior_node/src/conditions.rs` | `is_close_to_ball_aligned()` uses goal-center geometry. | Make alignment consume the relevant plan wherever the new selector is used; retain explicit behavior for unmigrated contexts. |

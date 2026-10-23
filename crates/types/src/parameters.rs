@@ -335,7 +335,8 @@ pub struct KickingParameters {
     pub kick_activation_distance: f32,
     /// Total width of the handoff hysteresis band, in metres.
     pub kick_activation_hysteresis: f32,
-    /// Minimum ball-to-target distance for a strong striker kick, in metres.
+    /// Strong-kick minimum distance in metres. Goal targets use ball-to-goal-mouth
+    /// distance (strictly greater); other targets use ball-to-target distance.
     pub strong_kick_min_target_distance: f32,
     /// Distance behind the ball for walking and set-play alignment, in metres.
     pub approach_ball_standoff: f32,
@@ -348,12 +349,12 @@ impl Default for KickingParameters {
         Self {
             strategy: KickStrategyParameters::default(),
             soft: false,
-            quick: false,
+            quick: true,
             target_speed: 3.4,
-            allow_strong_kicks: false,
+            allow_strong_kicks: true,
             kick_activation_distance: 0.0,
             kick_activation_hysteresis: 0.0,
-            strong_kick_min_target_distance: 0.0,
+            strong_kick_min_target_distance: 2.0,
             approach_ball_standoff: 0.0,
             minimum_interception_forward_distance: 0.0,
         }

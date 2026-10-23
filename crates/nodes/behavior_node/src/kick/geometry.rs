@@ -6,6 +6,17 @@ use types::{
     obstacles::{Obstacle, ObstacleKind},
 };
 
+pub fn goal_mouth(field: &FieldDimensions, half: Half) -> LineSegment<Field> {
+    let x = match half {
+        Half::Own => -field.length / 2.0,
+        Half::Opponent => field.length / 2.0,
+    };
+    LineSegment(
+        point![x, -field.goal_inner_width / 2.0],
+        point![x, field.goal_inner_width / 2.0],
+    )
+}
+
 /// Geometrically open opponent-goal segments for the ball center, in field coordinates.
 /// `clearance` is an additional nonnegative physical margin in meters, not a risk score.
 /// Boundaries may be tangent to inflated obstacles; execution must choose an interior target.

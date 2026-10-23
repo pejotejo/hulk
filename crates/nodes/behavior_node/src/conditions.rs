@@ -1,14 +1,42 @@
 use filtering::hysteresis::less_than_with_hysteresis;
+use geometry::Distance;
 use hsl_network_messages::Team;
 use linear_algebra::{point, vector};
 use types::{
-    controller_input::Button, fall_detection::Posture,
+    controller_input::Button, fall_detection::Posture, field_dimensions::Half,
     filtered_game_controller_state::FilteredGameControllerState,
-    filtered_game_state::FilteredGameState, primary_state::PrimaryState,
+    filtered_game_state::FilteredGameState, obstacles::ObstacleKind, primary_state::PrimaryState,
 };
 use voronoi::Ownership;
 
-use crate::node::Blackboard;
+use crate::{kick::geometry::goal_mouth, node::Blackboard};
+
+pub fn is_urgent_kick(blackboard: &mut Blackboard) -> bool {
+    let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field else {
+        return false;
+    };
+    let robot = ground_to_field * point![0.0, 0.0];
+    // Initial tuning: robot-to-goal-mouth distance, matching the 3 m shot range.
+    let near_goal = [Half::Own, Half::Opponent]
+        .into_iter()
+        .any(|half| goal_mouth(&blackboard.field_dimensions, half).distance_to(robot) <= 3.0);
+    // Ground positions are relative to us, not the ball. Use centre distances.
+    let nearby_obstacle = blackboard.world_state.obstacles.iter().any(|obstacle| {
+        matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) && obstacle.position.coords().norm() <= 1.5
+    });
+    let nearby_teammate = blackboard
+        .world_state
+        .player_states
+        .iter()
+        .any(|(number, state)| {
+            number != blackboard.player_number
+                && state.is_some_and(|state| (state.pose.position() - robot).norm() <= 1.5)
+        });
+    near_goal || nearby_obstacle || nearby_teammate
+}
 
 pub fn is_ball_interception_candidate(blackboard: &mut Blackboard) -> bool {
     if let (Some(ball), Some(ground_to_field)) = (
