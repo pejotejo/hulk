@@ -20,7 +20,7 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::has_more_than_unpenalized_players,
-    kick::{kick, select_fallback_kick_target, use_last_kick_settings},
+    kick::{kick, select_fallback_kick_target, strategy::BallAction, use_last_kick_settings},
     node::Blackboard,
     selection, sequence, subtree,
     switch_motion_type::{is_last_motion_type, switch_motion_type},
@@ -148,7 +148,11 @@ pub fn walk_to_ball(blackboard: &mut Blackboard) -> Status {
     ) {
         let field_to_ground = ground_to_field.inverse();
         let ball_in_ground = field_to_ground * ball.position;
-        let goal_position = field_to_ground * point!(blackboard.field_dimensions.length / 2.0, 0.0);
+        let target = match blackboard.ball_action {
+            Some(BallAction::Shoot { opening }) => opening.center(),
+            _ => point!(blackboard.field_dimensions.length / 2.0, 0.0),
+        };
+        let goal_position = field_to_ground * target;
         let orientation = Orientation2::from_vector(goal_position - ball_in_ground);
         let walk_and_stand = blackboard.parameters.walking.walk_and_stand;
         let kicking_speed = blackboard.parameters.walking.speed.kicking;

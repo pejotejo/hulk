@@ -6,25 +6,55 @@ use geometry::{Distance, line_segment::LineSegment};
 use linear_algebra::point;
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
-use types::{behavior_tree::Status, obstacles::ObstacleKind};
+use types::{
+    behavior_tree::Status, field_dimensions::Half, motion_type::MotionType, obstacles::ObstacleKind,
+};
 
 use crate::node::Blackboard;
 
-use super::geometry::goal_openings;
+use super::geometry::{goal_mouth, goal_openings};
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
+pub enum QuickKickReason {
+    NearOwnGoal,
+    NearOpponentGoal,
+    NearbyRobot,
+    NoUsablePlan,
+}
 
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
 /// A future pass variant can identify a receiver and reception region.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
 pub enum BallAction {
-    Shoot { opening: LineSegment<Field> },
+    /// Release goalward immediately; execution still checks reach and motion switching.
+    QuickKick {
+        reason: QuickKickReason,
+    },
+    Shoot {
+        opening: LineSegment<Field>,
+    },
     Dribble,
     Clear,
 }
 
+pub fn begin_ball_action_cycle(blackboard: &mut Blackboard) -> Status {
+    blackboard.last_ball_action = blackboard.ball_action.take();
+    Status::Success
+}
+
+pub fn is_quick_kick_selected(blackboard: &mut Blackboard) -> bool {
+    matches!(blackboard.ball_action, Some(BallAction::QuickKick { .. }))
+}
+
 /// Select ordinary striker intent. Clear `ball_action` when leaving that context.
-/// Execution still needs to validate clear/dribble corridors and kick availability.
+/// Clear/dribble execution is unavailable; expose the deliberate quick fallback.
 pub fn select_ball_action(blackboard: &mut Blackboard) -> Status {
-    blackboard.ball_action = choose_ball_action(blackboard);
+    blackboard.ball_action = choose_ball_action(blackboard).map(|action| match action {
+        BallAction::Dribble | BallAction::Clear => BallAction::QuickKick {
+            reason: QuickKickReason::NoUsablePlan,
+        },
+        action => action,
+    });
     if blackboard.ball_action.is_some() {
         Status::Success
     } else {
@@ -37,9 +67,15 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
     let world = &blackboard.world_state;
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
-    let previous = blackboard.ball_action;
+    let previous = blackboard.ball_action.or(blackboard.last_ball_action);
     let ground_to_field = world.robot.ground_to_field?;
     let goal_x = field.length / 2.0;
+    if blackboard.last_motion_type == Some(MotionType::Kick) && previous.is_some() {
+        return previous;
+    }
+    if let Some(reason) = urgent_kick_reason(blackboard) {
+        return Some(BallAction::QuickKick { reason });
+    }
     if ball.x().abs() >= goal_x || ball.y().abs() >= field.width / 2.0 {
         return None;
     }
@@ -124,6 +160,36 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
     Some(BallAction::Dribble)
 }
 
+pub(super) fn urgent_kick_reason(blackboard: &Blackboard) -> Option<QuickKickReason> {
+    let ground_to_field = blackboard.world_state.robot.ground_to_field?;
+    let robot = ground_to_field * point![0.0, 0.0];
+    // Initial tuning: robot-to-goal-mouth distance, matching the 3 m shot range.
+    for (half, reason) in [
+        (Half::Own, QuickKickReason::NearOwnGoal),
+        (Half::Opponent, QuickKickReason::NearOpponentGoal),
+    ] {
+        if goal_mouth(&blackboard.field_dimensions, half).distance_to(robot) <= 3.0 {
+            return Some(reason);
+        }
+    }
+    // Ground positions are relative to us, not the ball. Use centre distances.
+    let nearby_obstacle = blackboard.world_state.obstacles.iter().any(|obstacle| {
+        matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) && obstacle.position.coords().norm() <= 1.5
+    });
+    let nearby_teammate = blackboard
+        .world_state
+        .player_states
+        .iter()
+        .any(|(number, state)| {
+            number != blackboard.player_number
+                && state.is_some_and(|state| (state.pose.position() - robot).norm() <= 1.5)
+        });
+    (nearby_obstacle || nearby_teammate).then_some(QuickKickReason::NearbyRobot)
+}
+
 #[cfg(test)]
 mod tests {
     use types::{
@@ -165,6 +231,7 @@ mod tests {
             last_ball: None,
             last_close_enough_to_kick: false,
             ball_action: None,
+            last_ball_action: None,
             kick_target: None,
             last_kick_target: None,
             last_motion_command: None,
@@ -204,11 +271,21 @@ mod tests {
         ));
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.0, 0.0], 0.5, 0.5)];
         select_ball_action(&mut blackboard);
-        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NoUsablePlan
+            })
+        );
         blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![-3.2, 0.0], 0.2, 0.2)];
         select_ball_action(&mut blackboard);
-        assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NoUsablePlan
+            })
+        );
         blackboard.ball = None;
         assert_eq!(select_ball_action(&mut blackboard), Status::Failure);
         assert_eq!(blackboard.ball_action, None);
@@ -228,6 +305,11 @@ mod tests {
         }
         blackboard.world_state.obstacles[0].radius_at_foot_height = 1.0;
         select_ball_action(&mut blackboard);
-        assert_eq!(blackboard.ball_action, Some(BallAction::Dribble));
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NoUsablePlan
+            })
+        );
     }
 }

@@ -28,7 +28,10 @@ use crate::{
     walk::walk_to_ball,
 };
 
-use self::geometry::{goal_mouth, goal_openings};
+use self::{
+    geometry::{goal_mouth, goal_openings},
+    strategy::{BallAction, QuickKickReason},
+};
 
 pub fn kick_subtree() -> Node<Blackboard> {
     switch_motion_type(
@@ -40,7 +43,7 @@ pub fn kick_subtree() -> Node<Blackboard> {
                 sequence!(
                     condition!(is_close_to_ball),
                     action!(select_fallback_kick_target),
-                    action!(use_quick_kick),
+                    action!(use_quick_kick_fallback),
                 )
             ),
             subtree!(kick_strength_subtree),
@@ -108,9 +111,15 @@ pub fn kick(blackboard: &mut Blackboard) -> Status {
 }
 
 pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
-    if blackboard.last_motion_type == Some(MotionType::Kick) || is_in_sub_state(blackboard) {
+    if blackboard.last_motion_type == Some(MotionType::Kick)
+        || is_in_sub_state(blackboard)
+        || blackboard.ball_action.is_none()
+    {
         return select_fallback_kick_target(blackboard);
     }
+    let Some(BallAction::Shoot { opening }) = blackboard.ball_action else {
+        return Status::Failure;
+    };
     let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field else {
         return Status::Failure;
     };
@@ -119,6 +128,12 @@ pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
     };
     let ball = ground_to_field * ball_position;
     let parameters = &blackboard.parameters.kicking.strategy;
+    let range = parameters.maximum_shot_distance;
+    let dx = blackboard.field_dimensions.length / 2.0 - ball.x();
+    if !range.is_finite() || dx < 0.0 || dx >= range {
+        return Status::Failure;
+    }
+    let reachable_y = (range.powi(2) - dx.powi(2)).sqrt();
     let target = goal_openings(
         ball,
         ground_to_field,
@@ -127,9 +142,15 @@ pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
         parameters.obstacle_clearance,
     )
     .into_iter()
-    .map(|opening| {
-        let angle = LineSegment(ball, opening.0).angle(LineSegment(ball, opening.1));
-        (opening.center(), angle)
+    .filter_map(|visible| {
+        let lower = opening.0.y().max(visible.0.y()).max(ball.y() - reachable_y);
+        let upper = opening.1.y().min(visible.1.y()).min(ball.y() + reachable_y);
+        if lower >= upper {
+            return None;
+        }
+        let refined = LineSegment(point![opening.0.x(), lower], point![opening.1.x(), upper]);
+        let angle = LineSegment(ball, refined.0).angle(LineSegment(ball, refined.1));
+        Some((refined.center(), angle))
     })
     .filter(|(_, angle)| *angle >= parameters.minimum_shot_angle)
     .max_by(|(_, a), (_, b)| a.total_cmp(b));
@@ -137,6 +158,16 @@ pub fn select_kick_target(blackboard: &mut Blackboard) -> Status {
         Some((target, _)) => apply_kick_target(blackboard, target),
         None => Status::Failure,
     }
+}
+
+pub fn use_quick_kick_fallback(blackboard: &mut Blackboard) -> Status {
+    let status = use_quick_kick(blackboard);
+    if status == Status::Success && blackboard.last_motion_type != Some(MotionType::Kick) {
+        blackboard.ball_action = Some(BallAction::QuickKick {
+            reason: QuickKickReason::NoUsablePlan,
+        });
+    }
+    status
 }
 
 pub fn select_fallback_kick_target(blackboard: &mut Blackboard) -> Status {

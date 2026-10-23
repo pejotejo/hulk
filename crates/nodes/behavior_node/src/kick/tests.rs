@@ -20,13 +20,14 @@ use types::{
 };
 
 use crate::{
-    conditions::{is_ball_interception_candidate, is_urgent_kick},
+    conditions::is_ball_interception_candidate,
     motion_assembler::assemble_motion_command,
     node::LastBall,
     tree::{create_tree, striker_subtree},
     walk::{plan, walk_alternatives_subtree, walk_to_ball},
 };
 
+use super::strategy::{BallAction, QuickKickReason, select_ball_action, urgent_kick_reason};
 use super::*;
 
 fn blackboard(robot_x: f32, robot_y: f32, yaw: f32) -> Blackboard {
@@ -52,6 +53,7 @@ fn blackboard(robot_x: f32, robot_y: f32, yaw: f32) -> Blackboard {
         last_ball: None,
         last_close_enough_to_kick: false,
         ball_action: None,
+        last_ball_action: None,
         kick_target: None,
         last_kick_target: None,
         last_motion_command: None,
@@ -80,6 +82,10 @@ fn blackboard(robot_x: f32, robot_y: f32, yaw: f32) -> Blackboard {
     });
     set_ball(&mut blackboard, point![0.8, 0.0]);
     blackboard
+}
+
+fn is_urgent_kick(blackboard: &Blackboard) -> bool {
+    urgent_kick_reason(blackboard).is_some()
 }
 
 fn set_ball(blackboard: &mut Blackboard, position: Point2<Ground>) {
@@ -241,6 +247,17 @@ fn each_urgent_trigger_precedes_target_planning_and_interception_in_the_live_tre
             Some(BodyMotion::Kick { quick: true, .. })
         ));
         assert!(trace_contains(&trace, "subtree_quick_kick_subtree"));
+        assert!(trace_contains(&trace, "select_ball_action"));
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::QuickKick {
+                reason: match trigger {
+                    0 => QuickKickReason::NearOwnGoal,
+                    1 => QuickKickReason::NearOpponentGoal,
+                    _ => QuickKickReason::NearbyRobot,
+                }
+            })
+        );
         assert!(!trace_contains(&trace, "select_kick_target"));
         assert!(!trace_contains(&trace, "is_ball_interception_candidate"));
     }
@@ -254,7 +271,7 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
         KickingParameters::default().strong_kick_min_target_distance,
         2.0
     );
-    let mut blackboard = blackboard(0.0, 0.0, 0.0);
+    let mut blackboard = blackboard(1.0, 0.0, 0.0);
     assert!(blackboard.parameters.kicking.quick);
     assert!(blackboard.parameters.kicking.allow_strong_kicks);
     blackboard.ball.as_mut().unwrap().velocity = Vector2::zeros();
@@ -266,6 +283,10 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
     ));
     assert!(trace_contains(&trace, "select_kick_target"));
     assert!(!trace_contains(&trace, "select_fallback_kick_target"));
+    assert!(matches!(
+        blackboard.ball_action,
+        Some(BallAction::Shoot { .. })
+    ));
 
     blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.5, 0.0], 1.0, 1.0)];
     blackboard.parameters.kicking.quick = false;
@@ -273,6 +294,12 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
     let (status, trace) = striker_subtree().tick_with_trace(&mut blackboard);
     assert_eq!(status, Status::Success);
     assert!(trace_contains(&trace, "select_fallback_kick_target"));
+    assert_eq!(
+        blackboard.ball_action,
+        Some(BallAction::QuickKick {
+            reason: QuickKickReason::NoUsablePlan
+        })
+    );
     assert!(matches!(
         blackboard.body_motion,
         Some(BodyMotion::Kick { quick: true, .. })
@@ -281,8 +308,13 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
 
 #[test]
 fn ordinary_target_uses_an_open_goal_segment() {
-    let mut blackboard = blackboard(0.0, 0.0, 0.0);
+    let mut blackboard = blackboard(1.0, 0.0, 0.0);
     blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.0, -0.1], 0.15, 0.15)];
+    assert_eq!(select_ball_action(&mut blackboard), Status::Success);
+    assert!(matches!(
+        blackboard.ball_action,
+        Some(BallAction::Shoot { .. })
+    ));
     assert_eq!(kick(&mut blackboard), Status::Success);
     assert_eq!(select_kick_target(&mut blackboard), Status::Success);
     let target = blackboard.kick_target.unwrap();
@@ -349,10 +381,143 @@ fn blocked_approaches_do_not_delay_reachable_quick_kicks_or_kick_unreachable_bal
             fallback
         );
         if fallback {
-            assert!(trace_contains(&trace, "select_kick_target"));
+            assert_eq!(
+                blackboard.ball_action,
+                Some(BallAction::QuickKick {
+                    reason: QuickKickReason::NoUsablePlan
+                })
+            );
+            assert!(trace_contains(&trace, "select_ball_action"));
             assert!(!trace_contains(&trace, "walk_to_ball"));
         }
     }
+}
+
+#[test]
+fn approach_and_execution_follow_the_same_selected_opening() {
+    let mut blackboard = blackboard(0.0, 0.0, 0.0);
+    set_ball(&mut blackboard, point![2.0, 0.0]);
+    blackboard.world_state.obstacles = vec![Obstacle::robot(point![3.5, -0.02], 0.1, 0.1)];
+    let (status, _) = create_tree().tick_with_trace(&mut blackboard);
+    assert_eq!(status, Status::Success);
+    let Some(BallAction::Shoot { opening }) = blackboard.ball_action else {
+        panic!("expected selected shot")
+    };
+    assert!(opening.center().y() > 0.0);
+    let Some(BodyMotion::Walk {
+        target_orientation, ..
+    }) = blackboard.body_motion
+    else {
+        panic!("expected approach")
+    };
+    let direction =
+        Orientation2::from_vector(opening.center() - blackboard.ball.as_ref().unwrap().position);
+    assert_relative_eq!(target_orientation.angle(), direction.angle());
+
+    blackboard.world_state.robot.ground_to_field =
+        Some(nalgebra::Isometry2::new(nalgebra::vector![1.2, 0.0], 0.0).framed_transform());
+    set_ball(&mut blackboard, point![0.8, 0.0]);
+    blackboard.world_state.obstacles[0].position = point![2.3, -0.02];
+    let (status, _) = create_tree().tick_with_trace(&mut blackboard);
+    assert_eq!(status, Status::Success);
+    let Some(BodyMotion::Kick { kick_direction, .. }) = blackboard.body_motion else {
+        panic!("expected selected shot to execute")
+    };
+    assert_relative_eq!(kick_direction.angle(), direction.angle());
+    assert_eq!(blackboard.last_kick_target, Some(opening.center()));
+}
+
+#[test]
+fn fresh_ball_refinement_failure_is_an_explicit_quick_fallback_before_interception() {
+    let mut blackboard = blackboard(0.0, 0.0, 0.0);
+    set_ball(&mut blackboard, point![2.0, 0.0]);
+    blackboard.ball.as_mut().unwrap().velocity = vector![-2.0, 0.0];
+    blackboard
+        .visual_kick_ball_position
+        .as_mut()
+        .unwrap()
+        .position = point![0.8, 0.0];
+    blackboard.parameters.kicking.quick = false;
+    let (status, trace) = create_tree().tick_with_trace(&mut blackboard);
+    assert_eq!(status, Status::Success);
+    assert_eq!(
+        blackboard.ball_action,
+        Some(BallAction::QuickKick {
+            reason: QuickKickReason::NoUsablePlan
+        })
+    );
+    assert!(
+        matches!(blackboard.body_motion, Some(BodyMotion::Kick { quick: true, ball_position, .. }) if ball_position == point![0.8, 0.0])
+    );
+    assert!(trace_contains(&trace, "select_kick_target"));
+    assert!(!trace_contains(&trace, "intercept"));
+}
+
+#[test]
+fn a_close_remembered_ball_cannot_authorize_kicking_a_far_visual_ball() {
+    let mut blackboard = blackboard(2.0, 0.0, 0.0);
+    blackboard
+        .visual_kick_ball_position
+        .as_mut()
+        .unwrap()
+        .position = point![2.0, 0.0];
+    let (status, _) = create_tree().tick_with_trace(&mut blackboard);
+    assert!(!matches!(
+        assemble_motion_command(&blackboard, status).unwrap(),
+        MotionCommand::Kick { .. }
+    ));
+}
+
+#[test]
+fn urgent_selection_precedes_planning_bounds_but_still_requires_visual_reach() {
+    for (visual_x, kicks) in [(0.3, true), (2.0, false)] {
+        let mut blackboard = blackboard(4.0, 0.0, 0.0);
+        set_ball(&mut blackboard, point![0.6, 0.0]); // Planning ball is beyond the goal line.
+        blackboard
+            .visual_kick_ball_position
+            .as_mut()
+            .unwrap()
+            .position = point![visual_x, 0.0];
+        let (status, trace) = create_tree().tick_with_trace(&mut blackboard);
+        assert_eq!(
+            blackboard.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NearOpponentGoal
+            })
+        );
+        assert!(trace_contains(&trace, "select_ball_action"));
+        assert_eq!(
+            matches!(
+                assemble_motion_command(&blackboard, status).unwrap(),
+                MotionCommand::Kick { quick: true, .. }
+            ),
+            kicks
+        );
+    }
+}
+
+#[test]
+fn selector_intent_is_cleared_when_leaving_ordinary_striker_play() {
+    let mut blackboard = blackboard(1.0, 0.0, 0.0);
+    let tree = create_tree();
+    tree.tick_with_trace(&mut blackboard);
+    assert!(matches!(
+        blackboard.ball_action,
+        Some(BallAction::Shoot { .. })
+    ));
+    blackboard.world_state.robot.primary_state = PrimaryState::Set;
+    tree.tick_with_trace(&mut blackboard);
+    assert_eq!(blackboard.ball_action, None);
+    tree.tick_with_trace(&mut blackboard);
+    assert_eq!(blackboard.last_ball_action, None);
+
+    blackboard.world_state.robot.primary_state = PrimaryState::Playing;
+    tree.tick_with_trace(&mut blackboard);
+    assert!(blackboard.ball_action.is_some());
+    blackboard.ball = None;
+    blackboard.world_state.ball = None;
+    tree.tick_with_trace(&mut blackboard);
+    assert_eq!(blackboard.ball_action, None);
 }
 
 #[test]
@@ -498,7 +663,7 @@ fn urgency_does_not_override_primary_states_fall_protection_or_opponent_restarts
             assemble_motion_command(&blackboard, status).unwrap(),
             MotionCommand::Kick { .. }
         ));
-        assert!(!trace_contains(&trace, "is_urgent_kick"));
+        assert!(!trace_contains(&trace, "select_ball_action"));
     }
     for posture in [
         None,
@@ -517,7 +682,7 @@ fn urgency_does_not_override_primary_states_fall_protection_or_opponent_restarts
             assemble_motion_command(&blackboard, status).unwrap(),
             MotionCommand::Kick { .. }
         ));
-        assert!(!trace_contains(&trace, "is_urgent_kick"));
+        assert!(!trace_contains(&trace, "select_ball_action"));
     }
     for sub_state in [
         None,
@@ -544,7 +709,7 @@ fn urgency_does_not_override_primary_states_fall_protection_or_opponent_restarts
             ),
             "{sub_state:?}"
         );
-        assert!(!trace_contains(&trace, "is_urgent_kick"));
+        assert!(!trace_contains(&trace, "select_ball_action"));
     }
 }
 

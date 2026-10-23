@@ -11,13 +11,15 @@ use crate::{
         is_ball_interception_candidate, is_close_to_ball, is_closest_to_ball,
         is_controller_connected, is_fallen, is_goalkeeper, is_kickoff, is_last_hulk_standing,
         is_primary_state, is_ready_for_stand_up, is_remote_control_enabled, is_remote_kick_mode,
-        is_simple, is_stand_up_allowed, is_standing_up, is_urgent_kick, should_do_fall_protection,
+        is_simple, is_stand_up_allowed, is_standing_up, should_do_fall_protection,
     },
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
-        intercept, kick, kick_alternatives_subtree, kick_subtree, kickoff_kick,
-        quick_kick_subtree, set_kick_target_beyond_ball, use_kick,
+        intercept, kick, kick_alternatives_subtree, kick_subtree, kickoff_kick, quick_kick_subtree,
+        set_kick_target_beyond_ball,
+        strategy::{begin_ball_action_cycle, is_quick_kick_selected, select_ball_action},
+        use_kick,
     },
     negation,
     node::Blackboard,
@@ -35,7 +37,7 @@ use crate::{
 };
 
 pub fn create_tree() -> Node<Blackboard> {
-    selection!(
+    let tree = selection!(
         sequence!(
             condition!(is_primary_state, PrimaryState::Damping),
             action!(damping)
@@ -80,7 +82,8 @@ pub fn create_tree() -> Node<Blackboard> {
             subtree!(playing_subtree)
         ),
         Node::Failure
-    )
+    );
+    sequence!(action!(begin_ball_action_cycle), tree)
 }
 
 fn fall_subtree() -> Node<Blackboard> {
@@ -170,6 +173,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
             sequence!(condition!(is_in_sub_state), subtree!(sub_state_subtree),),
             sequence!(
                 negation!(condition!(is_in_sub_state)),
+                action!(select_ball_action),
                 selection!(
                     sequence!(
                         condition!(is_close_to_ball),
@@ -182,14 +186,17 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                             subtree!(kick_alternatives_subtree),
                         )
                     ),
-                    sequence!(condition!(is_urgent_kick), subtree!(quick_kick_subtree)),
+                    sequence!(
+                        condition!(is_quick_kick_selected),
+                        subtree!(quick_kick_subtree)
+                    ),
                     sequence!(
                         condition!(is_close_to_ball),
                         selection!(
                             sequence!(
                                 condition!(is_ball_interception_candidate),
                                 subtree!(kick_subtree),
-                                action!(intercept),
+                                selection!(condition!(is_quick_kick_selected), action!(intercept)),
                             ),
                             subtree!(kick_subtree)
                         )

@@ -1,10 +1,15 @@
 # Kick Target Selector Implementation Plan
 
-Status: geometry helpers and Blackboard-based shoot/dribble/clear strategy implemented;
-execution and behavior-tree integration remain planned. Passing remains deferred.
+Status: goal geometry, ordinary-striker selection, approach, and kick execution
+are integrated. Executable selections are `Shoot { opening }` and
+`QuickKick { reason }`. `Dribble` and `Clear` remain preparatory intent vocabulary;
+until their corridor validation and executors exist, the selector converts those
+proposals to the explicit `QuickKick { NoUsablePlan }` fallback. Passing remains
+deferred. This is a focused execution increment, not completion of every stage below.
 
-Urgent quick-kick execution is now wired separately into the live striker tree.
-It takes priority over ordinary goal-opening selection and interception when the
+`strategy::select_ball_action()` owns urgent priority. It selects
+`QuickKick { NearOwnGoal | NearOpponentGoal | NearbyRobot }` before ordinary
+goal-opening evaluation and ordinary planning-ball bounds rejection when the
 robot is at most 3 m from either goal mouth, or another robot is at most 1.5 m
 from us. The 3 m tuning initially matches `maximum_shot_distance`, but is an
 independent constant. Goal proximity is shortest Euclidean distance to the
@@ -13,11 +18,16 @@ Robot pressure uses centre-to-centre distance, including known teammates except
 our own broadcast. Unaffiliated robot/person/unknown obstacles count conservatively;
 ball and goal-post obstacles do not.
 
-The urgent branch retains the ordinary ball-reach hysteresis, motion-switch
+The tree consumes that selection before interception and retains ball-reach hysteresis, motion-switch
 gate, and outer game-state, set-play, fall-protection, and striker-role gates.
-Ordinary kicks choose the widest usable goal opening; urgent kicks aim directly
-at the opponent goal centre. A failed opening falls back to that quick kick only
-with a reachable ball. Reachable balls are handled before walking path planning,
+Ordinary selection uses the existing range clipping and shot-side hysteresis.
+Approach uses the selected opening's centre. Execution refines only within that
+region against the actual visual-kick ball, current obstacles, and shot range;
+it does not independently reselect another opening. A refinement failure becomes
+`QuickKick { NoUsablePlan }`, and interception cannot overwrite that fallback.
+Urgent/fallback kicks aim at the opponent goal centre only with a reachable ball.
+Reach checks use the same visual ball as the kick request when available.
+Reachable balls are handled before walking path planning,
 so an unavailable approach route cannot delay a quick kick. Unreachable balls
 with no route cannot fall through to a kick. Set-play alignment remains ahead
 of ordinary play. Path-planning failure no longer fabricates a direct walk.
@@ -32,17 +42,16 @@ motion inference still uses its maximum policy speed for strong kicks, and soft
 kicks still ignore strong/quick. Ongoing kicks retain their previous strong,
 soft, quick, and target-speed settings even when conditions or tuning change.
 
-The strategy in `crates/nodes/behavior_node/src/kick/strategy.rs` chooses emergency
-clearance under pressure near the own goal, otherwise a reachable goal opening,
-otherwise dribbling. It reads the remembered ball, world state, field dimensions,
-and `parameters.kicking.strategy` from `Blackboard`, and updates `ball_action`,
-using the previous value for hysteresis. Clear that intent when leaving ordinary
-striker play. No action is issued to the robot yet; tree wiring and execution-time
-capability checks remain pending. Shot output
-is a region, not an exact target; clear/dribble corridor refinement remains execution
-work. Future passing can add a receiver/reception-region action without changing
-the shot representation. Unknown robot affiliation is treated conservatively when
-estimating pressure; semantic opponent/teammate scoring remains deferred.
+The strategy reads the remembered planning ball, world state, field dimensions,
+and `parameters.kicking.strategy` from `Blackboard`. The shared tree starts each
+tick by moving `ball_action` to `last_ball_action` and clearing the current value.
+Only ordinary striker play selects a current action, so leaving that context
+clears selection without duplicating lifecycle logic in live and simulator callers.
+The previous action supplies hysteresis while approaching; a continuing kick
+retains its committed action, field target, flags, and speed. Shot output remains
+a region, not an exact target. Future passing can identify a receiver and region
+without changing that representation. Unknown robot affiliation is treated
+conservatively; semantic opponent/teammate scoring remains deferred.
 
 ## Objective
 
@@ -74,9 +83,9 @@ Paths in this document are relative to the repository root.
 
 | Area | Current behavior | Planned change |
 | --- | --- | --- |
-| `crates/nodes/behavior_node/src/kick/mod.rs` | Ordinary kicks choose a goal opening; urgent/fallback kicks aim at the goal center. Active kicks retain the selected target. | Consume a complete resolved plan and apply it atomically. |
-| `crates/nodes/behavior_node/src/walk.rs` | `walk_to_ball()` approaches along the goal-center direction; kick continuation reselects the target. | Use the selected plan for ordinary striker approach and every continuation path. |
-| `crates/nodes/behavior_node/src/tree.rs` | Striker behavior chooses approach before kick-target selection. | Update the selected intent before the ordinary approach/kick branch. |
+| `crates/nodes/behavior_node/src/kick/mod.rs` | Refines the selected shot region against the execution ball; explicit urgent/fallback requests aim goalward. Active kicks retain the selected target/settings. | Refine complete corridor-validated plans when more executors are available. |
+| `crates/nodes/behavior_node/src/walk.rs` | Ordinary shot approach follows the selected region; special contexts keep their goal-center approach. Continuation retains the committed target. | Extend approach to new action-specific executors. |
+| `crates/nodes/behavior_node/src/tree.rs` | Selects ordinary intent before approach/kick branching and gives quick requests priority over interception. Clears current intent each tick. | Preserve this authority/selection/execution boundary for later actions. |
 | `crates/nodes/behavior_node/src/conditions.rs` | `is_close_to_ball_aligned()` uses goal-center geometry. | Make alignment consume the relevant plan wherever the new selector is used; retain explicit behavior for unmigrated contexts. |
 | `crates/nodes/behavior_node/src/node.rs` | Owns live world-state assembly and persistent blackboard state. | Assemble planning input and maintain selected intent, validity, and debug state. |
 | `crates/types/src/obstacles.rs` | Robot obstacles have no team identity, observation age, or uncertainty. | Preserve or expose the evidence needed to distinguish confidently known teammates from unmatched robots. |
@@ -180,7 +189,7 @@ Work:
 - Make ordinary-striker walking, relevant alignment checks, kicking, and motion-transition continuation consume the same plan. Preserve dedicated approach behavior for unmigrated contexts.
 - Select power using ball-to-target distance and the capability model, then revalidate the resulting trajectory and angular tolerance.
 - Construct the resolved plan locally; modify `body_motion` only after success. Behavior-tree failure must not leave a partially initialized visual kick available to another branch.
-- Try each eligible candidate at most once per planning cycle if refinement rejects it. If all fail, emit an explicit no-plan result and use a deliberate stand/search/reposition fallback as appropriate. Never restore a blocked goal-center shot as an implicit fallback.
+- Try each eligible candidate at most once per planning cycle if refinement rejects it. If refinement fails, expose `QuickKick { NoUsablePlan }` and use the requested goalward fallback only with a reachable ball and permitted motion switch. It is a deliberate release, not a collision-clear shot. Unreachable balls with no walking route stand rather than fabricating a path or kicking.
 - Add score hysteresis for switching valid intents and bounded target refinement during approach.
 - Define a conservative commitment policy around entry into visual-kick mode. Treat the existing last-motion state as commanded mode, not proof of physical contact or completion. Confirm which updates/cancellations Booster supports before enabling them during commitment.
 - Revalidate hard constraints during commitment. Invalidity bypasses ordinary score hysteresis; motion cancellation must use the supported transition path.
