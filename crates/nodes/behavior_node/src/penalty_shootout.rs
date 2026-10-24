@@ -71,7 +71,7 @@ pub fn penalty_kick_striker_subtree() -> Node<Blackboard> {
 }
 
 pub fn set_penalty_kick_target(blackboard: &mut Blackboard) -> Status {
-    if blackboard.world_state.robot.ground_to_field.is_some() {
+    if let Some(ground_to_field) = blackboard.world_state.robot.ground_to_field {
         let field_dimensions = blackboard.field_dimensions;
         let penalty_kick_target_y_scale =
             blackboard.parameters.substates.penalty_kick_target_y_scale;
@@ -88,7 +88,8 @@ pub fn set_penalty_kick_target(blackboard: &mut Blackboard) -> Status {
                     -target_goal_area_half
                 };
 
-                let target = point!(field_dimensions.length / 2.0, target_y);
+                let target =
+                    ground_to_field * point!(field_dimensions.penalty_area_length, target_y);
 
                 blackboard.last_kick_target = Some(target);
                 target

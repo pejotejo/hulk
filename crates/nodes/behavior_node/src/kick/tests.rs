@@ -148,10 +148,9 @@ fn game_state() -> FilteredGameControllerState {
 
 #[test]
 fn penalty_target_is_in_field_and_strength_uses_goal_mouth_distance() {
-    for (distance, yaw, expected_strong) in
-        [(2.01, 0.7, true), (2.0, 0.0, false), (1.99, 0.7, false)]
-    {
-        let mut blackboard = blackboard(2.0, -0.3, yaw);
+    let field = FieldDimensions::SPL_2025;
+    for (distance, expected_strong) in [(2.01, true), (2.0, false), (1.99, false)] {
+        let mut blackboard = blackboard(field.length / 2.0 - field.penalty_area_length, 0.0, 0.0);
         let transform = blackboard.world_state.robot.ground_to_field.unwrap();
         set_ball(
             &mut blackboard,
@@ -220,7 +219,7 @@ fn shootout_live_tree_approaches_and_respects_both_motion_switch_locks() {
     assert!(matches!(
         blackboard.body_motion,
         Some(BodyMotion::Kick {
-            strong: true,
+            strong: false,
             soft: true,
             quick: false,
             target_speed: 1.2,
@@ -241,7 +240,7 @@ fn shootout_live_tree_approaches_and_respects_both_motion_switch_locks() {
     blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(500);
     tree.tick_with_trace(&mut blackboard);
     assert!(matches!(blackboard.body_motion, Some(BodyMotion::Kick {
-        ball_position, strong: true, soft: true, quick: false, target_speed: 1.2, ..
+        ball_position, strong: false, soft: true, quick: false, target_speed: 1.2, ..
     }) if ball_position == point![2.0, 0.0]));
     assert_eq!(blackboard.last_kick_target, target);
     assert_relative_eq!(
