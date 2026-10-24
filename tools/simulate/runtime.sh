@@ -19,9 +19,12 @@ import sys
 root = Path(sys.argv[1])
 meshes = root / "tools/mujoco-simulator/mujoco-simulator/K1/meshes"
 models = root / "etc/neural_networks"
-assets = set(meshes.glob("*")) | set(models.glob("*.onnx"))
+branding = root / "tools/simulate/assets/branding"
+assets = set(meshes.glob("*")) | set(models.glob("*.onnx")) | set(branding.glob("*_panel.png"))
 assets |= {meshes / "Trunk.STL", *(models / name for name in (
     "K1_walk.onnx", "K1_stand_up.onnx", "K1_kick_inner.onnx", "K1_kick_inner_soft.onnx"))}
+assets |= {branding / f"{name}_panel.png" for name in (
+    "hulks", "kdab", "cc", "draeger", "gea", "haspa", "tk", "gegenstrom")}
 missing = []
 for path in sorted(assets):
     if not path.exists():
@@ -43,8 +46,8 @@ PY
   fi
   [[ "${2:-true}" == true ]] || simulator_die "Simulator assets are still missing after Git LFS download: $missing"
   simulator_require git-lfs "Install Git LFS, then retry (Debian/Ubuntu: sudo apt install git-lfs; Fedora: sudo dnf install git-lfs)."
-  echo "Fetching simulator meshes and ONNX models with Git LFS..." >&2
-  git -C "$1" lfs pull --include='etc/neural_networks/*.onnx,tools/mujoco-simulator/mujoco-simulator/K1/meshes/**' >&2 \
+  echo "Fetching simulator meshes, ONNX models and arena branding with Git LFS..." >&2
+  git -C "$1" lfs pull --include='etc/neural_networks/*.onnx,tools/mujoco-simulator/mujoco-simulator/K1/meshes/**,tools/simulate/assets/branding/*_panel.png' >&2 \
     || simulator_die "Git LFS download failed. Check access to the repository's LFS remote and retry."
   # Check again so skipped or unavailable LFS objects cannot reach Cargo or inference.
   simulator_assets "$1" false
