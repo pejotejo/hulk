@@ -460,6 +460,7 @@ impl Engine {
             (None, None) => false,
             _ => true,
         };
+        let mut manual_edit = false;
         if edited {
             let commanded = self.commanded_ball.take().is_some_and(|p| {
                 snapshot
@@ -468,6 +469,8 @@ impl Engine {
                     .is_some_and(|b| (b.position[0] - p[0]).hypot(b.position[1] - p[1]) < 0.05)
             });
             if !commanded {
+                manual_edit = true;
+                self.decisions.clear();
                 // A manual edit defines a new scenario, clearing previous touches/restart history.
                 if self.core.get_game(false).state == State::Playing {
                     self.core
@@ -610,7 +613,10 @@ impl Engine {
             self.pending.push(Effect::Whistle);
         }
         self.collect_events(Origin::Automatic);
-        self.remember(checkpoint);
+        // This update's checkpoint belongs to the scenario before a manual edit.
+        if !manual_edit {
+            self.remember(checkpoint);
+        }
         std::mem::take(&mut self.pending)
     }
     fn handle_penalties(&mut self) {
