@@ -1,4 +1,8 @@
+pub mod execution;
 pub mod geometry;
+pub mod kickoff;
+pub mod passing;
+pub mod reception;
 pub mod strategy;
 
 #[cfg(test)]
@@ -81,14 +85,12 @@ pub fn kick_alternatives_subtree() -> Node<Blackboard> {
 pub fn kick(blackboard: &mut Blackboard) -> Status {
     blackboard.kick_target = None;
     if let Some(ground_to_field) = &blackboard.world_state.robot.ground_to_field
-        && let Some(ball_in_ground) = kick_ball_position_in_ground(blackboard, ground_to_field)
+        && let Some((ball_in_ground, ball_velocity)) =
+            visual_kick_ball_in_ground(blackboard, ground_to_field)
     {
         blackboard.body_motion = Some(BodyMotion::Kick {
             ball_position: ball_in_ground,
-            ball_velocity: blackboard
-                .world_state
-                .ball
-                .map_or(Vector2::zeros(), |ball| ball.ball_in_ground_velocity),
+            ball_velocity,
             target_speed: blackboard.parameters.kicking.target_speed,
             soft: blackboard.parameters.kicking.soft,
             quick: blackboard.parameters.kicking.quick,
@@ -340,6 +342,8 @@ pub fn intercept(blackboard: &mut Blackboard) -> Status {
         ball_position,
         ball_velocity,
         kick_direction: motion_kick_direction,
+        strong,
+        soft,
         ..
     }) = blackboard.body_motion.as_mut()
     {
@@ -378,6 +382,8 @@ pub fn intercept(blackboard: &mut Blackboard) -> Status {
         // Use the predicted interception point only to choose kick direction.
         blackboard.kick_target = Some(*ball_position);
         *motion_kick_direction = kick_direction;
+        *strong = false;
+        *soft = false;
         return Status::Success;
     }
     Status::Failure
@@ -412,18 +418,179 @@ pub fn set_kick_target_beyond_ball(blackboard: &mut Blackboard) -> Status {
     Status::Failure
 }
 
-fn kick_ball_position_in_ground(
+fn visual_kick_ball_in_ground(
     blackboard: &Blackboard,
     ground_to_field: &Isometry2<Ground, Field>,
-) -> Option<Point2<Ground>> {
+) -> Option<(Point2<Ground>, Vector2<Ground>)> {
     blackboard
         .visual_kick_ball_position
         .as_ref()
-        .map(|ball| ball.position)
-        .or_else(|| {
-            blackboard
-                .ball
-                .as_ref()
-                .map(|ball| ground_to_field.inverse() * ball.position)
+        .map(|ball| (ball.position, ball.velocity))
+        .or_else(|| kick_ball_in_ground(blackboard, ground_to_field))
+        .filter(|(position, velocity)| {
+            position
+                .inner
+                .iter()
+                .chain(velocity.inner.iter())
+                .all(|value| value.is_finite())
         })
+}
+
+pub(crate) fn kick_ball_position_in_ground(
+    blackboard: &Blackboard,
+    ground_to_field: &Isometry2<Ground, Field>,
+) -> Option<Point2<Ground>> {
+    visual_kick_ball_in_ground(blackboard, ground_to_field).map(|(position, _)| position)
+}
+
+pub(crate) fn kick_ball_in_ground(
+    blackboard: &Blackboard,
+    ground_to_field: &Isometry2<Ground, Field>,
+) -> Option<(Point2<Ground>, Vector2<Ground>)> {
+    // Keep the observed position and velocity in their shared Ground frame.
+    blackboard
+        .world_state
+        .ball
+        .map(|ball| (ball.ball_in_ground, ball.ball_in_ground_velocity))
+        .or_else(|| {
+            let ball = blackboard.ball.as_ref()?;
+            let field_to_ground = ground_to_field.inverse();
+            Some((
+                field_to_ground * ball.position,
+                field_to_ground * ball.velocity,
+            ))
+        })
+        .filter(|(position, velocity)| {
+            position
+                .inner
+                .iter()
+                .chain(velocity.inner.iter())
+                .all(|value| value.is_finite())
+        })
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use linear_algebra::vector;
+    use types::{
+        ball_position::BallPosition,
+        field_dimensions::Side,
+        world_state::{BallSource, BallState},
+    };
+
+    use crate::node::LastBall;
+
+    use super::*;
+
+    #[test]
+    fn direct_kick_preserves_visual_ball_pair_despite_cached_pose_and_world_disagreement() {
+        let mut board = Blackboard {
+            ball: Some(LastBall {
+                position: point![2.0, 1.2],
+                velocity: vector![0.0, -1.5],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        board.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.6, 0.1],
+            ball_in_ground_velocity: vector![-1.5, 0.3],
+            ..BallState::new_at_center(Default::default())
+        });
+        board.visual_kick_ball_position = Some(BallPosition {
+            position: point![0.4, 0.1],
+            velocity: vector![-0.8, 0.2],
+            last_seen: Default::default(),
+        });
+        for transform in [
+            Isometry2::identity(),
+            Isometry2::from_parts(vector![1.0, 2.0], std::f32::consts::FRAC_PI_2),
+            Isometry2::from_parts(vector![-0.5, 0.3], -std::f32::consts::FRAC_PI_2),
+        ] {
+            board.world_state.robot.ground_to_field = Some(transform);
+            assert_eq!(kick(&mut board), Status::Success);
+            assert!(matches!(board.body_motion,
+                Some(BodyMotion::Kick { ball_position, ball_velocity, .. })
+                if ball_position == point![0.4, 0.1] && ball_velocity == vector![-0.8, 0.2]));
+        }
+    }
+
+    #[test]
+    fn cached_ball_rebases_position_and_velocity_together_without_lookahead() {
+        let board = Blackboard {
+            ball: Some(LastBall {
+                position: point![1.0, 2.0],
+                velocity: vector![3.0, 4.0],
+                age: Default::default(),
+                field_side: Side::Left,
+                source: BallSource::Own,
+            }),
+            ..Default::default()
+        };
+        for (angle, expected_position, expected_velocity) in [
+            (
+                std::f32::consts::FRAC_PI_2,
+                point![2.0, 0.0],
+                vector![4.0, -3.0],
+            ),
+            (
+                -std::f32::consts::FRAC_PI_2,
+                point![-2.0, 0.0],
+                vector![-4.0, 3.0],
+            ),
+        ] {
+            let transform = Isometry2::from_parts(vector![1.0, 0.0], angle);
+            let (position, velocity) = kick_ball_in_ground(&board, &transform).unwrap();
+            assert!((position - expected_position).norm() < 1e-6);
+            assert!((velocity - expected_velocity).norm() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn invalid_observed_velocity_does_not_become_a_stationary_kick() {
+        let mut board = Blackboard::default();
+        board.world_state.ball = Some(BallState {
+            ball_in_ground: point![0.6, 0.1],
+            ball_in_ground_velocity: vector![f32::NAN, 0.0],
+            ..BallState::new_at_center(Default::default())
+        });
+        assert!(kick_ball_in_ground(&board, &Isometry2::identity()).is_none());
+    }
+
+    #[test]
+    fn interception_uses_regular_kick_after_a_strong_or_soft_command() {
+        let mut blackboard = Blackboard {
+            body_motion: Some(BodyMotion::Kick {
+                ball_position: point![1.0, 1.0],
+                ball_velocity: vector![-1.0, -2.0],
+                kick_direction: Default::default(),
+                target_speed: 3.4,
+                strong: true,
+                soft: true,
+                quick: false,
+            }),
+            ..Default::default()
+        };
+        blackboard
+            .parameters
+            .ball
+            .interception
+            .maximum_intercept_distance = 1.5;
+        blackboard
+            .parameters
+            .kicking
+            .minimum_interception_forward_distance = 0.3;
+        assert_eq!(intercept(&mut blackboard), Status::Success);
+        assert!(matches!(
+            blackboard.body_motion,
+            Some(BodyMotion::Kick {
+                strong: false,
+                soft: false,
+                target_speed: 3.4,
+                ..
+            })
+        ));
+    }
 }

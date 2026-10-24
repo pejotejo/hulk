@@ -97,18 +97,22 @@ impl SimulatorRobotBehavior {
             self.blackboard.ball = None;
         }
 
+        self.blackboard.update_kickoff();
+        self.blackboard.update_restart_pass();
+
         let (status, trace) = self.tree.tick_with_trace(&mut self.blackboard);
         let motion_command = assemble_motion_command(&self.blackboard, status)?;
         self.blackboard.last_motion_command = Some(motion_command.clone());
 
         let motion_type = match motion_command.clone() {
             MotionCommand::Kick { .. } => Some(types::motion_type::MotionType::Kick),
-            MotionCommand::Walk { .. } => Some(types::motion_type::MotionType::Walk),
+            MotionCommand::Walk { .. } | MotionCommand::WalkWithVelocity { .. } => {
+                Some(types::motion_type::MotionType::Walk)
+            }
             MotionCommand::Stand { .. } => Some(types::motion_type::MotionType::Stand),
             MotionCommand::StandUp => Some(types::motion_type::MotionType::StandUp),
             MotionCommand::Prepare => Some(types::motion_type::MotionType::Prepare),
             MotionCommand::Damping => Some(types::motion_type::MotionType::Damping),
-            _ => None,
         };
 
         if motion_type != self.blackboard.last_motion_type {
@@ -208,6 +212,11 @@ fn create_behavior_blackboard(
         last_motion_type: None,
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
+        last_announced_pass: None,
+        kickoff_receiver_wait_started: None,
+        restart_pass_wait_started: None,
+        kickoff_prepared: false,
+        kickoff_started: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,
@@ -424,6 +433,11 @@ mod tests {
             field_side: Side::Left,
             source: types::world_state::BallSource::Own,
         });
+        blackboard
+            .visual_kick_ball_position
+            .as_mut()
+            .unwrap()
+            .velocity = vector![0.0, -1.0];
         blackboard
             .parameters
             .ball

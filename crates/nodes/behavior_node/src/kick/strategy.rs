@@ -1,18 +1,25 @@
-use coordinate_systems::Field;
+use coordinate_systems::{Field, Ground};
 use filtering::hysteresis::{
     greater_than_with_relative_hysteresis, less_than_with_relative_hysteresis,
 };
 use geometry::{Distance, line_segment::LineSegment};
-use linear_algebra::point;
+use hsl_network_messages::{PlayerNumber, SubState, Team};
+use linear_algebra::{Isometry2, Point2, point};
 use ros_z::Message;
 use serde::{Deserialize, Serialize};
 use types::{
-    behavior_tree::Status, field_dimensions::Half, motion_type::MotionType, obstacles::ObstacleKind,
+    behavior_tree::Status,
+    field_dimensions::Half,
+    motion_type::MotionType,
+    obstacles::{Obstacle, ObstacleKind},
 };
 
 use crate::node::Blackboard;
 
-use super::geometry::{goal_mouth, goal_openings};
+use super::{
+    geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_mouth, goal_openings, pass_openings},
+    passing::{is_executing_announced_pass, pass_receiver_position},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
 pub enum QuickKickReason {
@@ -23,7 +30,6 @@ pub enum QuickKickReason {
 }
 
 /// Tactical intent only. Execution chooses the target, approach, and physical motion.
-/// A future pass variant can identify a receiver and reception region.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Message)]
 pub enum BallAction {
     /// Release goalward immediately; execution still checks reach and motion switching.
@@ -32,6 +38,9 @@ pub enum BallAction {
     },
     Shoot {
         opening: LineSegment<Field>,
+    },
+    Pass {
+        receiver: PlayerNumber,
     },
     Dribble,
     Clear,
@@ -70,7 +79,10 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
     let previous = blackboard.ball_action.or(blackboard.last_ball_action);
     let ground_to_field = world.robot.ground_to_field?;
     let goal_x = field.length / 2.0;
-    if blackboard.last_motion_type == Some(MotionType::Kick) && previous.is_some() {
+    if blackboard.last_motion_type == Some(MotionType::Kick)
+        && previous.is_some()
+        && !matches!(previous, Some(BallAction::Pass { .. }))
+    {
         return previous;
     }
     if let Some(reason) = urgent_kick_reason(blackboard) {
@@ -185,9 +197,203 @@ pub(super) fn urgent_kick_reason(blackboard: &Blackboard) -> Option<QuickKickRea
         .iter()
         .any(|(number, state)| {
             number != blackboard.player_number
-                && state.is_some_and(|state| (state.pose.position() - robot).norm() <= 1.5)
+                && state
+                    .as_ref()
+                    .is_some_and(|state| (state.inner.pose.position() - robot).norm() <= 1.5)
         });
     (nearby_obstacle || nearby_teammate).then_some(QuickKickReason::NearbyRobot)
+}
+
+pub(crate) fn own_non_penalty_restart(blackboard: &Blackboard) -> bool {
+    blackboard
+        .world_state
+        .filtered_game_controller_state
+        .as_ref()
+        .is_some_and(|game| {
+            game.kicking_team == Some(Team::Hulks)
+                && game
+                    .sub_state
+                    .is_some_and(|state| state != SubState::PenaltyKick)
+                && matches!(
+                    game.game_state,
+                    types::filtered_game_state::FilteredGameState::Playing { .. }
+                )
+        })
+}
+
+/// Select a fresh pass only during our non-penalty restarts.
+pub fn select_restart_ball_action(blackboard: &mut Blackboard) -> Status {
+    blackboard.ball_action = None;
+    if !own_non_penalty_restart(blackboard)
+        || blackboard.parameters.kicking.strategy.validate().is_err()
+    {
+        return Status::Failure;
+    }
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some((ball, _)) = super::kick_ball_in_ground(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    let ball = transform * ball;
+    let field = &blackboard.field_dimensions;
+    if !field.length.is_finite()
+        || !field.width.is_finite()
+        || field.length <= 0.0
+        || field.width <= 0.0
+        || ball.x().abs() > field.length / 2.0 + BALL_FIELD_BOUNDARY_TOLERANCE
+        || ball.y().abs() > field.width / 2.0 + BALL_FIELD_BOUNDARY_TOLERANCE
+    {
+        return Status::Failure;
+    }
+    blackboard.ball_action = choose_pass(blackboard, ball, transform);
+    if blackboard.ball_action.is_some() {
+        Status::Success
+    } else {
+        Status::Failure
+    }
+}
+
+fn choose_pass(
+    blackboard: &Blackboard,
+    ball: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> Option<BallAction> {
+    if !blackboard.has_team_message_budget() {
+        return None;
+    }
+    let world = &blackboard.world_state;
+    let field = &blackboard.field_dimensions;
+    let parameters = &blackboard.parameters.kicking.strategy;
+    let previous = blackboard.ball_action.or(blackboard.last_ball_action);
+    let mut best: Option<(PlayerNumber, f32, f32, bool)> = None;
+    let mut retained = None;
+    for (receiver, _) in world.player_states.iter() {
+        let Some(position) = pass_receiver_position(blackboard, ball, receiver) else {
+            continue;
+        };
+        let executing_pass = is_executing_announced_pass(blackboard, receiver);
+        if world
+            .filtered_game_controller_state
+            .as_ref()
+            .is_some_and(|game| {
+                game.kicking_team == Some(Team::Hulks)
+                    && matches!(
+                        game.sub_state,
+                        Some(SubState::CornerKick | SubState::ThrowIn)
+                    )
+            })
+            && !executing_pass
+            && !crate::substates::restart_pass_is_open(blackboard, position)
+        {
+            continue;
+        }
+        let mut passing = parameters.passing.clone();
+        if executing_pass {
+            passing.minimum_distance = 0.0;
+        }
+        if pass_openings(
+            ball,
+            position,
+            ground_to_field,
+            &world.obstacles,
+            field,
+            &passing,
+            parameters.obstacle_clearance,
+        )
+        .is_empty()
+        {
+            continue;
+        }
+        if executing_pass {
+            return Some(BallAction::Pass { receiver });
+        }
+        let progress = position.x() - ball.x();
+        let angle = receiver_goal_angle(blackboard, position, ground_to_field);
+        let space = receiver_has_space(blackboard, position, ground_to_field);
+        if best.is_none_or(|(_, best_angle, best_progress, best_space)| {
+            (space && !best_space)
+                || (space == best_space
+                    && (angle > best_angle + parameters.shot_angle_hysteresis
+                        || (angle + parameters.shot_angle_hysteresis >= best_angle
+                            && progress > best_progress)))
+        }) {
+            best = Some((receiver, angle, progress, space));
+        }
+        if previous == Some(BallAction::Pass { receiver }) {
+            retained = Some((receiver, angle, progress, space));
+        }
+    }
+    best.map(|(receiver, angle, progress, space)| {
+        let receiver = retained
+            .filter(|(_, old_angle, old_progress, old_space)| {
+                (!space || *old_space)
+                    && angle <= old_angle + parameters.shot_angle_hysteresis
+                    && progress <= old_progress + parameters.passing.selection_hysteresis
+            })
+            .map_or(receiver, |(receiver, _, _, _)| receiver);
+        BallAction::Pass { receiver }
+    })
+}
+
+fn visible_goal_angle(
+    blackboard: &Blackboard,
+    position: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+    obstacles: &[Obstacle],
+) -> f32 {
+    goal_openings(
+        position,
+        ground_to_field,
+        obstacles,
+        &blackboard.field_dimensions,
+        blackboard.parameters.kicking.strategy.obstacle_clearance,
+    )
+    .into_iter()
+    .map(|opening| LineSegment(position, opening.0).angle(LineSegment(position, opening.1)))
+    .fold(0.0, f32::max)
+}
+
+fn is_receiver_obstacle(
+    obstacle: &Obstacle,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> bool {
+    matches!(
+        obstacle.kind,
+        ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+    ) && (ground_to_field * obstacle.position - receiver).norm() <= obstacle.radius_at_foot_height
+}
+
+fn receiver_goal_angle(
+    blackboard: &Blackboard,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> f32 {
+    let obstacles: Vec<_> = blackboard
+        .world_state
+        .obstacles
+        .iter()
+        .filter(|obstacle| !is_receiver_obstacle(obstacle, receiver, ground_to_field))
+        .copied()
+        .collect();
+    visible_goal_angle(blackboard, receiver, ground_to_field, &obstacles)
+}
+
+fn receiver_has_space(
+    blackboard: &Blackboard,
+    receiver: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+) -> bool {
+    blackboard.world_state.obstacles.iter().all(|obstacle| {
+        !matches!(
+            obstacle.kind,
+            ObstacleKind::Robot | ObstacleKind::Person | ObstacleKind::Unknown
+        ) || is_receiver_obstacle(obstacle, receiver, ground_to_field)
+            || (ground_to_field * obstacle.position - receiver).norm()
+                - obstacle.radius_at_foot_height
+                > blackboard.parameters.kicking.strategy.pressure_distance
+    })
 }
 
 #[cfg(test)]
@@ -239,6 +445,11 @@ mod tests {
             last_motion_type: None,
             last_sent_game_controller_return_message_time: None,
             last_sent_hsl_message_time: None,
+            last_announced_pass: None,
+            kickoff_receiver_wait_started: None,
+            restart_pass_wait_started: None,
+            kickoff_prepared: false,
+            kickoff_started: None,
             last_closest_to_ball: false,
             closest_to_ball_entered_area_since: None,
             closest_to_ball_left_area_since: None,
@@ -257,6 +468,7 @@ mod tests {
             pressure_distance: 0.8,
             clear_goal_distance: 1.5,
             clear_distance_hysteresis: 0.2,
+            passing: Default::default(),
         };
         blackboard
     }
@@ -311,5 +523,50 @@ mod tests {
                 reason: QuickKickReason::NoUsablePlan
             })
         );
+    }
+    #[test]
+    fn ordinary_play_never_selects_a_new_pass_even_with_an_open_receiver() {
+        let mut board =
+            crate::test_support::restart_blackboard(SubState::DirectFreeKick, point![0.0, 0.0]);
+        board.world_state.player_states.two = Some(types::time_wrapper::TimeWrapper {
+            time: board.world_state.now,
+            inner: types::world_state::PlayerState {
+                pose: point![3.0, 0.0].into(),
+                ..crate::test_support::player_state()
+            },
+        });
+        assert_eq!(select_restart_ball_action(&mut board), Status::Success);
+        assert!(matches!(board.ball_action, Some(BallAction::Pass { .. })));
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .sub_state = None;
+        let pass = board.ball_action;
+        for current in [true, false] {
+            for expired in [false, true] {
+                let mut ordinary = board.clone();
+                ordinary.last_motion_type = Some(MotionType::Kick);
+                ordinary.ball_action = if current { pass } else { None };
+                ordinary.last_ball_action = pass;
+                if expired {
+                    ordinary.last_announced_pass = Some(types::time_wrapper::TimeWrapper {
+                        time: ordinary.world_state.now - std::time::Duration::from_secs(6),
+                        inner: hsl_network_messages::PassIntent {
+                            receiver: PlayerNumber::Two,
+                            target: point![2.5, 0.0],
+                        },
+                    });
+                }
+                select_ball_action(&mut ordinary);
+                assert!(!matches!(
+                    ordinary.ball_action,
+                    Some(BallAction::Pass { .. })
+                ));
+                assert_eq!(select_restart_ball_action(&mut ordinary), Status::Failure);
+                assert!(ordinary.ball_action.is_none());
+            }
+        }
     }
 }

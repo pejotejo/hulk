@@ -16,6 +16,7 @@ use types::{
     parameters::KickingParameters,
     primary_state::PrimaryState,
     rule_obstacles::RuleObstacle,
+    time_wrapper::TimeWrapper,
     world_state::{BallState, PlayerState},
 };
 
@@ -62,6 +63,11 @@ fn blackboard(robot_x: f32, robot_y: f32, yaw: f32) -> Blackboard {
         last_motion_type: None,
         last_sent_game_controller_return_message_time: None,
         last_sent_hsl_message_time: None,
+        last_announced_pass: None,
+        kickoff_receiver_wait_started: None,
+        restart_pass_wait_started: None,
+        kickoff_prepared: false,
+        kickoff_started: None,
         last_closest_to_ball: false,
         closest_to_ball_entered_area_since: None,
         closest_to_ball_left_area_since: None,
@@ -354,11 +360,18 @@ fn teammate_pressure_is_transformed_and_excludes_our_own_broadcast() {
             pose: Pose2::from_parts(point![-distance, 1.0], Orientation2::new(0.0)),
             head_yaw: 0.0,
             ball_position: None,
+            pass: None,
         };
-        blackboard.world_state.player_states[PlayerNumber::Two] = Some(teammate);
+        blackboard.world_state.player_states[PlayerNumber::Two] = Some(TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: teammate,
+        });
         assert_eq!(is_urgent_kick(&mut blackboard), urgent);
         blackboard.world_state.player_states[PlayerNumber::Two] = None;
-        blackboard.world_state.player_states[PlayerNumber::Three] = Some(teammate);
+        blackboard.world_state.player_states[PlayerNumber::Three] = Some(TimeWrapper {
+            time: blackboard.world_state.now,
+            inner: teammate,
+        });
         assert!(!is_urgent_kick(&mut blackboard));
     }
 }
@@ -377,10 +390,14 @@ fn each_urgent_trigger_precedes_target_planning_and_interception_in_the_live_tre
                     vec![Obstacle::robot(point![-1.5, 0.0], 0.2, 0.2)]
             }
             3 => {
-                blackboard.world_state.player_states[PlayerNumber::Two] = Some(PlayerState {
-                    pose: Pose2::from_parts(point![0.0, 1.5], Orientation2::new(0.0)),
-                    head_yaw: 0.0,
-                    ball_position: None,
+                blackboard.world_state.player_states[PlayerNumber::Two] = Some(TimeWrapper {
+                    time: blackboard.world_state.now,
+                    inner: PlayerState {
+                        pose: Pose2::from_parts(point![0.0, 1.5], Orientation2::new(0.0)),
+                        head_yaw: 0.0,
+                        ball_position: None,
+                        pass: None,
+                    },
                 })
             }
             _ => (),
