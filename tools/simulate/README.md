@@ -41,7 +41,11 @@ Set `ORT_DYLIB_PATH` to your ONNX Runtime library if it is not available in the 
 ./twix --simulator /hulks/1
 ```
 
-The launcher enables Twix's optional `simulator` Cargo feature and configures its MuJoCo library path.
+The launchers configure MuJoCo and CPU ONNX Runtime and fetch missing simulator Git LFS assets.
+Existing `ORT_DYLIB_PATH`, MuJoCo library/cache, `BHUMAN_WORKER` and `BHUMAN_SOURCE` overrides take precedence.
+Use `./twix --simulator --bhuman --dry-run /hulks/1` to inspect setup and `--help` for prerequisites.
+Select the repository's Rust toolchain per launch with `RUSTUP_TOOLCHAIN=1.98.0` if your default is older.
+The launcher enables Twix's optional `simulator` Cargo feature.
 For native B-Human opponents on Linux x86-64, use
 `./twix --simulator --bhuman /hulks/1`. This also builds the pinned worker in the
 local cache, enables the B-Human selector and configures its paths and ONNX Runtime.
@@ -68,7 +72,7 @@ Twix selects the robot's namespace automatically.
 Only one simulator can run per Twix process.
 Restoring a saved layout does not start robotics or bind UDP sockets.
 
-HULK robots start upright and paused in **Initial**. B-Human players initialize their native game state on the first physics frame.
+HULK robots start upright and paused in **Prepare**. On Run, startup waits for the real behavior/motion pipeline to acknowledge Prepare and a safe upright pose before entering Initial through the Stand button. Starting a match immediately follows the same preparation sequence. B-Human players initialize their native game state on the first physics frame.
 Initial players alternate between both long touchlines in their own half, starting 0.5 m from the goal line and spaced 0.9 m toward midfield, facing inward.
 **Add robot** starts the next available player, at a vacant slot along the sideline, without moving existing robots.
 Placement follows the known GameController field side, defaulting to Home for HULKs and Away for opponents before the first packet.
@@ -76,7 +80,7 @@ A running match continues during startup; a paused match keeps the existing cloc
 Reset pose returns the selected robot to its original spawn slot, mirrored if GameController has changed its field side.
 Floating player numbers use the GameController's field-player or goalkeeper jersey color, with the commanded LED color as a small highlight; the selected player's number is ringed.
 Click a number to select that robot in Twix.
-HULK startup uses the real button bridge, handler and safe-pose check to pass through Prepare to Initial.
+HULK startup uses the real button bridge, handler and safe-pose check to pass through Prepare to Initial. Paused time does not count against preparation; a newly added paused player finishes preparation on Run.
 While running, the panel header is the toolbar.
 With Auto referee, its first row is the match: score, half, clock, state, active restart, **Stop play**, the next match step and the **Referee desk** toggle.
 The simulation row follows: **Run**/**Pause**, simulation time, **Add robot** and **Stop simulator**; External mode also offers **Whistle** and **Add ball**.
@@ -125,6 +129,19 @@ The preset opens this parameter; press **Refresh** once the simulator has starte
 **M** or **Fly camera** captures/releases the mouse; **Esc** releases it.
 While captured, a legend at the bottom of the scene lists the movement keys.
 While captured, use W/A/S/D to move, Q/E for down/up, and Shift for faster movement.
+**Cinematic** smoothly tracks the ball or selected player with **Drone**, **Sideline**, or **Player** shots.
+Turning it off restores the previous manual camera; using manual camera controls also returns to manual mode.
+**Replay** plays the last available ten simulation seconds of poses at normal wall speed, with a clear REPLAY badge and **Return live** control.
+Live physics, robot behavior and referee controls continue throughout; this is presentation playback, not a rewind.
+The history samples only while the viewport renders, at up to 30 Hz, with at most 301 frames plus one frozen replay clip.
+A scene recompile clears the clip/history; live command arrows and scene editing are hidden/disabled during replay.
+For ten K1s this stores roughly a few MiB of transforms, without sensor messages, models or mesh copies.
+
+The small arena adds striped turf, stepped seating, lamps and perimeter sponsor boards beyond the carpet runoff and goal backs.
+Branding is from the current [HULKs sponsors page](https://hulks.de/sponsors/), checked 2026-10-24; the [local asset manifest](assets/branding/README.md) records exact sources.
+Static meshes and materials are shared; decoration has no physics contacts. Goal posts/crossbar and the side/back/roof net panels do collide; the mouth remains open.
+Nets approximate rigid surfaces rather than cloth.
+
 **Add ball** places a ball one meter from the origin.
 Select and drag it on the horizontal plane, or press **Delete** while pointing inside the scene to remove it.
 Select the robot to show translation arrows and rotation rings.
@@ -142,10 +159,14 @@ Physics, robotics and all automatic GameController match timers advance together
 Automatic GameController packets follow simulation time, with a real-time heartbeat retained during pauses and slow playback.
 Pause and scene recompilation freeze simulation time and sensor sampling.
 Resume continues from that time without catching up elapsed wall time; pose resets and scene edits never rewind the clock.
-A new robot initializes from stationary sensor samples at the shared clock time, then joins the common physics scene in Initial.
+A new robot initializes from stationary sensor samples at the shared clock time, then joins the common physics scene in Prepare and completes preparation on Run.
 Camera frames use simulation time at approximately 30 Hz.
 `diagnostics/camera_frames` reports capture/publication times and cumulative overwritten queued snapshots.
 A whistle clicked while paused is retained for resume; its 750 ms pulse uses simulation time.
+
+Motion inference keeps the production 40 ms node-time request deadline and stale-input/protection checks.
+The simulator supplies a separate two-second wall-time transport allowance for walk, kick and get-up replies, so a paused render or host scheduling delay does not itself consume the logical validity budget.
+Replies arriving after their logical deadline still trigger emergency damping; a missing worker still reaches the bounded transport timeout. Real-robot transport defaults are unchanged.
 
 The external GameController keeps its own real-time match clock at every simulation speed, and incoming packets, Twix parameters and body buttons remain live while paused.
 The toolbar explicitly indicates this clock difference when External mode uses a speed other than 1×.
@@ -327,6 +348,16 @@ It sends real UDP GameController packets through the same production message han
 Automatic mode uses private loopback ports and accepts state packets only from its embedded controller, so an external controller cannot take over the match.
 All match timers advance with simulation time and freeze when paused.
 An external controller continues using its own wall clock.
+
+Click an available decision in the referee desk to reverse it and every later dependent decision.
+The last 16 decisions within two simulation minutes are retained. Corrections restore scores, state, penalties/cards and referee placements, then stop play for review.
+Physical corrections restore grounded stationary poses, not joint trajectories, velocities or robot internal state; simulation time never rewinds.
+Manual ball edits invalidate earlier corrections; corrections can also replace later manual robot placements. Resume play explicitly after reviewing the restored scene.
+
+The desk's **Penalty shootout** control chooses the goal and sets the ball on that field's penalty mark, the shooter at the penalty approach facing goal, and the defending keeper on the goal line.
+Choose the active shooter/keeper; other players are substitutes outside play. Start the shot with the whistle, record a miss with **Finish shot**, and use **Next shot** to alternate teams.
+The GameController owns shot scores, timers, alternation and completion. A new shootout starts separate scores; reverse the setup decision to restore the preceding match.
+See [referee controls and limits](src/autoref/README.md) for details and MCP command names.
 
 Automatic mode creates one match ball and disables adding or deleting balls.
 Dragging it remains available for test setup; a drag starts a new scenario, clearing previous touch and restart history.

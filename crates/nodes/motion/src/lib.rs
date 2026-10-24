@@ -48,7 +48,7 @@ pub mod walking;
 
 const ROBOT_COMMAND_TOPIC: &str = "commands/robot_command";
 
-#[derive(Serialize, Deserialize, Message)]
+#[derive(Clone, Serialize, Deserialize, Message)]
 struct ArmParameters {
     arm_blend_duration: Duration,
 
@@ -63,11 +63,14 @@ struct ArmParameters {
     kd: f32,
 }
 
-#[derive(Serialize, Deserialize, Message)]
+#[derive(Clone, Serialize, Deserialize, Message)]
 struct Parameters {
     arms: ArmParameters,
     walking: WalkingParameters,
     inference_timeout: Duration,
+    /// Optional wall-time transport allowance; inference requests retain their node-time deadline.
+    #[serde(default)]
+    inference_transport_timeout: Option<Duration>,
     head_motion_timeout: Duration,
     maximum_command_age: Duration,
 }
@@ -451,7 +454,7 @@ impl MotionState {
         let is_get_up = matches!(motion_plan, MotionPlan::GetUp { .. });
         let block_get_up = motion_plan.blocks_failed_get_up(&mut self.get_up_failed);
 
-        let robot_command = match motion_plan {
+        let mut robot_command = match motion_plan {
             MotionPlan::Damping => RobotCommand::Damping,
             MotionPlan::Prepare => RobotCommand::Prepare,
             MotionPlan::GetUp { .. } if block_get_up => RobotCommand::Damping,
@@ -501,6 +504,17 @@ impl MotionState {
             }
         };
 
+        if do_inference
+            && matches!(robot_command, RobotCommand::Custom { .. })
+            && clock.now() >= now + parameters.inference_timeout
+        {
+            error!(
+                "Inference reply arrived after its node-time deadline, sending RobotCommand::Damping"
+            );
+            self.send_emergency_stop_signal().await?;
+            robot_command = RobotCommand::Damping;
+        }
+
         let robot_command = match robot_command.clamp(joint_limits) {
             Ok(robot_command) => robot_command,
             Err(error) => {
@@ -545,8 +559,12 @@ impl MotionState {
         E: Message + for<'a> Deserialize<'a> + Serialize + Display,
     {
         let (inference_result, head_motion_result) = if do_inference {
-            let inference_fut = InferGeneric::<S>::inference_client(self)
-                .call_with_timeout_async(&command, parameters.inference_timeout);
+            let inference_fut = InferGeneric::<S>::inference_client(self).call_with_timeout_async(
+                &command,
+                parameters
+                    .inference_transport_timeout
+                    .unwrap_or(parameters.inference_timeout),
+            );
             let head_motion_fut = self
                 .head_motion_client
                 .call_with_timeout_async(&head_motion, parameters.head_motion_timeout);
@@ -644,7 +662,12 @@ impl MotionState {
         );
         let inference_result = self
             .get_up_inference_client
-            .call_with_timeout_async(&command, parameters.inference_timeout)
+            .call_with_timeout_async(
+                &command,
+                parameters
+                    .inference_transport_timeout
+                    .unwrap_or(parameters.inference_timeout),
+            )
             .await;
         Ok(match inference_result {
             Ok(Ok(joints_command)) => RobotCommand::Custom { joints_command },
@@ -790,3 +813,6 @@ enum LowerRobotCommand {
     },
     Damping,
 }
+
+#[cfg(test)]
+mod tests;

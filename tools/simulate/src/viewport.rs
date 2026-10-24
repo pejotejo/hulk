@@ -14,6 +14,7 @@ use std::sync::{
 
 use crate::{
     bevy_mujoco::{SharedPhysics, SimulationMode},
+    presentation::{self, Presentation},
     scene::{ball::Ball, goal::Goal, object::ObjectPart, robot::RobotHead},
     simulation::ControlledRobot,
 };
@@ -206,6 +207,17 @@ fn plane_hit(ray: Ray3d, point: Vec3, normal: Vec3) -> Option<Vec3> {
 }
 
 impl Viewport {
+    pub fn presentation_toolbar(&mut self, ui: &mut Ui, world: &mut World) {
+        let cinematic = world.resource::<Presentation>().cinematic();
+        presentation::toolbar(ui, world);
+        if !cinematic && world.resource::<Presentation>().cinematic() && self.captured.is_some() {
+            self.capture(ui.ctx(), false);
+        }
+        if world.resource::<Presentation>().is_replaying() {
+            self.finish_drag(world);
+        }
+    }
+
     pub fn toolbar(&mut self, ui: &mut Ui, compact: bool) {
         let icon = egui_material_icons::icons::ICON_3D_ROTATION.codepoint;
         let text = if compact {
@@ -280,6 +292,7 @@ impl Viewport {
             self.capture(ui.ctx(), true);
         }
         if self.captured.is_some() {
+            presentation::set_cinematic(world, false);
             if needs_cursor_warp() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));
@@ -338,7 +351,10 @@ impl Viewport {
             .map(|(_, id)| *id);
         if hovered && ui.input(|i| i.pointer.primary_pressed()) && label.is_some() {
             self.clicked_label = label;
-        } else if hovered && ui.input(|i| i.pointer.primary_pressed()) {
+        } else if hovered
+            && ui.input(|i| i.pointer.primary_pressed())
+            && !world.resource::<Presentation>().is_replaying()
+        {
             let handle = self.selected.and_then(|entity| {
                 world.get::<ControlledRobot>(entity)?;
                 let pose = world
@@ -367,6 +383,10 @@ impl Viewport {
                     self.start_drag(world, entity, Handle::Ball, ray);
                 }
             }
+        }
+        if world.resource::<Presentation>().is_replaying() {
+            self.finish_drag(world);
+            return;
         }
         if let Some(drag) = &self.drag
             && let Some(pose) = drag.geometry.pose(ray)
@@ -413,6 +433,30 @@ impl Viewport {
     }
     pub fn paint(&mut self, ui: &Ui, rect: Rect, world: &mut World, selected: Option<RobotId>) {
         self.paint_scene(ui, rect, world, selected);
+        let presentation = world.resource::<Presentation>();
+        let replaying = presentation.is_replaying();
+        let text = if replaying {
+            format!("{}  ·  simulation stays live", presentation.badge())
+        } else {
+            presentation.badge()
+        };
+        let painter = ui.painter().with_clip_rect(rect);
+        let galley = painter.layout_no_wrap(
+            text,
+            egui::FontId::proportional(13.0),
+            if replaying {
+                Color32::from_rgb(255, 192, 92)
+            } else {
+                Color32::from_rgb(100, 210, 165)
+            },
+        );
+        let position = rect.left_top() + egui::vec2(12.0, 12.0);
+        painter.rect_filled(
+            Rect::from_min_size(position, galley.size()).expand2(egui::vec2(6.0, 4.0)),
+            4.0,
+            Color32::from_black_alpha(180),
+        );
+        painter.galley(position, galley, Color32::WHITE);
         if self.captured.is_some() {
             capture_legend(ui, rect);
         }
@@ -529,6 +573,9 @@ impl Viewport {
                     );
                 }
             }
+        }
+        if world.resource::<Presentation>().is_replaying() {
+            return;
         }
         let Some(entity) = self.selected else {
             return;

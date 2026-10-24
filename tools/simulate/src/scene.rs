@@ -1,3 +1,4 @@
+pub(crate) mod arena;
 pub mod ball;
 pub mod command_vectors;
 pub mod field;

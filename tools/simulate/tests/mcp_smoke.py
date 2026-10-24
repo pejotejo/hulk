@@ -181,6 +181,7 @@ def smoke(client, directory, render):
     # Completing many tiny pages must reclaim snapshots, including graph snapshots.
     for _ in range(5):
         page = client.call("rosz_graph", target_id=target, limit=25)
+        args = {}
         while page["next_cursor"]:
             args = {
                 "target_id": target,
@@ -209,6 +210,12 @@ def smoke(client, directory, render):
     assert schema["type_info"]["schema_hash"]
     observation = client.begin(
         "rosz_observe", target_id=target, sources=[source]
+    )
+    client.complete(
+        "simulator_input",
+        session_id=sid,
+        input={"kind": "body_button", "target_id": target,
+               "button": "stand", "gesture": "tap"},
     )
     result = client.complete(
         "simulator_control",

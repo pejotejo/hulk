@@ -1,4 +1,18 @@
-#! /usr/bin/env sh
+#!/usr/bin/env -S bash -e
 
-cd tools/mujoco-simulator/mujoco-simulator
-uv run main.py
+SIMULATOR_ROOT="$(dirname "$(readlink -f "$0")")"
+simulator_dry_run=false
+case "${1:-}" in
+  --help|-h)
+    echo "Usage: ./mujoco-simulator [--dry-run] [PYTHON_SIMULATOR_ARGS...]"
+    echo "Runs the legacy Python simulator; uv sets up its Python and MuJoCo dependencies."
+    echo "For HULKs vs native B-Human, use ./twix --simulator --bhuman /hulks/1."
+    exit 0 ;;
+  --dry-run) simulator_dry_run=true; shift ;;
+esac
+source "$SIMULATOR_ROOT/tools/simulate/runtime.sh"
+if ! $simulator_dry_run; then
+  simulator_require uv "Install uv (https://docs.astral.sh/uv/getting-started/installation/), then retry."
+fi
+cd "$SIMULATOR_ROOT/tools/mujoco-simulator/mujoco-simulator"
+simulator_launch uv run main.py "$@"

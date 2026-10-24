@@ -1,0 +1,5 @@
+{
+  // Rendering or host scheduling may stall wall time while physics is paused.
+  // Keep the production 40 ms inference deadline in simulation time unchanged.
+  inference_transport_timeout: { secs: 2, nanos: 0 },
+}

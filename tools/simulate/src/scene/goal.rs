@@ -11,6 +11,7 @@ use crate::{
 pub(crate) const GOAL_HEIGHT: f64 = 1.6;
 const SUPPORT_RADIUS: f64 = 0.01;
 const NET_RADIUS: f64 = 0.001;
+const CONTACT_SOLREF: [f64; 2] = [0.01, 1.0];
 
 const IDENTITY: [f64; 4] = [1.0, 0.0, 0.0, 0.0];
 const ALONG_X: [f64; 4] = [
@@ -51,6 +52,13 @@ impl From<&FieldDimensions> for GoalDimensions {
     }
 }
 
+impl GoalDimensions {
+    pub(crate) fn with_height(mut self, height: f32) -> Self {
+        self.height = f64::from(height);
+        self
+    }
+}
+
 #[derive(Clone, Copy)]
 struct GoalPrimitive {
     kind: MjtGeom,
@@ -74,12 +82,9 @@ pub struct GoalAssets {
 
 impl GoalAssets {
     pub fn load(world: &mut World) -> Self {
-        let mut dimensions = GoalDimensions::from(
-            &world
-                .resource::<CurrentSimulatorParameters>()
-                .field_dimensions,
-        );
-        dimensions.height = f64::from(world.resource::<CurrentSimulatorParameters>().goal_height);
+        let parameters = world.resource::<CurrentSimulatorParameters>();
+        let dimensions =
+            GoalDimensions::from(&parameters.field_dimensions).with_height(parameters.goal_height);
         let solid = world
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial {
@@ -157,8 +162,8 @@ pub(super) fn update_goal_dimensions(
     mut goals: Query<&mut MjcfObject, (With<Goal>, Without<GoalPartIndex>)>,
     mut visual_parts: Query<(&GoalPartIndex, &mut Transform), Without<Goal>>,
 ) {
-    let mut dimensions = GoalDimensions::from(&parameters.field_dimensions);
-    dimensions.height = f64::from(parameters.goal_height);
+    let dimensions =
+        GoalDimensions::from(&parameters.field_dimensions).with_height(parameters.goal_height);
     if assets.goal.dimensions == dimensions {
         return;
     }
@@ -188,9 +193,51 @@ pub(crate) fn goal_spec(dimensions: GoalDimensions) -> Result<MjSpec, String> {
             .with_pos(primitive.position)
             .with_quat(primitive.rotation)
             .with_rgba([1.0, 1.0, 1.0, 1.0]);
-        if !primitive.collides {
+        if primitive.collides {
+            // The ball's softer, lower-priority contacts let fast shots tunnel through the frame.
+            geom.with_priority(2).with_solref(CONTACT_SOLREF);
+        } else {
             geom.with_contype(0).with_conaffinity(0).with_density(0.0);
         }
+    }
+
+    // Solid net panels catch balls between strands without closing the mouth.
+    let half_span = (dimensions.inner_width + dimensions.post_diameter) / 2.0;
+    let half_depth = dimensions.depth / 2.0;
+    let half_height = dimensions.height / 2.0;
+    for (name, size, position) in [
+        (
+            "net_back",
+            [NET_RADIUS, half_span, half_height],
+            [-dimensions.depth, 0.0, half_height],
+        ),
+        (
+            "net_left",
+            [half_depth, NET_RADIUS, half_height],
+            [-half_depth, -half_span, half_height],
+        ),
+        (
+            "net_right",
+            [half_depth, NET_RADIUS, half_height],
+            [-half_depth, half_span, half_height],
+        ),
+        (
+            "net_top",
+            [half_depth, half_span, NET_RADIUS],
+            [-half_depth, 0.0, dimensions.height],
+        ),
+    ] {
+        body.add_geom()
+            .with_name(name)
+            .with_type(MjtGeom::mjGEOM_BOX)
+            .with_size(size)
+            .with_pos(position)
+            .with_contype(1)
+            .with_conaffinity(1)
+            .with_priority(2)
+            .with_solref(CONTACT_SOLREF)
+            .with_density(0.0)
+            .with_rgba([0.0; 4]);
     }
     Ok(spec)
 }
@@ -346,13 +393,25 @@ fn mesh_from_primitive(primitive: GoalPrimitive) -> Mesh {
 
 #[cfg(test)]
 mod tests {
+    use mujoco_rs::{
+        mujoco_c::{mjs_attach, mjs_setDeepCopy},
+        prelude::{MjData, MjtObj},
+    };
+
     use super::*;
+    use crate::{parameters::SimulatorParameters, scene::ball::ball_spec};
 
     #[test]
     fn goal_primitives_use_radian_rotations() {
         let mut spec = goal_spec(GoalDimensions::from(&FieldDimensions::SPL_2025)).unwrap();
         let model = spec.compile().unwrap();
-        assert_eq!(model.geom_type().len(), 70);
+        assert_eq!(model.geom_type().len(), 74);
+        for geom in 70..74 {
+            assert_eq!(model.geom_type()[geom], MjtGeom::mjGEOM_BOX);
+            assert_eq!(model.geom_rgba()[geom][3], 0.0);
+            assert_eq!(model.geom_contype()[geom], 1);
+            assert_eq!(model.geom_conaffinity()[geom], 1);
+        }
 
         let axis = |geom| {
             let transform = from_mujoco(model.geom_pos()[geom], model.geom_quat()[geom]);
@@ -361,5 +420,125 @@ mod tests {
         assert!(axis(0).abs_diff_eq(Vec3::Y, 1e-5));
         assert!(axis(2).abs_diff_eq(Vec3::Z, 1e-5));
         assert!(axis(4).abs_diff_eq(Vec3::X, 1e-5));
+    }
+
+    #[test]
+    fn supplied_height_reaches_the_frame_and_net_colliders() {
+        let height = 2.6;
+        let dimensions = GoalDimensions::from(&FieldDimensions::SPL_2025).with_height(height);
+        let model = goal_spec(dimensions).unwrap().compile().unwrap();
+        assert_eq!(model.geom_size()[8][1], f64::from(height) / 2.0);
+        assert_eq!(model.geom_pos()[10][2], f64::from(height));
+        for (name, z) in [
+            ("net_back", height / 2.0),
+            ("net_left", height / 2.0),
+            ("net_right", height / 2.0),
+            ("net_top", height),
+        ] {
+            let geom = model.name_to_id(MjtObj::mjOBJ_GEOM, name).unwrap();
+            assert_eq!(model.geom_pos()[geom][2], f64::from(z));
+        }
+    }
+
+    fn shoot_ball(
+        dimensions: GoalDimensions,
+        radius: f64,
+        position: [f64; 3],
+        velocity: [f64; 3],
+        expected_collider: &str,
+    ) -> Vec<[f64; 3]> {
+        let parameters: SimulatorParameters =
+            json5::from_str(include_str!("../../parameters/simulator.json5")).unwrap();
+        let mut spec = goal_spec(dimensions).unwrap();
+        let mut ball = ball_spec(radius, &parameters.ball).unwrap();
+        ball.body_mut("ball").unwrap().with_gravcomp(1.0);
+        let parent = spec.world_body_mut().add_frame().element_mut_pointer();
+        let child = ball.body_mut("ball").unwrap().element_mut_pointer();
+        // Both elements are live; deep copying keeps the attached ball owned by the goal spec.
+        unsafe {
+            assert_eq!(mjs_setDeepCopy(spec.ffi_mut(), 1), 0);
+            assert!(!mjs_attach(parent, child, c"".as_ptr(), c"".as_ptr()).is_null());
+        }
+        let model = spec.compile().unwrap();
+        let collider = model
+            .name_to_id(MjtObj::mjOBJ_GEOM, expected_collider)
+            .unwrap() as i32;
+        let mut data = MjData::new(Box::new(model));
+        data.qpos_mut()[..3].copy_from_slice(&position);
+        data.qvel_mut()[..3].copy_from_slice(&velocity);
+        let mut hit_collider = false;
+        let mut trajectory = Vec::with_capacity(500);
+        for _ in 0..500 {
+            data.step();
+            hit_collider |= data
+                .contact()
+                .iter()
+                .any(|contact| contact.geom.contains(&collider));
+            trajectory.push(data.qpos()[..3].try_into().unwrap());
+        }
+        assert!(hit_collider, "ball missed {expected_collider}");
+        trajectory
+    }
+
+    #[test]
+    fn shots_enter_the_open_mouth_and_stop_at_the_back_net() {
+        let dimensions = GoalDimensions::from(&FieldDimensions::SPL_2025);
+        for radius in [0.073, 0.1, 0.11] {
+            for speed in [2.0, 12.0] {
+                for y in [0.0, dimensions.inner_width / 2.0 - radius - 0.02] {
+                    let trajectory = shoot_ball(
+                        dimensions,
+                        radius,
+                        [0.25, y, dimensions.height / 2.0],
+                        [-speed, 0.0, 0.0],
+                        "net_back",
+                    );
+                    // The entire ball clears the goal line, leaving goal detection possible.
+                    assert!(trajectory.iter().any(|p| {
+                        p[0] + radius + f64::from(FieldDimensions::SPL_2025.line_width) / 2.0 < 0.0
+                    }));
+                    assert!(trajectory.iter().all(|p| p[0] > -dimensions.depth));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn side_and_roof_nets_stop_fast_balls_between_the_strands() {
+        let dimensions = GoalDimensions::from(&FieldDimensions::SPL_2025);
+        let half_span = (dimensions.inner_width + dimensions.post_diameter) / 2.0;
+        for (direction, collider) in [(-1.0, "net_left"), (1.0, "net_right")] {
+            let trajectory = shoot_ball(
+                dimensions,
+                0.073,
+                [-dimensions.depth / 2.0, 0.0, dimensions.height * 0.47],
+                [0.0, direction * 12.0, 0.0],
+                collider,
+            );
+            assert!(trajectory.iter().all(|p| p[1].abs() < half_span));
+        }
+        let trajectory = shoot_ball(
+            dimensions,
+            0.073,
+            [-dimensions.depth / 2.0, 0.03, dimensions.height / 2.0],
+            [0.0, 0.0, 12.0],
+            "net_top",
+        );
+        assert!(trajectory.iter().all(|p| p[2] < dimensions.height));
+    }
+
+    #[test]
+    fn posts_and_crossbar_stop_fast_shots() {
+        let dimensions = GoalDimensions::from(&FieldDimensions::SPL_2025);
+        let half_span = (dimensions.inner_width + dimensions.post_diameter) / 2.0;
+        for (y, z, collider) in [
+            (-half_span, dimensions.height / 2.0, "part_8"),
+            (half_span, dimensions.height / 2.0, "part_9"),
+            (0.0, dimensions.height, "part_10"),
+        ] {
+            let trajectory =
+                shoot_ball(dimensions, 0.073, [0.25, y, z], [-12.0, 0.0, 0.0], collider);
+            assert!(trajectory.iter().all(|p| p[0] > 0.0));
+        }
     }
 }

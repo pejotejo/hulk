@@ -219,6 +219,12 @@ The manifest names finalized segments and stores barrier metadata. A crash can l
 Headless means no interactive window. Offscreen scene rendering can still need a graphics adapter and driver. Report rendering support separately from physics readiness and create rendering resources on demand.
 
 - Scene images use a frozen physics/scene snapshot and return its simulation time.
+  The worker reuses its offscreen renderer while scene topology and output dimensions
+  stay unchanged. Only visual-scene synchronization holds the physics lock on warm
+  frames; GPU rendering, readback and PNG writing use that captured scene after
+  releasing the lock. The first frame or a topology/size change uploads resources
+  while holding the lock. Camera world positions describe the eye, with MuJoCo's
+  gaze azimuth converted accordingly.
 - Maps plot explicitly selected topics with `x/y` or `position.x/y` fields and retain contributing sample times. They do not infer coordinate transforms. Optional truth overlays use the world frame.
 - Plots use the same `rosz_read` query and coverage rules, including opt-in recording fallback. Numeric values become curves; booleans and enums appear as labeled state marks. An oversized plot fails with a request to narrow its interval.
 - Image inspection requires an actual published image with a supported schema. Synthetic detections do not imply a camera image exists.

@@ -27,7 +27,8 @@ pub struct FieldPlugin;
 
 impl Plugin for FieldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_field)
+        app.add_plugins(super::arena::ArenaPlugin)
+            .add_systems(Startup, spawn_field)
             .add_systems(PreUpdate, update_field.in_set(SceneParameterUpdateSet));
     }
 }
@@ -45,7 +46,7 @@ fn spawn_field(
         Field,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(1.0, 1.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.04, 0.34, 0.13),
+            base_color: Color::srgb(0.09, 0.32, 0.17),
             perceptual_roughness: 0.95,
             ..default()
         })),

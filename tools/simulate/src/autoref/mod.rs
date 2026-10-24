@@ -145,6 +145,12 @@ impl AutoRef {
     }
     pub(crate) fn command(&self, name: &str, arguments: &serde_json::Value) -> Result<(), String> {
         use calls::Call;
+        if name == "reverse_decision" {
+            let decision = arguments["decision"]
+                .as_u64()
+                .ok_or("Expected a decision ID")?;
+            return self.engine.lock().unwrap().reverse(decision);
+        }
         let side = || match arguments["team"].as_str() {
             Some("hulks") => Ok(TeamId::Hulks),
             Some("opponents") => Ok(TeamId::Opponents),
@@ -172,6 +178,16 @@ impl AutoRef {
             "second_half" => Call::SecondHalf,
             "referee_timeout" => Call::RefereeTimeout,
             "add_minute" => Call::AddMinute,
+            "shootout" => Call::Shootout(match arguments["goal"].as_str() {
+                Some("positive_x") => game_controller_core::types::SideMapping::HomeDefendsLeftGoal,
+                Some("negative_x") => {
+                    game_controller_core::types::SideMapping::HomeDefendsRightGoal
+                }
+                _ => return Err("Expected goal positive_x or negative_x".into()),
+            }),
+            "next_shot" => Call::NextShot,
+            "finish_shot" => Call::FinishShot,
+            "shot_player" => Call::ShotPlayer(robot()?),
             "goal" => Call::Goal(side()?),
             "timeout" => Call::Timeout(side()?),
             "release" => Call::Release(robot()?),
@@ -199,6 +215,14 @@ impl AutoRef {
     }
     pub fn poll(&self) -> Option<String> {
         self.transport.poll()
+    }
+    pub fn prime_scene(
+        &self,
+        world: &crate::bevy_mujoco::MujocoWorld,
+        members: &[crate::team::Member],
+    ) {
+        let snapshot = self.observer.lock().unwrap().snapshot(world, members);
+        self.engine.lock().unwrap().prime_scene(snapshot);
     }
     pub fn update(
         &self,
@@ -254,6 +278,11 @@ pub(crate) fn command_schemas() -> serde_json::Value {
         "second_half",
         "referee_timeout",
         "add_minute",
+        "shootout",
+        "next_shot",
+        "finish_shot",
+        "shot_player",
+        "reverse_decision",
         "goal",
         "timeout",
         "release",
@@ -263,18 +292,27 @@ pub(crate) fn command_schemas() -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         if matches!(
             name,
-            "goal" | "timeout" | "release" | "restart" | "penalize"
+            "goal" | "timeout" | "release" | "restart" | "penalize" | "shot_player"
         ) {
             fields.insert(
                 "team".into(),
                 json!({"type":"string","enum":["hulks","opponents"]}),
             );
         }
-        if matches!(name, "release" | "penalize") {
+        if matches!(name, "release" | "penalize" | "shot_player") {
             fields.insert(
                 "number".into(),
                 json!({"type":"integer","minimum":1,"maximum":5}),
             );
+        }
+        if name == "shootout" {
+            fields.insert(
+                "goal".into(),
+                json!({"type":"string","enum":["positive_x","negative_x"]}),
+            );
+        }
+        if name == "reverse_decision" {
+            fields.insert("decision".into(), json!({"type":"integer","minimum":0}));
         }
         if name == "restart" {
             fields.insert("set_play".into(),json!({"type":"string","enum":calls::RESTARTS.iter().map(|v|format!("{v:?}")).collect::<Vec<_>>()}));

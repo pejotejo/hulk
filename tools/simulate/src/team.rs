@@ -835,6 +835,46 @@ mod runtime_tests {
             assert_eq!(robot_id(&robot_namespace(member.id)), Some(member.id));
             assert_eq!(member.pose.translation.x > 0.0, member.io.away());
         }
+        if !add_while_running {
+            for member in &members {
+                assert_eq!(
+                    *member.io.primary.get_latest().unwrap(),
+                    types::primary_state::PrimaryState::Prepare
+                );
+                assert_eq!(
+                    member.io.actuator_control().mode,
+                    booster::RobotMode::Damping
+                );
+            }
+        }
+        let preparation_started = team.now();
+        physics.lock().mode = SimulationMode::Running;
+        wait(&mut worker, || {
+            assert!(
+                team.now().duration_since(preparation_started) < Duration::from_secs(5),
+                "startup must enter Custom without first falling and recovering"
+            );
+            for member in &members {
+                assert!(
+                    member.io.posture.get_latest().is_none_or(|state| {
+                        state.posture == types::fall_detection::Posture::Upright
+                    }),
+                    "player {} fell during startup",
+                    member.id
+                );
+            }
+            members.iter().all(|member| {
+                member.io.primary.get_latest().is_some_and(|state| {
+                    !matches!(
+                        *state,
+                        types::primary_state::PrimaryState::Damping
+                            | types::primary_state::PrimaryState::Prepare
+                    )
+                }) && member.io.actuator_control().mode == booster::RobotMode::Custom
+                    && member.io.actuator_control().command.is_some()
+            })
+        });
+        physics.lock().mode = SimulationMode::Paused;
         validate_team_channels(&runtime, &members);
         if let Ok(exchange) = std::env::var("HSL_EXCHANGE") {
             validate_game_controller(

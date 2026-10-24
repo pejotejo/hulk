@@ -26,6 +26,7 @@ pub mod bhuman;
 mod buttons;
 mod observations;
 mod parameters;
+mod presentation;
 pub use autoref::{Competition, Division, RefereeMode};
 mod profiles;
 mod readiness;
@@ -164,6 +165,7 @@ impl Simulator {
             scene::field::FieldPlugin,
             scene::ObjectsPlugin,
             simulation::MotionSimulationPlugin,
+            presentation::PresentationPlugin,
         ))
         .add_systems(PreUpdate, viewport::setup_scene);
         app.finish();
@@ -279,6 +281,10 @@ impl Simulator {
                 ui.horizontal_wrapped(|ui| {
                     self.player_controls(ui);
                     widgets::trailing(ui, 130.0, |ui| self.viewport.toolbar(ui, compact));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    self.viewport
+                        .presentation_toolbar(ui, self.widget.bevy_app.world_mut());
                 });
             }
         });

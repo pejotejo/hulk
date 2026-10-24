@@ -402,9 +402,17 @@ pub struct MujocoModelUpdateSet;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub struct MujocoPoseUpdateSet;
 
+/// Timestamp and topology of the exact physics snapshot presented by `sync_bodies`.
+#[derive(Default, Resource)]
+pub(crate) struct MujocoRenderFrame {
+    pub time: f64,
+    pub generation: u64,
+}
+
 impl Plugin for MujocoWorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SharedPhysics>()
+            .init_resource::<MujocoRenderFrame>()
             .configure_sets(PreUpdate, MujocoModelUpdateSet)
             .add_systems(PreUpdate, update_objects.in_set(MujocoModelUpdateSet))
             .add_systems(Update, sync_bodies.in_set(MujocoPoseUpdateSet));
@@ -468,9 +476,12 @@ fn update_objects(
 
 fn sync_bodies(
     physics: Res<SharedPhysics>,
+    mut frame: ResMut<MujocoRenderFrame>,
     mut bodies: Query<(&MujocoBody, &mut Transform, Option<&mut Visibility>)>,
 ) {
     let world = physics.lock();
+    frame.time = world.data().time();
+    frame.generation = world.generation;
     for (body, mut transform, visibility) in &mut bodies {
         if let Some(pose) = world.body_pose(&body.name) {
             *transform = pose;
