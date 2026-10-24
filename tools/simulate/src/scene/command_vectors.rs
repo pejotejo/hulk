@@ -158,8 +158,15 @@ fn update(
     physics: Res<SharedPhysics>,
     team: Res<crate::team::Team>,
     balls: Res<SpawnedBalls>,
+    presentation: Option<Res<crate::presentation::Presentation>>,
     mut parts: Query<(&ArrowPart, &mut Transform, &mut Visibility)>,
 ) {
+    if presentation.is_some_and(|state| state.is_replaying()) {
+        for (_, _, mut visibility) in &mut parts {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    }
     let Some(member) = team.selected() else {
         return;
     };

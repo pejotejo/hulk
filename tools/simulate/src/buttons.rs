@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use booster::{ButtonEventMsg, ButtonEventType};
 use color_eyre::{Result, eyre::eyre};
 use eframe::egui;
+use ros_z::time::Time;
 use types::primary_state::PrimaryState;
 
 use crate::robotics::Robotics;
@@ -140,39 +141,60 @@ fn press(io: &Robotics, button: i32, long: bool) -> Result<()> {
 /// survives startup, so subsequent buttons and Game Controller packets own the state.
 #[derive(Default)]
 pub struct Startup {
-    started: Option<Instant>,
+    started: Option<Time>,
     last_press: Option<Instant>,
+    complete: bool,
 }
 impl Startup {
-    pub fn advance(&mut self, io: &Robotics) -> Result<bool, String> {
-        let started = self.started.get_or_insert_with(Instant::now);
+    pub fn advance(&mut self, io: &Robotics, running: bool) -> Result<bool, String> {
+        if self.complete {
+            return Ok(true);
+        }
+        let ready = io.ready_for_initial()?;
         let primary = io.primary.get_latest().map(|state| *state);
+        let next_press = self.next_press(primary, ready, io.now(), running)?;
+        if let Some(long) = next_press
+            && io.safe_pose.get_latest().is_some()
+            && self
+                .last_press
+                .is_none_or(|last| last.elapsed() >= Duration::from_millis(250))
+        {
+            press(io, 1, long).map_err(|error| format!("Startup button: {error:#}"))?;
+            self.last_press = Some(Instant::now());
+        }
+        Ok(self.complete)
+    }
+
+    fn next_press(
+        &mut self,
+        primary: Option<PrimaryState>,
+        ready: bool,
+        now: Time,
+        running: bool,
+    ) -> Result<Option<bool>, String> {
+        if self.complete {
+            return Ok(None);
+        }
+        // A GameController packet can move Initial on before this observer sees it.
         if primary
             .is_some_and(|state| !matches!(state, PrimaryState::Damping | PrimaryState::Prepare))
         {
-            return Ok(true);
+            self.complete = true;
+            return Ok(None);
         }
-        if started.elapsed() > Duration::from_secs(10) {
-            return Err(format!(
-                "Startup could not reach Initial: primary={primary:?}, safe_pose={:?}",
-                io.safe_pose.get_latest()
-            ));
+        if running {
+            let started = *self.started.get_or_insert(now);
+            if now.duration_since(started) > Duration::from_secs(10) {
+                return Err(format!(
+                    "Startup could not reach Initial: primary={primary:?}, ready={ready}"
+                ));
+            }
         }
-        if io.safe_pose.get_latest().is_none()
-            || (primary == Some(PrimaryState::Prepare)
-                && io.safe_pose.get_latest().is_none_or(|safe| !*safe))
-            || self
-                .last_press
-                .is_some_and(|last| last.elapsed() < Duration::from_millis(250))
-        {
-            return Ok(false);
-        }
-        if let Some(primary) = primary {
-            press(io, 1, primary == PrimaryState::Prepare)
-                .map_err(|error| format!("Startup button: {error:#}"))?;
-            self.last_press = Some(Instant::now());
-        }
-        Ok(false)
+        Ok(match primary {
+            Some(PrimaryState::Damping) => Some(false),
+            Some(PrimaryState::Prepare) if running && ready => Some(true),
+            _ => None,
+        })
     }
 }
 
@@ -182,6 +204,56 @@ mod tests {
     use ros_z::prelude::*;
     use std::{path::PathBuf, sync::Arc};
     use types::buttons::{ButtonPressType, Buttons};
+
+    #[test]
+    fn startup_waits_for_running_preparation_and_stays_complete_after_game_controller() {
+        for state in [
+            PrimaryState::Initial,
+            PrimaryState::Ready,
+            PrimaryState::Playing,
+        ] {
+            let mut startup = Startup::default();
+            let now = Time::from_nanos(1_000_000_000);
+            assert_eq!(
+                startup
+                    .next_press(Some(PrimaryState::Damping), false, now, false)
+                    .unwrap(),
+                Some(false)
+            );
+            assert_eq!(
+                startup
+                    .next_press(Some(PrimaryState::Prepare), true, now, false)
+                    .unwrap(),
+                None,
+                "paused startup must not skip the motion timers"
+            );
+            assert!(startup.started.is_none());
+            assert_eq!(
+                startup
+                    .next_press(Some(PrimaryState::Prepare), false, now, true)
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                startup
+                    .next_press(Some(PrimaryState::Prepare), true, now, true)
+                    .unwrap(),
+                Some(true)
+            );
+            assert_eq!(
+                startup.next_press(Some(state), false, now, true).unwrap(),
+                None
+            );
+            assert!(startup.complete);
+            assert_eq!(
+                startup
+                    .next_press(Some(PrimaryState::Damping), false, now, true)
+                    .unwrap(),
+                None,
+                "manual Damping after startup must not trigger an automatic Stand"
+            );
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn raw_body_events_reach_the_real_handler_and_primary_state_filter() {

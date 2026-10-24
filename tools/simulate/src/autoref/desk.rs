@@ -13,7 +13,7 @@ use eframe::egui::{
 use egui_material_icons::icons;
 use game_controller_core::{
     timer::{SignedDuration, Timer},
-    types::{Game, Penalty, PenaltyCall, Phase, PlayerNumber, SetPlay, Side, State},
+    types::{Game, Penalty, PenaltyCall, Phase, PlayerNumber, SetPlay, Side, SideMapping, State},
 };
 use std::time::Duration;
 
@@ -161,8 +161,7 @@ fn score_bug(ui: &mut Ui, game: &Game, opponent: &crate::Opponent) {
                     );
                 };
                 let name = |ui: &mut Ui, team: TeamId| {
-                    let kicking = game.kicking_side == Some(side(team))
-                        && game.phase != Phase::PenaltyShootout;
+                    let kicking = game.kicking_side == Some(side(team));
                     let label = ui.label(RichText::new(opponent.team_name(team)).strong());
                     if kicking {
                         let (rect, response) =
@@ -205,7 +204,11 @@ fn score_bug(ui: &mut Ui, game: &Game, opponent: &crate::Opponent) {
 }
 
 fn kicking_role(game: &Game) -> &'static str {
-    if game.set_play == SetPlay::KickOff || matches!(game.state, State::Initial | State::Timeout) {
+    if game.phase == Phase::PenaltyShootout {
+        "takes the penalty shot"
+    } else if game.set_play == SetPlay::KickOff
+        || matches!(game.state, State::Initial | State::Timeout)
+    {
         "kicks off"
     } else {
         "takes the restart"
@@ -224,6 +227,7 @@ fn state_lamp(ui: &mut Ui, game: &Game, opponent: &crate::Opponent) {
             State::Ready => "Ready",
             State::Set => "Set",
             State::Playing => "Playing",
+            State::Finished if game.phase == Phase::PenaltyShootout => "Shot finished",
             State::Finished if game.phase == Phase::FirstHalf => "Half finished",
             State::Finished => "Full time",
             State::Timeout => "Timeout",
@@ -235,6 +239,15 @@ fn state_lamp(ui: &mut Ui, game: &Game, opponent: &crate::Opponent) {
         } else {
             "GameController state sent to every robot"
         });
+    if game.phase == Phase::PenaltyShootout {
+        if let Some(side) = game.kicking_side {
+            ui.label(format!(
+                "Shot {} for {}",
+                game.teams[side].penalty_shot,
+                opponent.team_name(super::team(side))
+            ));
+        }
+    }
     if game.set_play != SetPlay::NoSetPlay {
         let restart = calls::set_play_label(game.set_play);
         ui.label(match game.kicking_side {
@@ -324,7 +337,35 @@ pub fn shortcut(engine: &mut Engine, stop: bool, next: bool) {
     }
 }
 
-/// The desk lists every match, team and player call next to the decision log.
+/// Shootout setup and the current series status, also usable from the toolbar.
+pub fn shootout_controls(ui: &mut Ui, engine: &mut Engine) {
+    let game = engine.core.get_game(false).clone();
+    if game.phase == Phase::PenaltyShootout {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Penalty shootout");
+            ui.label(format!(
+                "Shots: {} / {}",
+                game.teams[Side::Home].penalty_shot,
+                game.teams[Side::Away].penalty_shot
+            ));
+            if game.state == State::Finished && !engine.allowed(Call::NextShot) {
+                ui.strong("Shootout complete");
+            }
+        });
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Penalty shootout");
+            for sides in [
+                SideMapping::HomeDefendsRightGoal,
+                SideMapping::HomeDefendsLeftGoal,
+            ] {
+                call_button(ui, engine, Call::Shootout(sides), false, None);
+            }
+        });
+    }
+}
+
+/// The desk lists match, team and player calls next to the decision log.
 /// Returns a player the operator selected.
 pub fn desk(
     ui: &mut Ui,
@@ -357,6 +398,7 @@ pub fn desk(
             call_button(ui, engine, next, false, None);
         }
     });
+    shootout_controls(ui, engine);
     ui.horizontal_wrapped(|ui| {
         for call in [
             Call::DroppedBall,
@@ -397,7 +439,7 @@ fn team_section(
                     .color(color),
             );
             let game = engine.core.get_game(false);
-            if game.kicking_side == Some(side(team)) && game.phase != Phase::PenaltyShootout {
+            if game.kicking_side == Some(side(team)) {
                 ui.weak(kicking_role(game));
             }
             crate::widgets::trailing(ui, 130.0, |ui| {
@@ -426,7 +468,22 @@ fn team_section(
                 *select = Some(id);
             }
             penalty_status(ui, engine.core.get_game(false), id);
+            let game = engine.core.get_game(false);
+            if game.phase == Phase::PenaltyShootout
+                && calls::player_penalty(game, id) == Penalty::NoPenalty
+            {
+                ui.weak(if game.kicking_side == Some(side(team)) {
+                    "striker"
+                } else {
+                    "goalkeeper"
+                });
+            }
             crate::widgets::trailing(ui, 110.0, |ui| {
+                if engine.core.get_game(false).phase == Phase::PenaltyShootout
+                    && engine.core.get_game(false).state == State::Set
+                {
+                    call_button(ui, engine, Call::ShotPlayer(id), false, None);
+                }
                 penalty_menu(ui, engine, id, true);
                 release_button(ui, engine, id);
             });
@@ -597,11 +654,12 @@ fn event_time(event: &Event) -> String {
 }
 
 /// Newest decisions first; new ones are briefly marked so a click visibly lands.
-fn log(ui: &mut Ui, engine: &Engine) {
+fn log(ui: &mut Ui, engine: &mut Engine) {
     if engine.events.is_empty() {
         ui.weak("Calls appear here once the match starts.");
         return;
     }
+    let mut reverse = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         for event in engine.events.iter().rev() {
@@ -612,14 +670,27 @@ fn log(ui: &mut Ui, engine: &Engine) {
                     .on_hover_text("Simulation time");
                 origin_icon(ui, event);
                 let text = RichText::new(&event.text);
-                ui.add(
-                    egui::Label::new(if event.accepted {
+                let reversible = !event.reversed && event.decision.is_some_and(|id| engine.can_reverse(id));
+                let response = ui.add(
+                    egui::Label::new(if event.reversed {
+                        text.weak().strikethrough()
+                    } else if event.accepted {
                         text
                     } else {
                         text.color(ui.visuals().error_fg_color)
                     })
-                    .wrap(),
+                    .wrap()
+                    .sense(if reversible { Sense::click() } else { Sense::hover() }),
                 );
+                if reversible {
+                    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Reverse this and all newer decisions. Restore score, state, penalties and grounded placements; stop play for correction. Simulation time continues.");
+                    if response.clicked() {
+                        reverse = event.decision;
+                    }
+                } else if event.accepted && !event.reversed {
+                    response.on_hover_text("Reversal is available for the last 16 decisions within two simulation minutes.");
+                }
             });
             if fresh > 0.0 {
                 ui.painter().set(
@@ -633,15 +704,16 @@ fn log(ui: &mut Ui, engine: &Engine) {
             }
         }
     });
+    if let Some(decision) = reverse {
+        let _ = engine.reverse(decision);
+    }
 }
 
 /// Confirms an operator call over the scene, also when the desk is closed.
 pub fn toast(ui: &Ui, rect: Rect, engine: &Engine) {
-    let Some(event) = engine
-        .events
-        .back()
-        .filter(|event| event.origin == Origin::Operator && event.logged.elapsed() < FRESH)
-    else {
+    let Some(event) = engine.events.back().filter(|event| {
+        !event.reversed && event.origin == Origin::Operator && event.logged.elapsed() < FRESH
+    }) else {
         return;
     };
     egui::Area::new(ui.id().with("referee_toast"))

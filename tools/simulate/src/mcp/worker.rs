@@ -32,6 +32,13 @@ struct Session {
     origin: i64,
     revision: u64,
     rendering: bool,
+    renderer: Option<SceneRenderer>,
+}
+
+struct SceneRenderer {
+    generation: u64,
+    size: (u32, u32),
+    renderer: mujoco_rs::renderer::MjRenderer,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -173,6 +180,10 @@ impl Session {
         }
         let dimensions = team.members()[0].io.field_dimensions;
         app.world_mut().spawn((
+            MjcfObject::from_factory(move || crate::scene::arena::arena_spec(dimensions), "arena"),
+            Transform::default(),
+        ));
+        app.world_mut().spawn((
             MjcfObject::from_factory(
                 move || crate::scene::markings::mujoco_field(dimensions),
                 "field",
@@ -183,7 +194,13 @@ impl Session {
             (-dimensions.length / 2.0, 0.0),
             (dimensions.length / 2.0, std::f32::consts::PI),
         ] {
-            let goal = crate::scene::goal::GoalDimensions::from(&dimensions);
+            let goal = crate::scene::goal::GoalDimensions::from(&dimensions).with_height(
+                team.configuration()
+                    .field_configuration
+                    .as_ref()
+                    .unwrap()
+                    .goal_height,
+            );
             app.world_mut().spawn((
                 MjcfObject::from_factory(move || crate::scene::goal::goal_spec(goal), "goal")
                     .with_mocap_body("goal"),
@@ -206,6 +223,7 @@ impl Session {
             origin,
             revision: 0,
             rendering: configuration["rendering"] != "disabled",
+            renderer: None,
         };
         let deadline = Instant::now() + Duration::from_secs(30);
         while !session.physics.ready() {
@@ -459,21 +477,21 @@ impl Session {
                 let cancelled = cancel.clone();
                 let task = runtime.spawn(async move {
                     use booster::ButtonEventType::*;
-                    member.io.button_event(button, PressDown)?;
+                    member.io.button_event_async(button, PressDown).await?;
                     let result = async {
                         if hold {
                             tokio::select! {_ = tokio::time::sleep(Duration::from_secs(1)) => {
-                                member.io.button_event(button, LongPressStart)?;
-                                member.io.button_event(button, LongPressHold)?;
-                                member.io.button_event(button, LongPressEnd)?;
+                                member.io.button_event_async(button, LongPressStart).await?;
+                                member.io.button_event_async(button, LongPressHold).await?;
+                                member.io.button_event_async(button, LongPressEnd).await?;
                             }, _ = cancelled.cancelled() => {}}
                         }
                         Ok::<_, color_eyre::Report>(())
                     }
                     .await;
-                    member.io.button_event(button, PressUp)?;
+                    member.io.button_event_async(button, PressUp).await?;
                     if !hold {
-                        member.io.button_event(button, SingleClick)?;
+                        member.io.button_event_async(button, SingleClick).await?;
                     }
                     result
                 });
@@ -507,7 +525,7 @@ impl Session {
         }
         Ok(json!({"done":true,"effect":"applied"}))
     }
-    fn render(&self, args: &Value) -> Result<Value> {
+    fn render(&mut self, args: &Value) -> Result<Value> {
         ensure!(self.rendering, "Rendering disabled for session");
         let shared = self.shared();
         let mut world = shared.lock();
@@ -520,7 +538,7 @@ impl Session {
             .unwrap()
             .dimensions;
         camera.lookat = [0.0, 0.0, 0.0];
-        camera.distance = f64::from(field.length) * 1.2;
+        camera.distance = f64::from(field.length) * 1.5;
         camera.azimuth = 90.0;
         camera.elevation = -45.0;
         let specification = &args["camera"];
@@ -548,7 +566,8 @@ impl Session {
             camera.lookat = look;
             camera.distance = (delta.iter().map(|x| x * x).sum::<f64>()).sqrt();
             ensure!(camera.distance > 0.01, "Camera position equals look-at");
-            camera.azimuth = delta[1].atan2(delta[0]).to_degrees();
+            // MuJoCo's azimuth describes the gaze direction, opposite the eye offset.
+            camera.azimuth = delta[1].atan2(delta[0]).to_degrees() + 180.0;
             camera.elevation = -(delta[2] / camera.distance).asin().to_degrees();
         }
         let width = args["size"]["width"].as_u64().unwrap_or(1280) as u32;
@@ -557,21 +576,31 @@ impl Session {
         world.data_mut().model_vis_mut().headlight.diffuse = [0.7, 0.7, 0.7];
         world.data_mut().model_vis_mut().global.offwidth = width as i32;
         world.data_mut().model_vis_mut().global.offheight = height as i32;
-        let mut renderer = mujoco_rs::renderer::MjRenderer::builder()
-            .width(width)
-            .height(height)
-            .rgb(true)
-            .camera(camera)
-            .build(world.data().model())?;
+        if self.renderer.as_ref().is_none_or(|cache| {
+            cache.generation != world.generation || cache.size != (width, height)
+        }) {
+            self.renderer = Some(SceneRenderer {
+                generation: world.generation,
+                size: (width, height),
+                renderer: mujoco_rs::renderer::MjRenderer::builder()
+                    .width(width)
+                    .height(height)
+                    .rgb(true)
+                    .build(world.data().model())?,
+            });
+        }
+        let renderer = &mut self.renderer.as_mut().unwrap().renderer;
+        *renderer.camera_mut() = camera;
         renderer.sync_data(world.data_mut())?;
+        let time = self.team.now().as_nanos() - self.origin;
+        // MuJoCo's visual scene owns its snapshot; GPU readback and PNG I/O need no physics lock.
+        drop(world);
         renderer.render()?;
         let path = args["path"]
             .as_str()
             .ok_or_else(|| eyre!("Missing render destination"))?;
         renderer.save_rgb(path)?;
-        Ok(
-            json!({"path":path,"width":width,"height":height,"simulation_time_ns":(self.team.now().as_nanos()-self.origin).to_string()}),
-        )
+        Ok(json!({"path":path,"width":width,"height":height,"simulation_time_ns":time.to_string()}))
     }
 }
 fn spawn_robot(app: &mut App, team: &Team, member: &crate::team::Member) {

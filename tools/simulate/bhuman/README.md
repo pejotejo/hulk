@@ -10,20 +10,44 @@ localization, camera capture, microphone capture or whistle detector runs.
 
 The native worker supports Linux on x86-64. Install Git, Python 3.12 or newer,
 CMake 3.24 or newer, Ninja and Clang. The build uses mold when available and
-otherwise uses the compiler's default linker. Fetch the simulator Git LFS assets
-as described in the [simulator README](../README.md), then launch:
+otherwise uses the compiler's default linker. Start from an ordinary HULK
+development environment, then launch:
 
 ```sh
 ./twix --simulator --bhuman /hulks/1
 ```
 
-The launcher builds the pinned worker, enables Twix's `bhuman` Cargo feature,
-and supplies the worker and source paths. It configures MuJoCo and uses the
-worker's ONNX Runtime for HULK motion inference, including the preload workaround.
-An existing `ORT_DYLIB_PATH` takes precedence. Dependencies are cached under
+The launcher fetches missing simulator Git LFS meshes and ONNX models, builds the
+pinned worker, enables Twix's `bhuman` Cargo feature and supplies its paths.
+Cargo downloads MuJoCo 3.9.0 on its first build. The launcher configures its loader
+path and uses the worker's pinned CPU ONNX Runtime for HULK motion inference,
+including the preload workaround. An existing `ORT_DYLIB_PATH` takes precedence
+and must name a shared library. Existing loader paths are retained.
+Dependencies are cached under
 `$XDG_CACHE_HOME/hulk-bhuman/<revision>`, using `~/.cache` as the default cache root.
-Builds use all detected CPU threads by default. Subsequent launches rebuild
-the worker incrementally.
+Builds use all detected CPU threads by default; set `BHUMAN_JOBS` to limit them.
+Subsequent launches rebuild the worker incrementally. Concurrent setup processes
+wait on the same cache lock. Downloads require access to GitHub and the repository's
+Git LFS remote; cached dependencies and hydrated assets work offline.
+Missing system tools report installation commands; the launcher does not run sudo
+or install system packages. See the [development environment](../../../docs/setup/development_environment.md)
+for the regular Rust and native-library prerequisites.
+The launchers check the workspace's minimum Rust version before setup. If the
+active toolchain is older, install the reported version and select it for this
+launch with `RUSTUP_TOOLCHAIN=1.98.0 ./twix --simulator --bhuman /hulks/1` (or the
+same environment variable for `./simulator-mcp`). No global default is changed.
+
+Inspect setup without downloads, cache writes or compilation:
+
+```sh
+./twix --simulator --bhuman --dry-run /hulks/1
+python3 tools/simulate/bhuman/build.py --dry-run
+python3 tools/simulate/tests/launcher_test.py
+```
+
+`./twix --help` describes launcher options; `./twix -- --help` forwards help to
+Twix itself. Launchers can be invoked from any directory. Relative B-Human and
+ONNX overrides resolve against the caller's directory.
 
 In the simulator setup, set the opponent count above zero and select
 **B-Human 2026**. The worker and source fields are filled from the launcher.
@@ -31,12 +55,24 @@ The setup, goal labels, scoreboard, referee controls and active-player tags use
 B-Human's name, with B1–B5 for compact player badges.
 To reuse a separately built worker, set both `BHUMAN_WORKER` and `BHUMAN_SOURCE`
 before launching; this skips the native build.
+`BHUMAN_SOURCE` alone builds the worker against that existing pinned checkout.
+Set `MUJOCO_DYNAMIC_LINK_DIR` or `MUJOCO_STATIC_LINK_DIR` to use your own MuJoCo
+3.9.0 build, or `MUJOCO_DOWNLOAD_DIR` to select its download cache. MuJoCo paths
+must be absolute. Invalid paths fail before starting a build.
 HULKs keep their selected estimator profile; B-Human uses perfect world models.
 The MCP startup contract currently selects HULKs self-play.
+`./twix --simulator` and `./simulator-mcp` use the same asset, MuJoCo and ONNX setup,
+without building the native worker. If ONNX is unset they reuse the cached native
+runtime when available, otherwise download only the pinned CPU runtime.
+The legacy `./mujoco-simulator` still runs its Python application through `uv`;
+it forwards arguments and reports how to install `uv` if missing.
 
 For a separate worker build, run `python3 tools/simulate/bhuman/build.py`.
 It prints the worker and source paths. Use `--cache PATH`, `--source PATH` to
 reuse an existing release checkout, or `--jobs N` to set build concurrency.
+`--runtime-only` installs ONNX Runtime without Git, CMake, Ninja or Clang;
+`--print-cache` and `--print-ort` print resolved paths without setup. An incomplete
+runtime installation is repaired from its checksum-verified archive on retry.
 With Cargo directly, enable `--features bhuman`, pass
 `--zenoh-namespace hulk_simulator`, and configure the worker paths, MuJoCo and
 ONNX Runtime yourself.

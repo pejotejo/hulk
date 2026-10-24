@@ -4,10 +4,10 @@ use crate::{RobotId, TeamId};
 use game_controller_core::{
     action::VAction,
     actions::*,
-    types::{Game, Penalty, PenaltyCall, Phase, PlayerNumber, SetPlay, Side, State},
+    types::{Game, Penalty, PenaltyCall, Phase, PlayerNumber, SetPlay, Side, SideMapping, State},
 };
 
-/// One operator call. Each maps to a single core action; the engine adds physical handling.
+/// Operator calls; the engine combines core actions for setup and physical handling.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Call {
     StopPlay,
@@ -29,6 +29,11 @@ pub(crate) enum Call {
     Penalize(RobotId, PenaltyCall),
     /// Release a penalty before its timer expires.
     Release(RobotId),
+    /// Dedicated shootout setup, also usable for practice before full time.
+    Shootout(SideMapping),
+    NextShot,
+    FinishShot,
+    ShotPlayer(RobotId),
 }
 
 /// Free kicks the operator can award, in the order of the HSL GameController.
@@ -68,6 +73,9 @@ impl Call {
                 set_play: SetPlay::KickOff,
             }),
             Self::Set => VAction::WaitForSetPlay(WaitForSetPlay),
+            Self::Whistle if game.phase == Phase::PenaltyShootout => {
+                VAction::FreePenaltyShot(FreePenaltyShot)
+            }
             Self::Whistle => VAction::FreeSetPlay(FreeSetPlay),
             Self::BallFree => VAction::FinishSetPlay(FinishSetPlay),
             Self::DroppedBall => VAction::GlobalGameStuck(GlobalGameStuck),
@@ -93,13 +101,26 @@ impl Call {
                 player: player(id),
                 force: true,
             }),
+            Self::Shootout(sides) => VAction::StartPenaltyShootout(StartPenaltyShootout { sides }),
+            Self::NextShot => VAction::WaitForPenaltyShot(WaitForPenaltyShot),
+            Self::FinishShot => VAction::FinishPenaltyShot(FinishPenaltyShot),
+            Self::ShotPlayer(id) => VAction::SelectPenaltyShotPlayer(SelectPenaltyShotPlayer {
+                side: side(id.team),
+                player: player(id),
+                goalkeeper: game.kicking_side != Some(side(id.team)),
+            }),
         }
     }
 
     /// The operator's next step through the match sequence, if the state has one.
     pub fn next(game: &Game) -> Option<Self> {
         if game.phase == Phase::PenaltyShootout {
-            return None;
+            return match game.state {
+                State::Initial | State::Timeout | State::Finished => Some(Self::NextShot),
+                State::Set => Some(Self::Whistle),
+                State::Playing => Some(Self::FinishShot),
+                State::Ready => None,
+            };
         }
         match game.state {
             State::Initial | State::Timeout => Some(Self::Kickoff),
@@ -163,6 +184,10 @@ impl Call {
                 }
             }
             Self::Release(id) => format!("{} is not serving a penalty", opponent.player_tag(id)),
+            Self::Shootout(_) => "Need an eligible robot from each team and a ball; a shootout must not already be active".into(),
+            Self::NextShot => "The shootout is complete, or a shot is still in progress".into(),
+            Self::FinishShot => "Only while a penalty shot is in play".into(),
+            Self::ShotPlayer(_) => "Choose a present player who has not been sent off while setting up a shot".into(),
         }
     }
 
@@ -184,6 +209,11 @@ impl Call {
             Self::Timeout(_) => "Timeout".into(),
             Self::Penalize(_, call) => call_label(call).into(),
             Self::Release(_) => "Release".into(),
+            Self::Shootout(SideMapping::HomeDefendsLeftGoal) => "Shootout at +X goal".into(),
+            Self::Shootout(SideMapping::HomeDefendsRightGoal) => "Shootout at −X goal".into(),
+            Self::NextShot => "Set next shot".into(),
+            Self::FinishShot => "Finish shot".into(),
+            Self::ShotPlayer(_) => "Select for shot".into(),
         }
     }
 
@@ -228,6 +258,10 @@ impl Call {
                 "Let {} return now; it walks back itself",
                 opponent.player_tag(id)
             ),
+            Self::Shootout(_) => "Start a fresh shootout: reset the score, place the striker behind the penalty spot and the goalkeeper on the goal line; HULKs shoot first".into(),
+            Self::NextShot => "Switch the shooting team, select participants and place them at the same goal".into(),
+            Self::FinishShot => "End this shot without adding a goal".into(),
+            Self::ShotPlayer(id) => format!("Use {} as this team's striker or goalkeeper for this shot", opponent.player_tag(id)),
         }
     }
 }
@@ -267,6 +301,19 @@ pub(crate) fn describe(action: &VAction, game: &Game, opponent: &crate::Opponent
             None => "Referee timeout".into(),
         },
         VAction::AddAdditionalTime(_) => "A minute added".into(),
+        VAction::StartPenaltyShootout(_) => "Penalty shootout started".into(),
+        VAction::WaitForPenaltyShot(_) => "Penalty shot set".into(),
+        VAction::FreePenaltyShot(_) => "Penalty shot started with a whistle".into(),
+        VAction::FinishPenaltyShot(_) => "Penalty shot finished".into(),
+        VAction::SelectPenaltyShotPlayer(select) => format!(
+            "{} selected as {}",
+            robot(select.side, select.player),
+            if select.goalkeeper {
+                "goalkeeper"
+            } else {
+                "striker"
+            }
+        ),
         VAction::Penalize(penalize) => format!(
             "{} penalized for {}",
             robot(penalize.side, penalize.player),

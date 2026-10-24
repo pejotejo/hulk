@@ -152,6 +152,7 @@ pub struct RobotStack {
     pub primary: ros_z::cache::Cache<types::primary_state::PrimaryState>,
     pub inference: ros_z::cache::Cache<motion_inference::node::Status>,
     pub safe_pose: ros_z::cache::Cache<bool>,
+    pub(crate) posture: ros_z::cache::Cache<types::fall_detection::FallDetection>,
     #[cfg(test)]
     pub field: ros_z::cache::Cache<types::field_dimensions::FieldDimensions>,
     default_away: bool,
@@ -366,6 +367,11 @@ impl RobotStack {
             .build()
             .await?;
         let safe_pose = node.subscriber("is_safe_pose").cache(1).build().await?;
+        let posture = node
+            .subscriber("fall_detection/status")
+            .cache(1)
+            .build()
+            .await?;
         let initial_field = node
             .subscriber::<types::field_dimensions::FieldDimensions>("field_dimensions")
             .qos(QosProfile {
@@ -544,6 +550,7 @@ impl RobotStack {
             primary,
             inference,
             safe_pose,
+            posture,
             #[cfg(test)]
             field,
             game,
@@ -707,16 +714,44 @@ impl RobotStack {
             .unwrap_or(MotionCommand::Damping)
     }
 
+    pub(crate) fn ready_for_initial(&self) -> Result<bool, String> {
+        if self.emergency.get_latest().is_some() {
+            return Err("Emergency stop during robot startup".into());
+        }
+        let now = self.now();
+        let current =
+            |time| time <= now && now.duration_since(time) <= std::time::Duration::from_millis(50);
+        Ok(self
+            .motion
+            .get_latest_with_stamp()
+            .is_some_and(|(time, command)| {
+                current(time) && matches!(*command, MotionCommand::Prepare)
+            })
+            && self.actuator_control().mode == booster::RobotMode::Prepare
+            && self
+                .safe_pose
+                .get_latest_with_stamp()
+                .is_some_and(|(time, safe)| current(time) && *safe)
+            && self.posture.get_latest().is_some_and(|state| {
+                state.is_valid(now) && state.posture == types::fall_detection::Posture::Upright
+            }))
+    }
+
     pub fn button_event(&self, button: i32, event: booster::ButtonEventType) -> Result<()> {
+        self.runtime
+            .block_on(self.button_event_async(button, event))
+    }
+
+    pub(crate) async fn button_event_async(
+        &self,
+        button: i32,
+        event: booster::ButtonEventType,
+    ) -> Result<()> {
         #[cfg(all(feature = "bhuman", unix))]
         if let Some(native) = &self.bhuman {
             return native.button(button, event);
         }
-        self.runtime.block_on(crate::buttons::publish(
-            self.context.session(),
-            button,
-            event,
-        ))
+        crate::buttons::publish(self.context.session(), button, event).await
     }
 
     #[cfg(test)]

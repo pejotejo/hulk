@@ -1,7 +1,17 @@
 #!/usr/bin/env -S bash -e
 
 SIMULATOR_ROOT="$(dirname "$(readlink -f "$0")")"
-export MUJOCO_DOWNLOAD_DIR="${MUJOCO_DOWNLOAD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mujoco-rs}"
-export LD_LIBRARY_PATH="$MUJOCO_DOWNLOAD_DIR/mujoco-3.9.0/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+simulator_dry_run=false
+case "${1:-}" in
+  --help|-h)
+    echo "Usage: ./simulator-mcp [--dry-run]"
+    echo "Sets up MuJoCo, CPU ONNX Runtime and LFS assets, then runs the MCP stdio server."
+    echo "Respects ORT_DYLIB_PATH, MUJOCO_* and XDG_CACHE_HOME. Setup logs go to stderr."
+    exit 0 ;;
+  --dry-run) simulator_dry_run=true; shift ;;
+esac
+source "$SIMULATOR_ROOT/tools/simulate/runtime.sh"
+simulator_prepare "$SIMULATOR_ROOT" false
+cd "$SIMULATOR_ROOT"
 
-exec cargo run --manifest-path="$SIMULATOR_ROOT/tools/simulate/Cargo.toml" --bin simulator-mcp -- "$@"
+simulator_launch cargo run --manifest-path="$SIMULATOR_ROOT/tools/simulate/Cargo.toml" --bin simulator-mcp -- "$@"

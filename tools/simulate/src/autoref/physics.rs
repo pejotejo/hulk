@@ -13,7 +13,7 @@ pub(super) struct Observer {
     owners: Vec<Option<RobotId>>,
 }
 impl Observer {
-    fn snapshot(&mut self, world: &MujocoWorld, members: &[Member]) -> Snapshot {
+    pub(super) fn snapshot(&mut self, world: &MujocoWorld, members: &[Member]) -> Snapshot {
         let data = world.data();
         let model = data.model();
         if self.generation != Some(world.generation) {

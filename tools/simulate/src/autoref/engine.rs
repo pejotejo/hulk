@@ -22,6 +22,11 @@ use std::{
     time::Duration,
 };
 
+mod decisions;
+mod shootout;
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug)]
 pub(crate) struct Ball {
     pub entity: u64,
@@ -56,6 +61,9 @@ pub(crate) enum Origin {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Event {
+    pub id: u64,
+    pub decision: Option<u64>,
+    pub reversed: bool,
     pub time: Duration,
     pub origin: Origin,
     pub accepted: bool,
@@ -84,6 +92,7 @@ enum Handling {
     Serving,
     Gone,
 }
+#[derive(Clone)]
 struct Handler {
     target: ([f64; 2], f64),
     phase: Handling,
@@ -110,8 +119,19 @@ pub(crate) struct Engine {
     next_half_at: f64,
     mapping: SideMapping,
     whistles: VecDeque<f64>,
+    decisions: VecDeque<decisions::Checkpoint>,
+    next_event: u64,
+    last_contact: Option<RobotId>,
+    restoring: bool,
+    reviewing: bool,
 }
 impl Engine {
+    pub(super) fn prime_scene(&mut self, snapshot: Snapshot) {
+        if self.snapshot.robots.is_empty() {
+            self.snapshot = snapshot;
+        }
+    }
+
     pub fn new(
         competition: Competition,
         field: FieldConfiguration,
@@ -150,6 +170,11 @@ impl Engine {
             next_half_at: 0.0,
             mapping: SideMapping::HomeDefendsLeftGoal,
             whistles: VecDeque::new(),
+            decisions: VecDeque::new(),
+            next_event: 0,
+            last_contact: None,
+            restoring: false,
+            reviewing: false,
         })
     }
     fn config(field: &FieldConfiguration) -> Config {
@@ -217,12 +242,16 @@ impl Engine {
     }
     fn log(&mut self, time: Duration, origin: Origin, accepted: bool, text: String) {
         self.events.push_back(Event {
+            id: self.next_event,
+            decision: None,
+            reversed: false,
             time,
             origin,
             accepted,
             text,
             logged: std::time::Instant::now(),
         });
+        self.next_event += 1;
         while self.events.len() > 128 {
             self.events.pop_front();
         }
@@ -255,6 +284,9 @@ impl Engine {
         }
     }
     pub fn allowed(&mut self, call: Call) -> bool {
+        if let Some(allowed) = self.shootout_allowed(call) {
+            return allowed;
+        }
         if matches!(call, Call::Restart(..)) && self.core.get_game(false).state == State::Playing {
             let mut game = self.core.get_game(false).clone();
             game.set_play = SetPlay::NoSetPlay;
@@ -283,6 +315,15 @@ impl Engine {
             );
             return Err(reason);
         }
+        let checkpoint = self.checkpoint();
+        if call == Call::ResumePlay {
+            self.reviewing = false;
+        }
+        if self.call_shootout(call) {
+            self.collect_events(Origin::Operator);
+            self.remember(checkpoint);
+            return Ok(());
+        }
         // Observe each intervention immediately, including several calls while paused.
         self.observe(false);
         if matches!(call, Call::Restart(..)) && self.core.get_game(false).state == State::Playing {
@@ -309,6 +350,7 @@ impl Engine {
         if call == Call::SecondHalf {
             self.next_half_at = self.now();
         }
+        self.remember(checkpoint);
         Ok(())
     }
     fn observe(&mut self, automatic: bool) {
@@ -368,6 +410,13 @@ impl Engine {
                         team: team(s),
                         number: u8::from(player),
                     };
+                    if self.core.get_game(false).phase == Phase::PenaltyShootout
+                        && self.penalty(id) == Penalty::Substitute
+                    {
+                        // The setup flow parks substitutes together; ordinary penalties still
+                        // need their usual physical handling during the shot.
+                        continue;
+                    }
                     let target = (
                         [-f64::from(x), -f64::from(y)],
                         f64::from(theta) - std::f64::consts::PI,
@@ -396,6 +445,14 @@ impl Engine {
             == (self.core.get_game(false).sides == SideMapping::HomeDefendsLeftGoal)
     }
     pub(super) fn update(&mut self, snapshot: &Snapshot, dt: Duration) -> Vec<Effect> {
+        if self.restoring {
+            self.restoring = false;
+            self.core.seek(dt);
+            // Flush the restored scene before observing the old physical snapshot again.
+            return std::mem::take(&mut self.pending);
+        }
+        // Reuse the previous observation for rollback; no second robot/contact clone per tick.
+        let mut checkpoint = self.checkpoint_with_snapshot(Snapshot::default());
         self.core.seek(dt);
         self.collect_events(Origin::Automatic);
         let edited = match (&self.snapshot.ball, &snapshot.ball) {
@@ -418,10 +475,14 @@ impl Engine {
                 }
                 self.referee = Autoreferee::new(Self::config(&self.field));
                 self.stuck = super::stuck::Stuck::default();
+                self.last_contact = None;
                 self.manual_ball_outside = true;
             }
         }
-        self.snapshot = snapshot.clone();
+        checkpoint.snapshot = std::mem::replace(&mut self.snapshot, snapshot.clone());
+        if checkpoint.snapshot.robots.is_empty() {
+            checkpoint.snapshot = snapshot.clone();
+        }
         if let Some(ball) = &snapshot.ball {
             let f = self.field.dimensions;
             if ball.position[0].abs() < f.length as f64 / 2.0
@@ -431,7 +492,9 @@ impl Engine {
             }
         }
         let now = self.now();
-        if self.core.get_game(false).sides != self.mapping {
+        if self.core.get_game(false).sides != self.mapping
+            && self.core.get_game(false).phase != Phase::PenaltyShootout
+        {
             self.mapping = self.core.get_game(false).sides;
             self.handlers.clear();
             for robot in &snapshot.robots {
@@ -456,6 +519,8 @@ impl Engine {
         }
         let game = self.core.get_game(false);
         if self.enabled
+            && game.phase != Phase::PenaltyShootout
+            && !game.stopped
             && snapshot.ball.is_some()
             && ((game.state == State::Initial && now >= self.next_half_at)
                 || (game.state == State::Timeout
@@ -471,7 +536,7 @@ impl Engine {
             );
         }
         let world = self.world();
-        let features = self.features(self.enabled);
+        let features = self.features(self.enabled && !self.reviewing);
         // Feed the current ball pose before contacts, then judge exits with this frame's last touch.
         self.observe_features(
             if snapshot.contacts.is_empty() {
@@ -489,6 +554,10 @@ impl Engine {
             && !self.core.get_game(false).stopped
         {
             for id in &snapshot.contacts {
+                if self.penalty(*id) != Penalty::NoPenalty {
+                    continue;
+                }
+                self.last_contact = Some(*id);
                 self.referee.ball_contact(
                     &mut self.core,
                     side(id.team),
@@ -513,7 +582,9 @@ impl Engine {
             self.observe(false);
         }
         self.collect_events(Origin::Automatic);
-        self.handle_penalties();
+        if !self.reviewing {
+            self.handle_penalties();
+        }
         if let Some((p, after)) = self.placement
             && now >= after
             && snapshot
@@ -526,7 +597,7 @@ impl Engine {
             self.placement = None;
             self.resume_at = Some(now + 0.3);
         }
-        if self.resume_at.is_some_and(|time| now >= time) {
+        if !self.reviewing && self.resume_at.is_some_and(|time| now >= time) {
             self.core.apply(
                 VAction::StopPlay(StopPlay { resume: true }),
                 ActionSource::Network,
@@ -534,11 +605,12 @@ impl Engine {
             self.resume_at = None;
             self.observe(false);
         }
-        while self.whistles.front().is_some_and(|time| now >= *time) {
+        while !self.reviewing && self.whistles.front().is_some_and(|time| now >= *time) {
             self.whistles.pop_front();
             self.pending.push(Effect::Whistle);
         }
         self.collect_events(Origin::Automatic);
+        self.remember(checkpoint);
         std::mem::take(&mut self.pending)
     }
     fn handle_penalties(&mut self) {

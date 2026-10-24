@@ -59,8 +59,8 @@ fn spawn_robot(
     }
 }
 
-/// Fill the new robot's sensors and operate its real body buttons at frozen time.
-/// The prepared pose already matches firmware Prepare; no other robot needs to step.
+/// Fill the new robot's sensors and request Prepare without stepping another robot.
+/// The real motion pipeline completes preparation when the scene runs.
 pub(crate) fn bootstrap(io: &Robotics, cancelled: &AtomicBool) -> color_eyre::Result<()> {
     thread::scope(|scope| {
         scope
@@ -111,9 +111,12 @@ pub(crate) fn bootstrap(io: &Robotics, cancelled: &AtomicBool) -> color_eyre::Re
                     io.publish_observation(&observation, io.now())?;
                     if io.inference.get_latest().is_some_and(|status| {
                         matches!(status.state, motion_inference::node::State::Initialized)
-                    }) && startup
-                        .advance(io)
+                    }) && (startup
+                        .advance(io, false)
                         .map_err(|error| color_eyre::eyre::eyre!(error))?
+                        || io.primary.get_latest().is_some_and(|state| {
+                            *state == types::primary_state::PrimaryState::Prepare
+                        }))
                     {
                         break;
                     }
@@ -233,6 +236,7 @@ impl PhysicsWorker {
             struct State {
                 binding: RobotBinding,
                 controller: crate::simulated_sdk::Controller,
+                startup: crate::buttons::Startup,
             }
             let mut states = std::collections::BTreeMap::<crate::RobotId, State>::new();
             let mut contacts = GroundContacts::default();
@@ -275,14 +279,16 @@ impl PhysicsWorker {
                                     binding.reset_joints(world.data_mut());
                                     world.ground_object(entity, member.pose)?;
                                 }
+                                let (controller, startup) = previous
+                                    .remove(&member.id)
+                                    .map(|state| (state.controller, state.startup))
+                                    .unwrap_or_default();
                                 states.insert(
                                     member.id,
                                     State {
                                         binding,
-                                        controller: previous
-                                            .remove(&member.id)
-                                            .map(|state| state.controller)
-                                            .unwrap_or_default(),
+                                        controller,
+                                        startup,
                                     },
                                 );
                             }
@@ -292,9 +298,15 @@ impl PhysicsWorker {
                     period = Duration::from_secs_f64(world.data().model_opt().timestep);
                     let running = world.mode == SimulationMode::Running;
                     let ready = states.len() == members.len();
+                    if ready && rebuilt && !running {
+                        world.data_mut().forward();
+                        if let Some(referee) = team.referee() {
+                            referee.prime_scene(&world, &members);
+                        }
+                    }
                     initialized.store(ready, Ordering::Release);
                     #[cfg(all(feature = "bhuman", unix))]
-                    if running && ready {
+                    if running && ready && members.iter().any(|member| member.io.is_bhuman()) {
                         let mut native_frames = Vec::new();
                         let balls = crate::observations::balls(&world);
                         let observations: Vec<_> = members
@@ -497,6 +509,17 @@ impl PhysicsWorker {
                         io.publish_frame(frame);
                     }
                 }
+                if advanced {
+                    for member in &members {
+                        if !member.io.is_bhuman()
+                            && let Some(state) = states.get_mut(&member.id)
+                        {
+                            state.startup.advance(&member.io, true).map_err(|error| {
+                                format!("Player {} startup: {error}", member.id)
+                            })?;
+                        }
+                    }
+                }
                 pacing.finish(started, period, advanced, &pacing_settings);
             }
             Ok(())
@@ -661,7 +684,7 @@ impl PhysicsWorker {
                     if let Some(frame) = frame {
                         io.publish_frame(frame);
                     }
-                    if !startup_complete && startup.advance(&io)? {
+                    if !startup_complete && startup.advance(&io, true)? {
                         physics.lock().mode = SimulationMode::Paused;
                         startup_complete = true;
                     }
