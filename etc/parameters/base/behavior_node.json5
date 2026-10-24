@@ -100,7 +100,7 @@
     alignment_angle_threshold: 0.4,
     blocking_distance_offset: 0.2,
     corner_kick_blocking_angle: 0.78,
-    penalty_kick_target_y_scale: 0.7,
+    penalty_kick_target_y_scale: 0.4,
   },
   kickoff: {
     relative_goalkeeper_position: [-1.0, 0.0],
