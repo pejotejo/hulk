@@ -2,7 +2,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use ::geometry::rectangle::Rectangle;
 use approx::assert_relative_eq;
-use hsl_network_messages::{GamePhase, PlayerNumber, SubState, Team};
+use hsl_network_messages::{GamePhase, Penalty, PlayerNumber, SubState, Team};
 use linear_algebra::{IntoTransform, Pose2, vector};
 use ros_z::time::Time;
 use types::{
@@ -23,6 +23,7 @@ use crate::{
     conditions::is_ball_interception_candidate,
     motion_assembler::assemble_motion_command,
     node::LastBall,
+    penalty_shootout::penalty_kick_striker_subtree,
     tree::{create_tree, striker_subtree},
     walk::{plan, walk_alternatives_subtree, walk_to_ball},
 };
@@ -142,6 +143,154 @@ fn game_state() -> FilteredGameControllerState {
         global_field_side: GlobalFieldSide::Home,
         new_own_penalties_last_cycle: Default::default(),
         new_opponent_penalties_last_cycle: Default::default(),
+    }
+}
+
+#[test]
+fn penalty_target_is_in_field_and_strength_uses_goal_mouth_distance() {
+    for (distance, yaw, expected_strong) in
+        [(2.01, 0.7, true), (2.0, 0.0, false), (1.99, 0.7, false)]
+    {
+        let mut blackboard = blackboard(2.0, -0.3, yaw);
+        let transform = blackboard.world_state.robot.ground_to_field.unwrap();
+        set_ball(
+            &mut blackboard,
+            transform.inverse() * point![4.5 - distance, 0.0],
+        );
+        blackboard.parameters.kicking.target_speed = 1.2;
+        assert_eq!(
+            penalty_kick_striker_subtree()
+                .tick_with_trace(&mut blackboard)
+                .0,
+            Status::Success
+        );
+        let target = blackboard.last_kick_target.unwrap();
+        assert_relative_eq!(target.x(), blackboard.field_dimensions.length / 2.0);
+        assert_relative_eq!(
+            target.y().abs(),
+            blackboard.field_dimensions.goal_inner_width / 2.0
+                * blackboard.parameters.substates.penalty_kick_target_y_scale
+        );
+        assert_relative_eq!(
+            transform * blackboard.kick_target.unwrap(),
+            target,
+            epsilon = 1e-5
+        );
+        assert!(matches!(blackboard.body_motion,
+            Some(BodyMotion::Kick { strong, target_speed: 1.2, .. }) if strong == expected_strong));
+    }
+}
+
+#[test]
+fn shootout_live_tree_approaches_and_respects_both_motion_switch_locks() {
+    let mut blackboard = blackboard(1.0, 0.0, 0.0);
+    blackboard
+        .world_state
+        .fall_detection
+        .as_mut()
+        .unwrap()
+        .valid_until = blackboard.world_state.now + Duration::from_secs(2);
+    let mut state = game_state();
+    state.game_phase = GamePhase::PenaltyShootout {
+        kicking_team: Team::Hulks,
+    };
+    state.kicking_team = Some(Team::Hulks);
+    blackboard.world_state.filtered_game_controller_state = Some(state);
+    let tree = create_tree();
+    set_ball(&mut blackboard, point![2.0, 0.0]);
+    assert_eq!(tree.tick_with_trace(&mut blackboard).0, Status::Success);
+    assert!(matches!(
+        blackboard.body_motion,
+        Some(BodyMotion::Walk { .. })
+    ));
+
+    blackboard.last_motion_type = Some(MotionType::Walk);
+    blackboard.last_motion_switch_time = blackboard.world_state.now;
+    set_ball(&mut blackboard, point![0.8, 0.0]);
+    tree.tick_with_trace(&mut blackboard);
+    assert!(matches!(
+        blackboard.body_motion,
+        Some(BodyMotion::Walk { .. })
+    ));
+    blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(501);
+    blackboard.parameters.kicking.soft = true;
+    blackboard.parameters.kicking.quick = false;
+    blackboard.parameters.kicking.target_speed = 1.2;
+    tree.tick_with_trace(&mut blackboard);
+    assert!(matches!(
+        blackboard.body_motion,
+        Some(BodyMotion::Kick {
+            strong: true,
+            soft: true,
+            quick: false,
+            target_speed: 1.2,
+            ..
+        })
+    ));
+
+    let target = blackboard.last_kick_target;
+    blackboard.last_motion_command =
+        Some(assemble_motion_command(&blackboard, Status::Success).unwrap());
+    blackboard.last_motion_type = Some(MotionType::Kick);
+    blackboard.last_motion_switch_time = blackboard.world_state.now;
+    blackboard.parameters.kicking.allow_strong_kicks = false;
+    blackboard.parameters.kicking.soft = false;
+    blackboard.parameters.kicking.quick = true;
+    blackboard.parameters.kicking.target_speed = 4.0;
+    set_ball(&mut blackboard, point![2.0, 0.0]);
+    blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(500);
+    tree.tick_with_trace(&mut blackboard);
+    assert!(matches!(blackboard.body_motion, Some(BodyMotion::Kick {
+        ball_position, strong: true, soft: true, quick: false, target_speed: 1.2, ..
+    }) if ball_position == point![2.0, 0.0]));
+    assert_eq!(blackboard.last_kick_target, target);
+    assert_relative_eq!(
+        blackboard.kick_target.unwrap(),
+        blackboard
+            .world_state
+            .robot
+            .ground_to_field
+            .unwrap()
+            .inverse()
+            * target.unwrap()
+    );
+    blackboard.world_state.now = blackboard.world_state.now + Duration::from_millis(1);
+    tree.tick_with_trace(&mut blackboard);
+    assert!(matches!(
+        blackboard.body_motion,
+        Some(BodyMotion::Walk { .. })
+    ));
+}
+
+#[test]
+fn shootout_stops_for_filtered_set_substitute_and_missing_ball() {
+    for case in 0..3 {
+        let mut blackboard = blackboard(1.0, 0.0, 0.0);
+        let mut state = game_state();
+        state.game_phase = GamePhase::PenaltyShootout {
+            kicking_team: Team::Hulks,
+        };
+        state.kicking_team = Some(Team::Hulks);
+        match case {
+            0 => state.game_state = FilteredGameState::Set,
+            1 => {
+                state.penalties[blackboard.player_number] = Some(Penalty::Substitute {
+                    remaining: Duration::ZERO,
+                })
+            }
+            _ => {
+                blackboard.ball = None;
+                blackboard.visual_kick_ball_position = None;
+                blackboard.world_state.ball = None;
+            }
+        }
+        blackboard.world_state.filtered_game_controller_state = Some(state);
+        let (status, _) = create_tree().tick_with_trace(&mut blackboard);
+        assert_eq!(status, Status::Success);
+        assert!(matches!(
+            assemble_motion_command(&blackboard, status).unwrap(),
+            MotionCommand::Stand { .. }
+        ));
     }
 }
 
