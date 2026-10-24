@@ -187,6 +187,84 @@ fn reversing_restart_cancels_delayed_ball_placement_and_resume() {
 }
 
 #[test]
+fn manual_ball_edit_invalidates_prior_and_current_update_corrections() {
+    let (mut engine, mut snapshot) = fixture("hsl_small");
+    for call in [Call::Kickoff, Call::Set, Call::Whistle] {
+        engine.call(call).unwrap();
+    }
+    flush(&mut engine, &mut snapshot);
+    assert_eq!(engine.core.get_game(false).set_play, SetPlay::KickOff);
+    let previous: Vec<_> = engine
+        .events
+        .iter()
+        .filter_map(|event| event.decision)
+        .collect();
+    assert!(!previous.is_empty());
+    assert!(previous.iter().all(|id| engine.can_reverse(*id)));
+
+    let first_edit_event = engine.next_event;
+    let ball = snapshot.ball.as_mut().unwrap();
+    ball.position = [1.25, -0.75, 0.11];
+    ball.epoch += 1;
+    engine.update(&snapshot, Duration::ZERO);
+    // The edit ends the active kickoff in this update, producing an accepted action.
+    assert_eq!(engine.core.get_game(false).set_play, SetPlay::NoSetPlay);
+    assert!(
+        engine
+            .events
+            .iter()
+            .any(|event| event.id >= first_edit_event && event.accepted)
+    );
+    assert!(previous.iter().all(|id| !engine.can_reverse(*id)));
+    assert!(
+        engine.decisions.is_empty(),
+        "the edit update must not retain its pre-edit checkpoint"
+    );
+    assert!(
+        engine
+            .events
+            .iter()
+            .filter(|event| event.id >= first_edit_event)
+            .all(|event| event.decision.is_none())
+    );
+    assert!(engine.reverse(previous[0]).is_err());
+
+    engine.call(Call::Goal(TeamId::Hulks)).unwrap();
+    let current = engine.events.back().unwrap().decision.unwrap();
+    assert!(engine.can_reverse(current));
+    engine.reverse(current).unwrap();
+    flush(&mut engine, &mut snapshot);
+    assert_eq!(snapshot.ball.as_ref().unwrap().position[..2], [1.25, -0.75]);
+    assert_eq!(engine.core.get_game(false).teams[Side::Home].score, 0);
+}
+
+#[test]
+fn commanded_ball_placement_preserves_prior_corrections() {
+    let (mut engine, mut snapshot) = fixture("hsl_small");
+    playing(&mut engine);
+    flush(&mut engine, &mut snapshot);
+    engine
+        .call(Call::Restart(TeamId::Hulks, SetPlay::CornerKick))
+        .unwrap();
+    let decision = engine.events.back().unwrap().decision.unwrap();
+    let previous: Vec<_> = engine
+        .events
+        .iter()
+        .filter_map(|event| event.decision)
+        .collect();
+    advance(&mut engine, &mut snapshot, Duration::from_secs(2));
+    assert_ne!(snapshot.ball.as_ref().unwrap().position[..2], [0.0, 0.0]);
+    assert!(engine.commanded_ball.is_some());
+    engine.update(&snapshot, Duration::ZERO);
+    assert!(engine.commanded_ball.is_none());
+    assert!(previous.iter().all(|id| engine.can_reverse(*id)));
+
+    engine.reverse(decision).unwrap();
+    flush(&mut engine, &mut snapshot);
+    assert_eq!(snapshot.ball.as_ref().unwrap().position[..2], [0.0, 0.0]);
+}
+
+#[test]
 fn decision_history_is_bounded_by_count_and_simulation_age() {
     let (mut engine, snapshot) = fixture("hsl_small");
     for _ in 0..10 {
