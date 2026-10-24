@@ -147,21 +147,27 @@ fn game_state() -> FilteredGameControllerState {
 }
 
 #[test]
-fn penalty_target_is_in_field_and_strength_uses_goal_mouth_distance() {
-    for (distance, yaw, expected_strong) in
-        [(2.01, 0.7, true), (2.0, 0.0, false), (1.99, 0.7, false)]
-    {
+fn penalty_target_is_in_field_and_strength_respects_global_permission() {
+    for (distance, yaw, allow_strong) in [
+        (2.01, 0.7, true),
+        (2.0, 0.0, true),
+        (1.99, 0.7, true),
+        (1.99, 0.7, false),
+    ] {
         let mut blackboard = blackboard(2.0, -0.3, yaw);
+        let mut state = game_state();
+        state.kicking_team = Some(Team::Hulks);
+        state.sub_state = Some(SubState::PenaltyKick);
+        blackboard.world_state.filtered_game_controller_state = Some(state);
         let transform = blackboard.world_state.robot.ground_to_field.unwrap();
         set_ball(
             &mut blackboard,
             transform.inverse() * point![4.5 - distance, 0.0],
         );
         blackboard.parameters.kicking.target_speed = 1.2;
+        blackboard.parameters.kicking.allow_strong_kicks = allow_strong;
         assert_eq!(
-            penalty_kick_striker_subtree()
-                .tick_with_trace(&mut blackboard)
-                .0,
+            create_tree().tick_with_trace(&mut blackboard).0,
             Status::Success
         );
         let target = blackboard.last_kick_target.unwrap();
@@ -177,13 +183,13 @@ fn penalty_target_is_in_field_and_strength_uses_goal_mouth_distance() {
             epsilon = 1e-5
         );
         assert!(matches!(blackboard.body_motion,
-            Some(BodyMotion::Kick { strong, target_speed: 1.2, .. }) if strong == expected_strong));
+            Some(BodyMotion::Kick { strong, target_speed: 1.2, .. }) if strong == allow_strong));
     }
 }
 
 #[test]
 fn shootout_live_tree_approaches_and_respects_both_motion_switch_locks() {
-    let mut blackboard = blackboard(1.0, 0.0, 0.0);
+    let mut blackboard = blackboard(2.0, 0.0, 0.0);
     blackboard
         .world_state
         .fall_detection
@@ -738,8 +744,8 @@ fn goal_line_roundoff_cannot_enable_strong_for_a_close_lateral_ball() {
 }
 
 #[test]
-fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths() {
-    for (path, settings) in (0..3).flat_map(|path| {
+fn ongoing_kicks_keep_all_settings_in_urgent_normal_penalty_and_walk_alternative_paths() {
+    for (path, settings) in (0..4).flat_map(|path| {
         [(false, true, false, 0.7), (true, false, true, 1.2)].map(|settings| (path, settings))
     }) {
         let mut blackboard = blackboard(if settings.0 { 2.0 } else { 0.0 }, 0.0, 0.0);
@@ -762,7 +768,8 @@ fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths()
         let tree = match path {
             0 => quick_kick_subtree(),
             1 => kick_subtree(),
-            _ => walk_alternatives_subtree(),
+            2 => walk_alternatives_subtree(),
+            _ => penalty_kick_striker_subtree(),
         };
         assert_eq!(tree.tick_with_trace(&mut blackboard).0, Status::Success);
         let Some(BodyMotion::Kick {

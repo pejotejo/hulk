@@ -11,10 +11,13 @@ use crate::{
     behavior_tree::Node,
     condition,
     conditions::{has_ball_position, hulks_is_kicking_team, is_close_to_ball},
-    kick::{apply_kick_target, kick, kick_alternatives_subtree, kick_strength_subtree},
+    kick::{
+        allow_strong_kicks, apply_kick_target, disable_strong_kick, kick,
+        kick_alternatives_subtree, use_last_kick_settings, use_strong_kick,
+    },
     node::Blackboard,
     selection, sequence, subtree,
-    switch_motion_type::switch_motion_type,
+    switch_motion_type::{is_last_motion_type, switch_motion_type},
     walk::walk_to_ball_subtree,
 };
 
@@ -57,7 +60,14 @@ pub fn penalty_kick_striker_subtree() -> Node<Blackboard> {
                 sequence!(
                     action!(kick),
                     action!(set_penalty_kick_target),
-                    subtree!(kick_strength_subtree),
+                    selection!(
+                        sequence!(
+                            condition!(is_last_motion_type, MotionType::Kick),
+                            action!(use_last_kick_settings),
+                        ),
+                        sequence!(condition!(allow_strong_kicks), action!(use_strong_kick)),
+                        action!(disable_strong_kick),
+                    ),
                 ),
                 subtree!(kick_alternatives_subtree),
             )
