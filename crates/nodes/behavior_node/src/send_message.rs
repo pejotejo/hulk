@@ -75,17 +75,11 @@ impl Blackboard {
     }
 
     pub fn try_sending_state_message(&mut self) -> Option<OutgoingMessage> {
-        let preparing_kickoff = crate::kick::kickoff::needs_kickoff_updates(self);
-        if self.world_state.robot.primary_state != PrimaryState::Playing
-            && !(preparing_kickoff
-                && matches!(
-                    self.world_state.robot.primary_state,
-                    PrimaryState::Ready | PrimaryState::Set
-                ))
-        {
+        if self.world_state.robot.primary_state != PrimaryState::Playing {
             return None;
         }
 
+        let preparing_kickoff = crate::kick::kickoff::needs_kickoff_updates(self);
         let now = self.world_state.now;
         let game_controller_state = self.world_state.filtered_game_controller_state.as_ref()?;
         let mut send_interval =
