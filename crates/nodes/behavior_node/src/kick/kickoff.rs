@@ -609,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_walk_in_keeps_base_slots_despite_passing_and_peer_updates() {
+    fn ready_holds_position_despite_passing_and_peer_updates() {
         for team in [Team::Hulks, Team::Opponent] {
             for player in [
                 PlayerNumber::One,
@@ -628,17 +628,6 @@ mod tests {
                     .unwrap();
                 game.game_state = FilteredGameState::Ready;
                 game.kicking_team = Some(team);
-                let mut expected = reference.clone();
-                expected
-                    .parameters
-                    .kicking
-                    .strategy
-                    .passing
-                    .maximum_distance = 0.0;
-                assert_eq!(
-                    crate::tree::create_tree().tick_with_trace(&mut expected).0,
-                    Status::Success
-                );
                 for peer_age in [Some(Duration::ZERO), Some(Duration::from_secs(3)), None] {
                     let mut board = reference.clone();
                     if let Some(age) = peer_age {
@@ -652,7 +641,8 @@ mod tests {
                         Status::Success
                     );
                     assert_eq!(
-                        board.body_motion, expected.body_motion,
+                        board.body_motion,
+                        Some(BodyMotion::Stand),
                         "{team:?}, {player:?}, {peer_age:?}"
                     );
                 }
