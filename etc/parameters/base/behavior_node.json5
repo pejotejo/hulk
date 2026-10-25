@@ -63,8 +63,8 @@
     strategy: {
       // Initial tuning; verify maximum range on the robot before execution integration.
       maximum_shot_distance: 3.0,
-      // Provisional travel bound; calibrate for dribble_target_speed and surface.
-      maximum_dribble_distance: 3.0,
+      // Zero disables dribbling; restore a calibrated travel bound to enable it.
+      maximum_dribble_distance: 0.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,
       shot_angle_hysteresis: 0.05,

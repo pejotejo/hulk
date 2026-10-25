@@ -543,6 +543,7 @@ mod tests {
         for action in [BallAction::Dribble, BallAction::Clear] {
             for blocked in [false, true] {
                 let mut board = board(0.0);
+                board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
                 board.ball_action = Some(action);
                 assert_eq!(execute_ball_action(&mut board), Status::Success);
                 let target = board.last_kick_target.unwrap();
@@ -680,6 +681,7 @@ mod tests {
     fn live_tree_executes_controlled_dribbles_and_pressured_clearances_despite_urgency() {
         for clearing in [false, true] {
             let mut board = board(if clearing { -6.0 } else { -4.5 });
+            board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
             if clearing {
                 board.parameters.kicking.quick = false;
                 board.world_state.obstacles = vec![Obstacle::robot(point![1.6, 0.1], 0.3, 0.3)];
@@ -725,6 +727,14 @@ mod tests {
     #[test]
     fn travel_revalidates_blockers_keeps_end_line_dribbles_infield_and_honors_disabling() {
         let mut board = board(0.0);
+        select_ball_action(&mut board);
+        assert_eq!(
+            board.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NoUsablePlan
+            })
+        );
+        board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
         select_ball_action(&mut board);
         assert_eq!(board.ball_action, Some(BallAction::Dribble));
         execute_ball_action(&mut board);
@@ -783,6 +793,7 @@ mod tests {
     fn travel_kicks_preserve_visual_pairs_reach_and_recovery_locks() {
         for action in [BallAction::Dribble, BallAction::Clear] {
             let mut board = board(0.0);
+            board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
             board.ball_action = Some(action);
             board.visual_kick_ball_position = Some(BallPosition {
                 position: point![0.6, 0.0],
