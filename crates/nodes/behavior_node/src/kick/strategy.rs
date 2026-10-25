@@ -17,7 +17,9 @@ use types::{
 use crate::node::Blackboard;
 
 use super::{
+    execution::travel_target,
     geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_mouth, goal_openings, pass_openings},
+    kick_ball_position_in_ground,
     passing::{is_executing_announced_pass, pass_receiver_position},
 };
 
@@ -56,14 +58,8 @@ pub fn is_quick_kick_selected(blackboard: &mut Blackboard) -> bool {
 }
 
 /// Select ordinary striker intent. Clear `ball_action` when leaving that context.
-/// Clear/dribble execution is unavailable; expose the deliberate quick fallback.
 pub fn select_ball_action(blackboard: &mut Blackboard) -> Status {
-    blackboard.ball_action = choose_ball_action(blackboard).map(|action| match action {
-        BallAction::Dribble | BallAction::Clear => BallAction::QuickKick {
-            reason: QuickKickReason::NoUsablePlan,
-        },
-        action => action,
-    });
+    blackboard.ball_action = choose_ball_action(blackboard);
     if blackboard.ball_action.is_some() {
         Status::Success
     } else {
@@ -76,28 +72,38 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
     let world = &blackboard.world_state;
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
+    parameters.validate().ok()?;
+    let dribble_speed = blackboard.parameters.kicking.dribble_target_speed;
+    if !dribble_speed.is_finite() || dribble_speed < 0.0 {
+        return None;
+    }
     let previous = blackboard.ball_action.or(blackboard.last_ball_action);
     let ground_to_field = world.robot.ground_to_field?;
+    let travel_ball = ground_to_field * kick_ball_position_in_ground(blackboard, &ground_to_field)?;
     let goal_x = field.length / 2.0;
+    if !field.length.is_finite()
+        || field.length <= 0.0
+        || !field.width.is_finite()
+        || field.width <= 0.0
+    {
+        return None;
+    }
     if blackboard.last_motion_type == Some(MotionType::Kick)
         && previous.is_some()
         && !matches!(previous, Some(BallAction::Pass { .. }))
     {
         return previous;
     }
-    if let Some(reason) = urgent_kick_reason(blackboard) {
-        return Some(BallAction::QuickKick { reason });
-    }
+    let urgent = urgent_kick_reason(blackboard);
     if ball.x().abs() >= goal_x || ball.y().abs() >= field.width / 2.0 {
-        return None;
+        return urgent.map(|reason| BallAction::QuickKick { reason });
     }
-
     let was_clearing = matches!(previous, Some(BallAction::Clear));
     let own_goal = LineSegment(
         point![-goal_x, -field.goal_inner_width / 2.0],
         point![-goal_x, field.goal_inner_width / 2.0],
     );
-    let ball_in_ground = ground_to_field.inverse() * ball;
+    let ball_in_ground = ground_to_field.inverse() * travel_ball;
     // Robot affiliation is unknown; nearby robots conservatively count as pressure.
     let under_pressure = world.obstacles.iter().any(|obstacle| {
         matches!(
@@ -110,10 +116,12 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
             0.0..=parameters.clear_distance_hysteresis,
         )
     });
-    if under_pressure
+    let can_clear = under_pressure
+        && travel_target(blackboard, BallAction::Clear, ground_to_field, travel_ball).is_some();
+    if can_clear
         && less_than_with_relative_hysteresis(
             was_clearing,
-            own_goal.distance_to(ball),
+            own_goal.distance_to(travel_ball),
             parameters.clear_goal_distance,
             0.0..=parameters.clear_distance_hysteresis,
         )
@@ -165,11 +173,28 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
             let opening = retained
                 .filter(|(_, old_angle)| angle <= old_angle + parameters.shot_angle_hysteresis)
                 .map_or(opening, |(opening, _)| opening);
-            return Some(BallAction::Shoot { opening });
+            return Some(urgent.map_or(BallAction::Shoot { opening }, |reason| {
+                BallAction::QuickKick { reason }
+            }));
         }
     }
 
-    Some(BallAction::Dribble)
+    if can_clear {
+        Some(BallAction::Clear)
+    } else if travel_target(
+        blackboard,
+        BallAction::Dribble,
+        ground_to_field,
+        travel_ball,
+    )
+    .is_some()
+    {
+        Some(BallAction::Dribble)
+    } else {
+        Some(BallAction::QuickKick {
+            reason: urgent.unwrap_or(QuickKickReason::NoUsablePlan),
+        })
+    }
 }
 
 pub(super) fn urgent_kick_reason(blackboard: &Blackboard) -> Option<QuickKickReason> {
@@ -462,6 +487,7 @@ mod tests {
         blackboard.world_state.robot.ground_to_field = Some(Default::default());
         blackboard.parameters.kicking.strategy = KickStrategyParameters {
             maximum_shot_distance: 3.0,
+            maximum_dribble_distance: 0.0,
             obstacle_clearance: 0.05,
             minimum_shot_angle: 0.02,
             shot_angle_hysteresis: 0.05,
@@ -492,12 +518,7 @@ mod tests {
         blackboard.ball.as_mut().unwrap().position = point![-3.8, 0.0];
         blackboard.world_state.obstacles = vec![Obstacle::robot(point![-3.2, 0.0], 0.2, 0.2)];
         select_ball_action(&mut blackboard);
-        assert_eq!(
-            blackboard.ball_action,
-            Some(BallAction::QuickKick {
-                reason: QuickKickReason::NoUsablePlan
-            })
-        );
+        assert_eq!(blackboard.ball_action, Some(BallAction::Clear));
         blackboard.ball = None;
         assert_eq!(select_ball_action(&mut blackboard), Status::Failure);
         assert_eq!(blackboard.ball_action, None);

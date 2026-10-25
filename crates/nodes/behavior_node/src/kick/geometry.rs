@@ -1,5 +1,7 @@
 use coordinate_systems::{Field, Ground};
-use geometry::{circle::Circle, line_segment::LineSegment, visibility::visible_segments};
+use geometry::{
+    circle::Circle, line_segment::LineSegment, rectangle::Rectangle, visibility::visible_segments,
+};
 use linear_algebra::{Isometry2, Point2, point, vector};
 use types::{
     field_dimensions::{FieldDimensions, Half, Side},
@@ -63,6 +65,51 @@ pub fn goal_openings(
 
 // Coordinate round trips can put a ball on the line a few ulps outside it.
 pub(super) const BALL_FIELD_BOUNDARY_TOLERANCE: f32 = 1e-4;
+
+/// Safe in-field corridors covering at least `travel_distance` from the ball.
+pub fn travel_openings(
+    ball: Point2<Field>,
+    ground_to_field: Isometry2<Ground, Field>,
+    obstacles: &[Obstacle],
+    field: &FieldDimensions,
+    travel_distance: f32,
+    clearance: f32,
+) -> Vec<LineSegment<Field>> {
+    let margin = field.ball_radius + clearance;
+    let half_length = field.length / 2.0 - margin;
+    let half_width = field.width / 2.0 - margin;
+    if !travel_distance.is_finite()
+        || travel_distance <= 0.0
+        || half_length <= 0.0
+        || half_width <= 0.0
+    {
+        return Vec::new();
+    }
+    let bounds = Rectangle {
+        min: point![-half_length, -half_width],
+        max: point![half_length, half_width],
+    };
+    let left = ball.x() - travel_distance;
+    let right = ball.x() + travel_distance;
+    let bottom = ball.y() - travel_distance;
+    let top = ball.y() + travel_distance;
+    let min_x = left.max(-half_length);
+    let max_x = right.min(half_length);
+    let min_y = bottom.max(-half_width);
+    let max_y = top.min(half_width);
+    let circles = obstacle_circles(ground_to_field, obstacles, field, clearance);
+    // shortcut: square corridors check up to sqrt(2) times the bound; use arcs if too restrictive.
+    [
+        LineSegment(point![right, min_y], point![right, max_y]),
+        LineSegment(point![min_x, top], point![max_x, top]),
+        LineSegment(point![left, min_y], point![left, max_y]),
+        LineSegment(point![min_x, bottom], point![max_x, bottom]),
+    ]
+    .into_iter()
+    .filter(|edge| bounds.contains(edge.0) && bounds.contains(edge.1))
+    .flat_map(|edge| visible_segments(ball, edge, &circles))
+    .collect()
+}
 
 /// Ball-center inset leaving room for the receiver's standoff.
 pub fn pass_reception_margin(

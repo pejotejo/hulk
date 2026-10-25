@@ -223,6 +223,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                         subtree!(quick_kick_subtree)
                     ),
                     action!(receive_rolling_ball),
+                    action!(execute_ball_action),
                     sequence!(
                         condition!(is_quick_kick_selected),
                         subtree!(quick_kick_subtree)

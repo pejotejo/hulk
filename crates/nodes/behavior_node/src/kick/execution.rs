@@ -1,6 +1,6 @@
 use coordinate_systems::{Field, Ground};
-use geometry::line_segment::LineSegment;
-use linear_algebra::{Orientation2, Point2, Pose2, Vector2, point};
+use geometry::{line::Line2, line_segment::LineSegment};
+use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, OrientationMode},
@@ -14,15 +14,21 @@ use crate::{
 };
 
 use super::{
-    geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings},
+    geometry::{BALL_FIELD_BOUNDARY_TOLERANCE, goal_openings, pass_openings, travel_openings},
     kick_ball_in_ground,
     passing::{is_executing_announced_pass, pass_is_announced, pass_receiver_position},
     strategy::{BallAction, own_non_penalty_restart, select_restart_ball_action},
 };
 
-/// Execute a restart pass, revalidating its receiver and corridor before every kick.
-/// Ordinary kicking keeps the base kick subtree.
+/// Revalidate restart passes, dribbles, and clearances before every kick.
+/// Ordinary goal shots keep the base kick subtree.
 pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
+    if matches!(
+        blackboard.ball_action,
+        Some(BallAction::Dribble | BallAction::Clear)
+    ) {
+        return execute_travel_action(blackboard);
+    }
     if !matches!(blackboard.ball_action, Some(BallAction::Pass { .. })) {
         return Status::Failure;
     }
@@ -91,6 +97,85 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
     approach_ball(blackboard, ball)
 }
 
+fn execute_travel_action(blackboard: &mut Blackboard) -> Status {
+    let mut target = resolve_target(blackboard);
+    if target.is_none() && !own_non_penalty_restart(blackboard) {
+        super::strategy::select_ball_action(blackboard);
+        if !matches!(
+            blackboard.ball_action,
+            Some(BallAction::Dribble | BallAction::Clear)
+        ) {
+            blackboard.kick_target = None;
+            return if blackboard.ball_action.is_none() {
+                stand(blackboard)
+            } else {
+                Status::Failure
+            };
+        }
+        target = resolve_target(blackboard);
+    }
+    let Some(target) = target else {
+        blackboard.ball_action = None;
+        blackboard.kick_target = None;
+        return stand(blackboard);
+    };
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(ball) = super::kick_ball_position_in_ground(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    blackboard.kick_target = Some(transform.inverse() * target);
+    let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
+    let can_switch = is_allowed_to_start_kick(blackboard);
+    let ready = !super::reception::is_receiving_ball(blackboard)
+        || super::reception::is_ready_to_receive_kick(blackboard);
+    if ((ball.x() >= 0.0 && is_close_to_ball(blackboard) && ready) || (was_kicking && !can_switch))
+        && (was_kicking || can_switch)
+    {
+        if super::kick(blackboard) == Status::Failure {
+            return Status::Failure;
+        }
+        super::apply_kick_target(blackboard, target);
+        blackboard.last_kick_target = Some(target);
+        if !was_kicking {
+            let dribbling = blackboard.ball_action == Some(BallAction::Dribble);
+            let field_ball = transform * ball;
+            let field = &blackboard.field_dimensions;
+            let urgent = (field_ball.x() < -field.length / 2.0 + field.penalty_area_length
+                && field_ball.y().abs() < field.penalty_area_width / 2.0)
+                || crate::conditions::opponent_near_position(
+                    blackboard,
+                    field_ball,
+                    blackboard.parameters.kicking.strategy.pressure_distance,
+                );
+            let kicking = &blackboard.parameters.kicking;
+            if let Some(BodyMotion::Kick {
+                quick,
+                strong,
+                soft,
+                target_speed,
+                ..
+            }) = &mut blackboard.body_motion
+            {
+                *quick = !dribbling && (kicking.quick || urgent);
+                *strong = false;
+                *soft = false;
+                *target_speed = if dribbling {
+                    kicking.dribble_target_speed.min(kicking.target_speed)
+                } else {
+                    kicking.target_speed
+                };
+            }
+            if !dribbling {
+                super::kick_strength_subtree().tick_with_trace(blackboard);
+            }
+        }
+        return Status::Success;
+    }
+    approach_ball(blackboard, ball)
+}
+
 pub(crate) fn approach_restart_ball(blackboard: &mut Blackboard) -> Status {
     if !own_non_penalty_restart(blackboard) {
         return Status::Failure;
@@ -147,7 +232,12 @@ fn approach_ball(blackboard: &mut Blackboard, ball: Point2<Ground>) -> Status {
 pub(crate) fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
     let action = blackboard.ball_action?;
     let transform = blackboard.world_state.robot.ground_to_field?;
-    let ball = transform * kick_ball_in_ground(blackboard, &transform)?.0;
+    let ball = transform
+        * if matches!(action, BallAction::Dribble | BallAction::Clear) {
+            super::kick_ball_position_in_ground(blackboard, &transform)?
+        } else {
+            kick_ball_in_ground(blackboard, &transform)?.0
+        };
     let field = &blackboard.field_dimensions;
     let parameters = &blackboard.parameters.kicking.strategy;
     parameters.validate().ok()?;
@@ -263,6 +353,247 @@ pub(crate) fn resolve_target(blackboard: &Blackboard) -> Option<Point2<Field>> {
                 point![field.length / 2.0, 0.0]
             })
         }
-        BallAction::Clear | BallAction::Dribble => None,
+        BallAction::Clear | BallAction::Dribble => {
+            travel_target(blackboard, action, transform, ball)
+        }
+    }
+}
+
+pub(super) fn travel_target(
+    blackboard: &Blackboard,
+    action: BallAction,
+    transform: Isometry2<Ground, Field>,
+    ball: Point2<Field>,
+) -> Option<Point2<Field>> {
+    let parameters = &blackboard.parameters.kicking;
+    let distance = if action == BallAction::Dribble {
+        if !parameters.dribble_target_speed.is_finite() || parameters.dribble_target_speed <= 0.0 {
+            return None;
+        }
+        parameters.strategy.maximum_dribble_distance
+    } else {
+        parameters
+            .strategy
+            .maximum_shot_distance
+            .min(blackboard.field_dimensions.length / 2.0)
+    };
+    let goal = point![blackboard.field_dimensions.length / 2.0, 0.0];
+    travel_openings(
+        ball,
+        transform,
+        &blackboard.world_state.obstacles,
+        &blackboard.field_dimensions,
+        distance,
+        parameters.strategy.obstacle_clearance,
+    )
+    .into_iter()
+    .filter(|opening| opening.length() > f32::EPSILON)
+    .map(|opening| goalward_target(ball, goal, opening))
+    .filter(|target| target.inner.iter().all(|value| value.is_finite()))
+    .filter(|target| action != BallAction::Clear || target.x() > ball.x())
+    .min_by(|a, b| {
+        (a - ball)
+            .angle(&(goal - ball))
+            .total_cmp(&(b - ball).angle(&(goal - ball)))
+    })
+}
+
+fn goalward_target(
+    ball: Point2<Field>,
+    goal: Point2<Field>,
+    opening: LineSegment<Field>,
+) -> Point2<Field> {
+    // Stay inside tangent boundaries, including when the preferred ray is blocked.
+    let inset = (opening.1 - opening.0) * (0.001 / opening.length()).min(0.5);
+    let opening = LineSegment(opening.0 + inset, opening.1 - inset);
+    let preferred = Line2::from(opening).intersection(&Line2::from_points(ball, goal));
+    if (0.0..=1.0).contains(&opening.projection_factor(preferred))
+        && (preferred - ball).dot(&(goal - ball)) > 0.0
+    {
+        preferred
+    } else if (opening.0 - ball).angle(&(goal - ball)) <= (opening.1 - ball).angle(&(goal - ball)) {
+        opening.0
+    } else {
+        opening.1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use geometry::Distance;
+    use hsl_network_messages::SubState;
+    use linear_algebra::{Pose2, vector};
+    use types::{ball_position::BallPosition, obstacles::Obstacle, world_state::BallState};
+
+    use super::*;
+    use crate::{
+        kick::strategy::{QuickKickReason, select_ball_action, urgent_kick_reason},
+        tree::create_tree,
+    };
+
+    fn board(robot_x: f32) -> Blackboard {
+        let mut board = crate::test_support::restart_blackboard(
+            SubState::DirectFreeKick,
+            point![robot_x + 0.6, 0.0],
+        );
+        board.field_dimensions.length = 14.0;
+        board.field_dimensions.width = 9.0;
+        board.parameters.control.is_simple = true;
+        board
+            .world_state
+            .filtered_game_controller_state
+            .as_mut()
+            .unwrap()
+            .sub_state = None;
+        board.world_state.robot.ground_to_field =
+            Some(Pose2::new(point![robot_x, 0.0], 0.0).as_transform());
+        board
+    }
+
+    #[test]
+    fn live_tree_executes_controlled_dribbles_and_pressured_clearances_despite_urgency() {
+        for clearing in [false, true] {
+            let mut board = board(if clearing { -6.0 } else { -4.5 });
+            if clearing {
+                board.parameters.kicking.quick = false;
+                board.world_state.obstacles = vec![Obstacle::robot(point![1.2, 0.1], 0.2, 0.2)];
+            }
+            assert!(urgent_kick_reason(&board).is_some());
+            let (status, _) = create_tree().tick_with_trace(&mut board);
+            assert_eq!(status, Status::Success);
+            assert_eq!(
+                board.ball_action,
+                Some(if clearing {
+                    BallAction::Clear
+                } else {
+                    BallAction::Dribble
+                })
+            );
+            let Some(BodyMotion::Kick {
+                quick,
+                strong,
+                soft: false,
+                target_speed,
+                ..
+            }) = board.body_motion
+            else {
+                panic!("expected tactical kick");
+            };
+            assert_eq!((quick, strong), (clearing, clearing));
+            assert_eq!(target_speed, if clearing { 3.4 } else { 0.5 });
+            let transform = board.world_state.robot.ground_to_field.unwrap();
+            let target = transform * board.kick_target.unwrap();
+            let ball = board.ball.as_ref().unwrap().position;
+            assert!(target.x() > ball.x());
+            for obstacle in &board.world_state.obstacles {
+                assert!(
+                    LineSegment(ball, target).distance_to(transform * obstacle.position)
+                        > obstacle.radius_at_foot_height
+                            + board.field_dimensions.ball_radius
+                            + board.parameters.kicking.strategy.obstacle_clearance
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn travel_revalidates_blockers_keeps_end_line_dribbles_infield_and_honors_disabling() {
+        let mut board = board(0.0);
+        select_ball_action(&mut board);
+        assert_eq!(board.ball_action, Some(BallAction::Dribble));
+        execute_ball_action(&mut board);
+        let clear_target = board.kick_target.unwrap();
+        board.world_state.obstacles = vec![Obstacle::robot(point![1.8, 0.0], 0.2, 0.2)];
+        execute_ball_action(&mut board);
+        let target = board.kick_target.unwrap();
+        assert_ne!(target, clear_target);
+        assert!(
+            LineSegment(point![0.6, 0.0], target).distance_to(point![1.8, 0.0])
+                > 0.2
+                    + board.field_dimensions.ball_radius
+                    + board.parameters.kicking.strategy.obstacle_clearance
+        );
+
+        board.world_state.obstacles = vec![Obstacle::robot(point![0.6, 0.0], 0.5, 0.5)];
+        assert_eq!(execute_ball_action(&mut board), Status::Failure);
+        assert!(matches!(
+            board.ball_action,
+            Some(BallAction::QuickKick { .. })
+        ));
+        assert!(board.kick_target.is_none());
+
+        board.world_state.obstacles.clear();
+        board.parameters.kicking.strategy.maximum_dribble_distance = 0.0;
+        select_ball_action(&mut board);
+        assert_eq!(
+            board.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NoUsablePlan
+            })
+        );
+        board.parameters.kicking.strategy.maximum_dribble_distance = f32::NAN;
+        board.ball_action = Some(BallAction::Dribble);
+        execute_ball_action(&mut board);
+        assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+        assert!(board.ball_action.is_none());
+
+        board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
+        let ball = point![6.95, 3.9];
+        let transform = Pose2::new(ball - vector![0.6, 0.0], 0.0).as_transform();
+        board.world_state.robot.ground_to_field = Some(transform);
+        board.ball.as_mut().unwrap().position = ball;
+        board.ball_action = Some(BallAction::Dribble);
+        execute_ball_action(&mut board);
+        let target = transform * board.kick_target.unwrap();
+        let margin = board.field_dimensions.ball_radius
+            + board.parameters.kicking.strategy.obstacle_clearance;
+        assert!(target.x() < ball.x());
+        assert!((target - ball).norm() >= 3.0 - 1e-5);
+        assert!(target.x().abs() <= board.field_dimensions.length / 2.0 - margin);
+        assert!(target.y().abs() <= board.field_dimensions.width / 2.0 - margin);
+    }
+
+    #[test]
+    fn travel_kicks_preserve_visual_pairs_reach_and_recovery_locks() {
+        for action in [BallAction::Dribble, BallAction::Clear] {
+            let mut board = board(0.0);
+            board.ball_action = Some(action);
+            board.visual_kick_ball_position = Some(BallPosition {
+                position: point![0.6, 0.0],
+                velocity: vector![0.2, 0.1],
+                last_seen: board.world_state.now,
+            });
+            board.world_state.ball = Some(BallState {
+                ball_in_ground: point![3.0, 1.0],
+                ball_in_ground_velocity: vector![2.0, 1.0],
+                ..BallState::new_at_center(Default::default())
+            });
+            execute_ball_action(&mut board);
+            assert!(
+                matches!(board.body_motion, Some(BodyMotion::Kick { ball_position, ball_velocity, .. })
+                if ball_position == point![0.6, 0.0] && ball_velocity == vector![0.2, 0.1])
+            );
+
+            board.visual_kick_ball_position.as_mut().unwrap().position = point![2.0, 0.0];
+            board.body_motion = None;
+            execute_ball_action(&mut board);
+            assert!(!matches!(board.body_motion, Some(BodyMotion::Kick { .. })));
+            board.visual_kick_ball_position.as_mut().unwrap().position = point![0.6, 0.0];
+            for motion in [
+                MotionType::StandUp,
+                MotionType::Prepare,
+                MotionType::Damping,
+            ] {
+                board.last_motion_type = Some(motion);
+                board.last_motion_switch_time = board.world_state.now;
+                board.parameters.control.allow_switch.stand_up = Duration::from_secs(1);
+                board.parameters.control.allow_switch.prepare = Duration::from_secs(1);
+                board.parameters.control.allow_switch.damping = Duration::from_secs(1);
+                execute_ball_action(&mut board);
+                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+            }
+        }
     }
 }

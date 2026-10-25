@@ -19,7 +19,7 @@ use crate::{
         kick_subtree,
         passing::{RESTART_RECEIVER_EXTRA_DISTANCE, is_pass_receiver},
         reception::receive_rolling_ball,
-        strategy::select_restart_ball_action,
+        strategy::{BallAction, select_restart_ball_action},
     },
     negation,
     node::Blackboard,
@@ -46,6 +46,7 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
                 sequence!(
                     condition!(restart_requires_pass),
                     selection!(
+                        action!(dribble_restart),
                         action!(approach_restart_ball),
                         action!(crate::actions::stand)
                     ),
@@ -314,6 +315,16 @@ fn restart_requires_pass(blackboard: &mut Blackboard) -> bool {
         || is_sub_state(blackboard, SubState::IndirectFreeKick)
 }
 
+fn dribble_restart(blackboard: &mut Blackboard) -> Status {
+    blackboard.ball_action = Some(BallAction::Dribble);
+    if crate::kick::execution::resolve_target(blackboard).is_none() {
+        blackboard.ball_action = None;
+        blackboard.kick_target = None;
+        return Status::Failure;
+    }
+    execute_ball_action(blackboard)
+}
+
 pub fn is_in_sub_state(blackboard: &mut Blackboard) -> bool {
     matches!(
         blackboard.world_state.filtered_game_controller_state,
@@ -515,15 +526,28 @@ mod restart_tests {
     }
 
     #[test]
-    fn throwin_and_indirect_without_a_pass_hold_and_retry_instead_of_dribbling_or_shooting() {
+    fn throwin_and_indirect_without_a_pass_dribble_instead_of_shooting() {
         for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
             let mut board = restart_blackboard(state, point![0.0, 0.0]);
             let tree = sub_state_subtree();
             for age in [0, 6] {
                 board.world_state.now = board.world_state.now + Duration::from_secs(age);
                 tree.tick_with_trace(&mut board);
-                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
-                assert_eq!(board.ball_action, None);
+                assert!(matches!(
+                    board.body_motion,
+                    Some(BodyMotion::Kick {
+                        target_speed: 0.5,
+                        quick: false,
+                        strong: false,
+                        soft: false,
+                        ..
+                    })
+                ));
+                assert_eq!(board.ball_action, Some(BallAction::Dribble));
+                let target =
+                    board.world_state.robot.ground_to_field.unwrap() * board.kick_target.unwrap();
+                assert!(target.x().abs() < board.field_dimensions.length / 2.0);
+                assert!(target.y().abs() < board.field_dimensions.width / 2.0);
             }
             add_receiver(&mut board, point![2.5, 1.0]);
             tree.tick_with_trace(&mut board);
@@ -532,7 +556,28 @@ mod restart_tests {
     }
 
     #[test]
-    fn distant_throwin_and_indirect_takers_approach_observed_ball_before_holding_without_a_receiver()
+    fn throwin_and_indirect_hold_when_dribbling_is_disabled_or_blocked() {
+        for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
+            for blocked in [false, true] {
+                let mut board = restart_blackboard(state, Point2::origin());
+                if blocked {
+                    board.world_state.obstacles = vec![types::obstacles::Obstacle::robot(
+                        point![0.6, 0.0],
+                        0.5,
+                        0.5,
+                    )];
+                } else {
+                    board.parameters.kicking.strategy.maximum_dribble_distance = 0.0;
+                }
+                sub_state_subtree().tick_with_trace(&mut board);
+                assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+                assert!(board.ball_action.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn distant_throwin_and_indirect_takers_approach_observed_ball_before_dribbling_without_a_receiver()
      {
         for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
             let mut board = restart_blackboard(state, Point2::origin());
@@ -552,7 +597,7 @@ mod restart_tests {
             assert!(last.1.x() > 0.0 && last.1.y().abs() < 1e-5);
             assert!(distance_to_ball + 1e-5 >= board.parameters.kicking.approach_ball_standoff);
             assert!(distance_to_ball <= board.parameters.kicking.kick_activation_distance);
-            assert!(board.ball_action.is_none());
+            assert_eq!(board.ball_action, Some(BallAction::Dribble));
             assert!(board.restart_pass_wait_started.is_none());
             let mut locked = board.clone();
             locked.last_motion_type = Some(MotionType::StandUp);
@@ -561,9 +606,16 @@ mod restart_tests {
             assert_eq!(locked.body_motion, Some(BodyMotion::Stand));
             board.world_state.robot.ground_to_field =
                 Some(Pose2::new(point![-0.6, 0.0], 0.0).as_transform());
+            board.ball.as_mut().unwrap().velocity = linear_algebra::Vector2::zeros();
             tree.tick_with_trace(&mut board);
-            assert_eq!(board.body_motion, Some(BodyMotion::Stand));
-            assert!(board.ball_action.is_none());
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    target_speed: 0.5,
+                    ..
+                })
+            ));
+            assert_eq!(board.ball_action, Some(BallAction::Dribble));
         }
     }
 

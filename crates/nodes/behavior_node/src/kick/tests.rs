@@ -403,6 +403,11 @@ fn each_urgent_trigger_precedes_target_planning_and_interception_in_the_live_tre
             _ => (),
         }
         blackboard.parameters.kicking.quick = false;
+        blackboard
+            .parameters
+            .kicking
+            .strategy
+            .maximum_dribble_distance = 0.0;
         blackboard.ball.as_mut().unwrap().velocity = vector![-2.0, 0.0];
         assert!(is_ball_interception_candidate(&mut blackboard));
         let (status, trace) = create_tree().tick_with_trace(&mut blackboard);
@@ -455,6 +460,11 @@ fn ordinary_and_fallback_kicks_default_to_quick() {
 
     blackboard.world_state.obstacles = vec![Obstacle::robot(point![2.5, 0.0], 1.0, 1.0)];
     blackboard.parameters.kicking.quick = false;
+    blackboard
+        .parameters
+        .kicking
+        .strategy
+        .maximum_dribble_distance = 0.0;
     assert!(!is_urgent_kick(&mut blackboard));
     let (status, trace) = striker_subtree().tick_with_trace(&mut blackboard);
     assert_eq!(status, Status::Success);
@@ -528,6 +538,11 @@ fn blocked_approaches_do_not_delay_reachable_quick_kicks_or_kick_unreachable_bal
         (1.0, Some(SubState::CornerKick), false),
     ] {
         let mut blackboard = blackboard(0.0, 0.0, 0.0);
+        blackboard
+            .parameters
+            .kicking
+            .strategy
+            .maximum_dribble_distance = 0.0;
         set_ball(&mut blackboard, point![ball_x, 0.0]);
         let mut state = game_state();
         state.sub_state = sub_state;
@@ -755,10 +770,10 @@ fn goal_line_roundoff_cannot_enable_strong_for_a_close_lateral_ball() {
 
 #[test]
 fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths() {
-    for (path, settings) in (0..3).flat_map(|path| {
+    for (path, settings) in (0..5).flat_map(|path| {
         [(false, true, false, 0.7), (true, false, true, 1.2)].map(|settings| (path, settings))
     }) {
-        let mut blackboard = blackboard(if settings.0 { 2.0 } else { 0.0 }, 0.0, 0.0);
+        let mut blackboard = blackboard(if settings.0 && path < 3 { 2.0 } else { 0.0 }, 0.0, 0.0);
         kick(&mut blackboard);
         if let Some(BodyMotion::Kick {
             strong,
@@ -778,7 +793,15 @@ fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths()
         let tree = match path {
             0 => quick_kick_subtree(),
             1 => kick_subtree(),
-            _ => walk_alternatives_subtree(),
+            2 => walk_alternatives_subtree(),
+            _ => {
+                blackboard.ball_action = Some(if path == 3 {
+                    BallAction::Dribble
+                } else {
+                    BallAction::Clear
+                });
+                action!(execution::execute_ball_action)
+            }
         };
         assert_eq!(tree.tick_with_trace(&mut blackboard).0, Status::Success);
         let Some(BodyMotion::Kick {

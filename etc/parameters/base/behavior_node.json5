@@ -63,6 +63,8 @@
     strategy: {
       // Initial tuning; verify maximum range on the robot before execution integration.
       maximum_shot_distance: 3.0,
+      // Provisional travel bound; calibrate for dribble_target_speed and surface.
+      maximum_dribble_distance: 3.0,
       obstacle_clearance: 0.05,
       minimum_shot_angle: 0.02,
       shot_angle_hysteresis: 0.05,
@@ -82,6 +84,7 @@
     soft: false,
     quick: true,
     target_speed: 3.4, // Desired outgoing ball speed in m/s.
+    dribble_target_speed: 0.5,
     allow_strong_kicks: true,
     kick_activation_distance: 1.3,
     kick_activation_hysteresis: 0.3,
