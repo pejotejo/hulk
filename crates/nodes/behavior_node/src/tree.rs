@@ -16,7 +16,7 @@ use crate::{
     goalkeeper::goalkeeper_subtree,
     head::{look_around, look_at_ball_subtree, look_straight_ahead, search_for_lost_ball_subtree},
     kick::{
-        execution::execute_ball_action,
+        execution::{execute_ball_action, finish_close_goal},
         intercept, kick, kick_alternatives_subtree, kick_subtree,
         kickoff::kickoff_subtree,
         kickoff_kick,
@@ -217,6 +217,7 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                             subtree!(kick_alternatives_subtree),
                         )
                     ),
+                    action!(finish_close_goal),
                     sequence!(
                         negation!(condition!(is_pass_receiver)),
                         condition!(is_urgent_quick_kick_selected),

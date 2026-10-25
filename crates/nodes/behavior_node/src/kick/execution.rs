@@ -1,6 +1,6 @@
 use coordinate_systems::{Field, Ground};
 use geometry::{line::Line2, line_segment::LineSegment};
-use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point};
+use linear_algebra::{Isometry2, Orientation2, Point2, Pose2, Vector2, point, vector};
 use types::{
     behavior_tree::Status,
     motion_command::{BodyMotion, OrientationMode},
@@ -19,6 +19,70 @@ use super::{
     passing::{is_executing_announced_pass, pass_is_announced, pass_receiver_position},
     strategy::{BallAction, own_non_penalty_restart, select_restart_ball_action},
 };
+
+pub fn finish_close_goal(blackboard: &mut Blackboard) -> Status {
+    let Some(transform) = blackboard.world_state.robot.ground_to_field else {
+        return Status::Failure;
+    };
+    let Some(ball) = super::kick_ball_position_in_ground(blackboard, &transform) else {
+        return Status::Failure;
+    };
+    let position = transform * ball;
+    let field = blackboard.field_dimensions;
+    let goal_x = field.length / 2.0;
+    let half_width = field.goal_inner_width / 2.0 - field.ball_radius;
+    if blackboard.player_number == blackboard.parameters.goalkeeper.player_number
+        || blackboard.parameters.kicking.strategy.validate().is_err()
+        || !position.inner.iter().all(|value| value.is_finite())
+        || !field.length.is_finite()
+        || field.length <= 0.0
+        || !field.goal_box_area_length.is_finite()
+        || field.goal_box_area_length <= 0.0
+        || !half_width.is_finite()
+        || half_width <= 0.0
+        || !(goal_x - field.goal_box_area_length..goal_x).contains(&position.x())
+        || position.y().abs() >= half_width
+        || ball.x() <= 0.0
+        || ball.coords().norm() > blackboard.parameters.kicking.kick_activation_distance
+        || (transform * vector![1.0, 0.0]).x() <= 0.0
+        || (blackboard.last_motion_type != Some(MotionType::Kick)
+            && !is_allowed_to_start_kick(blackboard))
+    {
+        return Status::Failure;
+    }
+    let target = goal_openings(
+        position,
+        transform,
+        &blackboard.world_state.obstacles,
+        &field,
+        blackboard.parameters.kicking.strategy.obstacle_clearance,
+    )
+    .into_iter()
+    .max_by(|a, b| {
+        LineSegment(position, a.0)
+            .angle(LineSegment(position, a.1))
+            .total_cmp(&LineSegment(position, b.0).angle(LineSegment(position, b.1)))
+    })
+    .map_or(point![goal_x, 0.0], |opening| opening.center());
+    // At the goal mouth, release even when no clear corridor remains.
+    if super::kick(blackboard) == Status::Failure {
+        return Status::Failure;
+    }
+    blackboard.ball_action = None;
+    super::apply_kick_target(blackboard, target);
+    if let Some(BodyMotion::Kick {
+        quick,
+        strong,
+        target_speed,
+        ..
+    }) = &mut blackboard.body_motion
+    {
+        *quick = true;
+        *strong = false;
+        *target_speed = blackboard.parameters.kicking.target_speed;
+    }
+    super::kick_strength_subtree().tick_with_trace(blackboard).0
+}
 
 /// Revalidate restart passes, dribbles, and clearances before every kick.
 /// Ordinary goal shots keep the base kick subtree.
@@ -450,6 +514,82 @@ mod tests {
         board.world_state.robot.ground_to_field =
             Some(Pose2::new(point![robot_x, 0.0], 0.0).as_transform());
         board
+    }
+
+    #[test]
+    fn live_goal_mouth_finishing_uses_the_open_side_and_shoots_when_fully_blocked() {
+        for blocked in [false, true] {
+            let mut board = board(6.2);
+            let transform = board.world_state.robot.ground_to_field.unwrap();
+            board.parameters.kicking.quick = false;
+            let obstacle = if blocked {
+                Obstacle::robot(transform.inverse() * point![6.95, 0.0], 0.2, 0.2)
+            } else {
+                Obstacle::robot(transform.inverse() * point![6.95, 0.15], 0.03, 0.03)
+            };
+            board.world_state.obstacles = vec![obstacle];
+            let (status, _) = create_tree().tick_with_trace(&mut board);
+            assert_eq!(status, Status::Success);
+            assert!(board.ball_action.is_none());
+            assert!(matches!(
+                board.body_motion,
+                Some(BodyMotion::Kick {
+                    quick: true,
+                    strong: false,
+                    target_speed: 3.4,
+                    ..
+                })
+            ));
+            let target = transform * board.kick_target.unwrap();
+            assert!((target.x() - 7.0).abs() < 1e-5);
+            if blocked {
+                assert!(target.y().abs() < 1e-5);
+            } else {
+                assert!(target.y() < -0.1);
+                assert!(
+                    LineSegment(point![6.8, 0.0], target)
+                        .distance_to(transform * obstacle.position)
+                        > obstacle.radius_at_foot_height
+                            + board.field_dimensions.ball_radius
+                            + board.parameters.kicking.strategy.obstacle_clearance
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn goal_mouth_finishing_keeps_visual_reach_role_area_and_motion_guards() {
+        let base = board(6.2);
+        for case in 0..6 {
+            let mut board = base.clone();
+            match case {
+                0 => board.player_number = board.parameters.goalkeeper.player_number,
+                1 => board.ball.as_mut().unwrap().position = point![5.0, 0.0],
+                2 => board.ball.as_mut().unwrap().position = point![6.8, 1.0],
+                3 => {
+                    board.visual_kick_ball_position = Some(BallPosition {
+                        position: point![2.0, 0.0],
+                        velocity: Vector2::zeros(),
+                        last_seen: board.world_state.now,
+                    })
+                }
+                4 => {
+                    board.world_state.robot.ground_to_field =
+                        Some(Pose2::new(point![7.4, 0.0], std::f32::consts::PI).as_transform())
+                }
+                _ => {
+                    board.last_motion_type = Some(MotionType::StandUp);
+                    board.last_motion_switch_time = board.world_state.now;
+                    board.parameters.control.allow_switch.stand_up = Duration::from_secs(1);
+                }
+            }
+            assert_eq!(
+                finish_close_goal(&mut board),
+                Status::Failure,
+                "case {case}"
+            );
+            assert!(board.body_motion.is_none());
+        }
     }
 
     #[test]

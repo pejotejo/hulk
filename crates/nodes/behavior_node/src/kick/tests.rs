@@ -651,8 +651,8 @@ fn a_close_remembered_ball_cannot_authorize_kicking_a_far_visual_ball() {
 #[test]
 fn urgent_selection_precedes_planning_bounds_but_still_requires_visual_reach() {
     for (visual_x, kicks) in [(0.3, true), (2.0, false)] {
-        let mut blackboard = blackboard(4.0, 0.0, 0.0);
-        set_ball(&mut blackboard, point![0.6, 0.0]); // Planning ball is beyond the goal line.
+        let mut blackboard = blackboard(3.0, 0.0, 0.0);
+        set_ball(&mut blackboard, point![1.6, 0.0]); // Planning ball is beyond the goal line.
         blackboard
             .visual_kick_ball_position
             .as_mut()
@@ -770,10 +770,17 @@ fn goal_line_roundoff_cannot_enable_strong_for_a_close_lateral_ball() {
 
 #[test]
 fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths() {
-    for (path, settings) in (0..5).flat_map(|path| {
+    for (path, settings) in (0..6).flat_map(|path| {
         [(false, true, false, 0.7), (true, false, true, 1.2)].map(|settings| (path, settings))
     }) {
-        let mut blackboard = blackboard(if settings.0 && path < 3 { 2.0 } else { 0.0 }, 0.0, 0.0);
+        let robot_x = if path == 5 {
+            3.3
+        } else if settings.0 && path < 3 {
+            2.0
+        } else {
+            0.0
+        };
+        let mut blackboard = blackboard(robot_x, 0.0, 0.0);
         kick(&mut blackboard);
         if let Some(BodyMotion::Kick {
             strong,
@@ -794,6 +801,7 @@ fn ongoing_kicks_keep_all_settings_in_urgent_normal_and_walk_alternative_paths()
             0 => quick_kick_subtree(),
             1 => kick_subtree(),
             2 => walk_alternatives_subtree(),
+            5 => action!(execution::finish_close_goal),
             _ => {
                 blackboard.ball_action = Some(if path == 3 {
                     BallAction::Dribble
