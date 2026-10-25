@@ -529,6 +529,7 @@ mod restart_tests {
     fn throwin_and_indirect_without_a_pass_dribble_instead_of_shooting() {
         for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
             let mut board = restart_blackboard(state, point![0.0, 0.0]);
+            board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
             let tree = sub_state_subtree();
             for age in [0, 6] {
                 board.world_state.now = board.world_state.now + Duration::from_secs(age);
@@ -561,6 +562,7 @@ mod restart_tests {
             for blocked in [false, true] {
                 let mut board = restart_blackboard(state, Point2::origin());
                 if blocked {
+                    board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
                     board.world_state.obstacles = vec![types::obstacles::Obstacle::robot(
                         point![0.6, 0.0],
                         0.5,
@@ -581,6 +583,7 @@ mod restart_tests {
      {
         for state in [SubState::ThrowIn, SubState::IndirectFreeKick] {
             let mut board = restart_blackboard(state, Point2::origin());
+            board.parameters.kicking.strategy.maximum_dribble_distance = 3.0;
             board.world_state.robot.ground_to_field =
                 Some(Pose2::new(point![-3.0, 0.0], 0.0).as_transform());
             // A measured velocity changes neither the observed approach point nor its standoff.
