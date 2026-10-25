@@ -31,7 +31,8 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         runtime.block_on(async { router.session().info().locators().await[0].to_string() });
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let parameter_root = root.join("../../etc/parameters");
-    let field = crate::FieldConfiguration::load(&parameter_root, "incheon_small").unwrap();
+    let field = crate::FieldConfiguration::load(&parameter_root, "hsl_middle").unwrap();
+    let dimensions = field.dimensions;
     let configuration = crate::Configuration {
         referee: crate::RefereeMode::Automatic,
         competition: crate::Competition::default(),
@@ -39,9 +40,9 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         model_directory: root.join("../../etc/neural_networks"),
         router: Some(endpoint),
         namespace: crate::robot_namespace(crate::RobotId::FIRST),
-        location: Some("incheon_small".into()),
-        robot_count: 1,
-        opponent_count: 2,
+        location: Some("hsl_middle".into()),
+        robot_count: 5,
+        opponent_count: 5,
         opponent: crate::Opponent::BHuman {
             executable: std::env::var_os("BHUMAN_WORKER")
                 .expect("Set BHUMAN_WORKER")
@@ -65,6 +66,35 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         .unwrap();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, MujocoWorldPlugin));
+    let parameters: crate::parameters::SimulatorParameters =
+        json5::from_str(include_str!("../../parameters/simulator.json5")).unwrap();
+    app.world_mut().spawn((
+        MjcfObject::from_factory(
+            move || {
+                crate::scene::ball::ball_spec(f64::from(dimensions.ball_radius), &parameters.ball)
+            },
+            "ball",
+        )
+        .with_free_joint("ball_free_joint")
+        .grounded(),
+        Transform::default(),
+    ));
+    for side in [-1.0, 1.0] {
+        app.world_mut().spawn((
+            MjcfObject::from_factory(
+                move || crate::scene::goal::goal_spec((&dimensions).into()),
+                "goal",
+            )
+            .with_mocap_body("goal"),
+            Transform::from_xyz(side * dimensions.length / 2.0, 0.0, 0.0).with_rotation(
+                Quat::from_rotation_y(if side > 0.0 {
+                    std::f32::consts::PI
+                } else {
+                    0.0
+                }),
+            ),
+        ));
+    }
     for member in team.members() {
         let entity = app
             .world_mut()
@@ -103,7 +133,7 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         .into_iter()
         .filter(|member| member.io.is_bhuman())
         .collect();
-    assert_eq!(native.len(), 2);
+    assert_eq!(native.len(), 5);
     assert_ne!(
         native[0]
             .io
@@ -136,7 +166,12 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         let state = member.io.bhuman().unwrap().state.lock().unwrap();
         assert_eq!(state.time_ns, 1000 * STEP_NS);
         assert_eq!(state.output.as_ref().unwrap().player_state, "active");
-        assert_eq!(state.output.as_ref().unwrap().motion, "stand");
+        eprintln!(
+            "{} initialized: {} / {}",
+            member.id,
+            state.output.as_ref().unwrap().game_state,
+            state.output.as_ref().unwrap().motion,
+        );
         assert!(
             state.packet.is_some(),
             "native player never received GameController data"
@@ -152,6 +187,49 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
             1000 * STEP_NS
         );
     }
+    // The automatic referee already enters Ready when it observes the new ball.
+    for command in ["set", "whistle", "ball_free"] {
+        team.referee()
+            .unwrap()
+            .command(command, &serde_json::json!({}))
+            .unwrap();
+        {
+            let mut world = physics.lock();
+            world.remaining_steps = Some(500);
+            world.mode = SimulationMode::Running;
+        }
+        wait(&mut worker, &|| physics.lock().remaining_steps == Some(0));
+    }
+    for member in &native {
+        let state = member.io.bhuman().unwrap().state.lock().unwrap();
+        assert_eq!(state.time_ns, 2500 * STEP_NS);
+    }
+    // Exercise a full side beyond initial model loading and the first match transition.
+    let playing_started = Instant::now();
+    let mut saw_playing = false;
+    for chunk in 0..30 {
+        {
+            let mut world = physics.lock();
+            world.remaining_steps = Some(1000);
+            world.mode = SimulationMode::Running;
+        }
+        wait(&mut worker, &|| physics.lock().remaining_steps == Some(0));
+        for member in &native {
+            let state = member.io.bhuman().unwrap().state.lock().unwrap();
+            assert_eq!(state.time_ns, (3500 + chunk * 1000) * STEP_NS);
+            saw_playing |= state.output.as_ref().unwrap().game_state == "playing";
+        }
+        eprintln!(
+            "5v5 active play: {} simulation seconds, {:.2}s wall",
+            (chunk + 1) * 2,
+            playing_started.elapsed().as_secs_f64()
+        );
+        assert!(
+            playing_started.elapsed() < Duration::from_secs(180),
+            "5v5 play exceeded wall budget"
+        );
+    }
+    assert!(saw_playing, "native players never observed active play");
     // Both edges arrive while paused. The bridge must preserve the tap until
     // separate cognition frames can consume it.
     native[0]

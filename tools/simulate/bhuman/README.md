@@ -143,6 +143,16 @@ pose resets clear native button and teammate queues. Exchanges have wall-time
 deadlines, and failures stop the physics worker. Stop requires acknowledgment and
 successful exit; drop kills and reaps the child. `Robot::step` is blocking.
 
+A response must arrive within 30 wall-clock seconds, including both its size
+prefix and body. Deadline errors report the operation, player, epoch, sequence,
+simulation timestamp, elapsed time, byte progress and worker status before
+cleanup. Older versions could report the same deadline as Linux's
+`Resource temporarily unavailable (os error 11)`. A worker that is still running
+at that point has not returned its response; this message alone does not explain
+why. Preserve the full error and preceding worker stderr, and note the player
+counts and whether it happened during setup, first Run, or later play.
+The first Run also initializes native modules and their ONNX sessions.
+
 ## Verify
 
 Fetch simulator Git LFS assets and configure MuJoCo as described in the

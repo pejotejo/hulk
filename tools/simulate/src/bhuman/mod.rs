@@ -10,7 +10,7 @@ pub(crate) use simulator::SimulatorRobot;
 pub use smoke::{SmokeReport, run_smoke};
 
 use std::{
-    io::{Read, Write},
+    io::{self, Read, Write},
     net::Shutdown,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
@@ -213,19 +213,21 @@ impl Robot {
         };
         let deadline = Instant::now() + robot.configuration.timeout;
         loop {
+            ensure!(
+                Instant::now() < deadline,
+                "B-Human worker connection timed out"
+            );
             match listener.accept() {
                 Ok((stream, _)) => {
+                    stream.set_nonblocking(false)?;
                     robot.stream = Some(stream);
                     break;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     if let Some(status) = robot.child.try_wait()? {
                         bail!("B-Human worker exited during startup: {status}");
                     }
-                    ensure!(
-                        Instant::now() < deadline,
-                        "B-Human worker connection timed out"
-                    );
                     thread::sleep(Duration::from_millis(1));
                 }
                 Err(error) => return Err(error.into()),
@@ -514,26 +516,42 @@ impl Robot {
             },
         );
         wire::finish_size_prefixed_envelope_buffer(builder, envelope);
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| eyre!("B-Human worker is stopped"))?;
-        stream.set_write_timeout(Some(self.configuration.timeout))?;
-        stream
-            .write_all(builder.finished_data())
-            .wrap_err("sending B-Human frame")?;
-        let deadline = Instant::now() + self.configuration.timeout;
-        let mut prefix = [0u8; 4];
-        read_exact_until(stream, &mut prefix, deadline)?;
-        let length = u32::from_le_bytes(prefix) as usize;
-        ensure!(
-            (8..=MAX_MESSAGE).contains(&length),
-            "invalid B-Human message length {length}"
-        );
-        let mut bytes = vec![0; length + 4];
-        bytes[..4].copy_from_slice(&prefix);
-        read_exact_until(stream, &mut bytes[4..], deadline)?;
-        Ok(bytes)
+        let started = Instant::now();
+        let result = (|| {
+            let stream = self
+                .stream
+                .as_mut()
+                .ok_or_else(|| eyre!("B-Human worker is stopped"))?;
+            stream.set_write_timeout(Some(self.configuration.timeout))?;
+            stream
+                .write_all(builder.finished_data())
+                .wrap_err("sending B-Human frame")?;
+            let deadline = Instant::now() + self.configuration.timeout;
+            let mut prefix = [0u8; 4];
+            read_exact_until(stream, &mut prefix, deadline).wrap_err("response size prefix")?;
+            let length = u32::from_le_bytes(prefix) as usize;
+            ensure!(
+                (8..=MAX_MESSAGE).contains(&length),
+                "invalid B-Human message length {length}"
+            );
+            let mut bytes = vec![0; length + 4];
+            bytes[..4].copy_from_slice(&prefix);
+            read_exact_until(stream, &mut bytes[4..], deadline).wrap_err("response body")?;
+            Ok(bytes)
+        })();
+        result.wrap_err_with(|| {
+            // Capture status before step/Drop kills and reaps a failed worker.
+            let status = match self.child.try_wait() {
+                Ok(None) => "still running before cleanup".into(),
+                Ok(Some(status)) => format!("exited with {status}"),
+                Err(error) => format!("status unavailable: {error}"),
+            };
+            format!(
+                "B-Human {kind:?} exchange failed (player {}, epoch {}, sequence {}, simulation {} ns; elapsed {:.3}s, response budget {:.3}s; worker {status})",
+                self.configuration.player, self.epoch, self.sequence, self.time_ns,
+                started.elapsed().as_secs_f64(), self.configuration.timeout.as_secs_f64(),
+            )
+        })
     }
 
     fn terminate(&mut self) {
@@ -550,21 +568,53 @@ impl Drop for Robot {
     }
 }
 
-fn read_exact_until(
-    stream: &mut UnixStream,
+fn read_exact_until(stream: &mut UnixStream, bytes: &mut [u8], deadline: Instant) -> Result<()> {
+    read_exact_until_with(bytes, deadline, |bytes, remaining| {
+        stream.set_read_timeout(Some(remaining))?;
+        stream.read(bytes)
+    })
+}
+
+fn read_exact_until_with(
     mut bytes: &mut [u8],
     deadline: Instant,
+    mut read: impl FnMut(&mut [u8], Duration) -> io::Result<usize>,
 ) -> Result<()> {
+    let total = bytes.len();
     while !bytes.is_empty() {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or_else(|| eyre!("B-Human response timed out"))?;
-        ensure!(!remaining.is_zero(), "B-Human response timed out");
-        stream.set_read_timeout(Some(remaining))?;
-        let count = stream.read(bytes).wrap_err("reading B-Human response")?;
-        ensure!(count != 0, "B-Human worker disconnected");
-        bytes = &mut bytes[count..];
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        ensure!(
+            !remaining.is_zero(),
+            "B-Human response deadline expired (received {}/{total} bytes)",
+            total - bytes.len(),
+        );
+        match read(bytes, remaining) {
+            Ok(0) => bail!(
+                "B-Human worker disconnected (received {}/{total} bytes)",
+                total - bytes.len()
+            ),
+            Ok(count) => bytes = &mut bytes[count..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                // Kernel timeouts can fire early; retain the deadline and avoid a busy retry loop.
+                thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(1)),
+                );
+            }
+            Err(error) => return Err(error).wrap_err("reading B-Human response"),
+        }
     }
+    ensure!(
+        Instant::now() <= deadline,
+        "B-Human response deadline expired (received {total}/{total} bytes)"
+    );
     Ok(())
 }
 
@@ -616,10 +666,135 @@ mod tests {
         output.write_all(&[1]).unwrap();
         let mut bytes = [0u8; 4];
         let started = Instant::now();
-        assert!(
-            read_exact_until(&mut input, &mut bytes, started + Duration::from_millis(30)).is_err()
-        );
+        let error = read_exact_until(&mut input, &mut bytes, started + Duration::from_millis(30))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("response deadline expired"), "{error}");
+        assert!(error.contains("1/4 bytes"), "{error}");
+        assert_eq!(bytes[0], 1);
+        assert!(started.elapsed() >= Duration::from_millis(30));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn response_preserves_partial_bytes_after_early_would_block() {
+        let (mut input, mut output) = UnixStream::pair().unwrap();
+        input.set_nonblocking(true).unwrap();
+        output.write_all(&[1]).unwrap();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            output.write_all(&[2, 3, 4]).unwrap();
+        });
+        let mut bytes = [0u8; 4];
+        let result = read_exact_until(
+            &mut input,
+            &mut bytes,
+            Instant::now() + Duration::from_secs(1),
+        );
+        writer.join().unwrap();
+        result.unwrap();
+        assert_eq!(bytes, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn response_retries_transients_without_losing_progress_or_extending_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut previous = Duration::from_secs(1);
+        let mut calls = 0;
+        let mut bytes = [0u8; 3];
+        read_exact_until_with(&mut bytes, deadline, |bytes, remaining| {
+            assert!(remaining <= previous);
+            previous = remaining;
+            calls += 1;
+            match calls {
+                2 => Err(io::ErrorKind::Interrupted.into()),
+                3 => Err(io::ErrorKind::TimedOut.into()),
+                5 => Err(io::ErrorKind::WouldBlock.into()),
+                _ => {
+                    bytes[0] = calls;
+                    Ok(1)
+                }
+            }
+        })
+        .unwrap();
+        assert_eq!(bytes, [1, 4, 6]);
+
+        for kind in [
+            io::ErrorKind::Interrupted,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::TimedOut,
+        ] {
+            let started = Instant::now();
+            let error =
+                read_exact_until_with(&mut [0], started + Duration::from_millis(10), |_, _| {
+                    Err(kind.into())
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("response deadline expired"));
+            assert!(started.elapsed() < Duration::from_secs(1));
+        }
+    }
+
+    #[test]
+    fn response_body_shares_the_prefix_deadline_and_rejects_late_completion() {
+        let deadline = Instant::now() + Duration::from_millis(30);
+        let mut prefix = [0];
+        read_exact_until_with(&mut prefix, deadline, |bytes, _| {
+            bytes[0] = 8;
+            Ok(1)
+        })
+        .unwrap();
+        let error = read_exact_until_with(&mut [0; 8], deadline, |bytes, remaining| {
+            thread::sleep(remaining + Duration::from_millis(1));
+            Ok(bytes.len())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("response deadline expired"));
+    }
+
+    #[test]
+    fn stalled_worker_reports_request_and_pre_cleanup_status_then_is_reaped() {
+        let (input, _output) = UnixStream::pair().unwrap();
+        let child = Command::new("sleep").arg("60").spawn().unwrap();
+        let mut robot = Robot {
+            configuration: Configuration {
+                executable: PathBuf::new(),
+                source: PathBuf::new(),
+                player: 2,
+                team: 5,
+                cognition: false,
+                active: true,
+                field: None,
+                timeout: Duration::from_millis(30),
+            },
+            child,
+            stream: Some(input),
+            _socket_directory: tempfile::tempdir().unwrap(),
+            epoch: 7,
+            sequence: 3,
+            time_ns: STEP_NS,
+        };
+        let error = format!(
+            "{:#}",
+            robot.step(&stationary_frame(STEP_NS)).err().unwrap()
+        );
+        for expected in [
+            "Step exchange failed",
+            "player 2",
+            "epoch 7",
+            "sequence 3",
+            "simulation 2000000 ns",
+            "response budget 0.030s",
+            "worker still running before cleanup",
+            "response size prefix",
+            "response deadline expired",
+        ] {
+            assert!(error.contains(expected), "missing {expected}: {error}");
+        }
+        assert!(robot.stream.is_none());
+        assert!(robot.child.try_wait().unwrap().is_some());
+        assert_eq!(robot.sequence, 3);
+        assert_eq!(robot.time_ns, STEP_NS);
     }
 
     fn native_configuration(player: u8) -> Configuration {

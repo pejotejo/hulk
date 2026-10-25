@@ -18,6 +18,7 @@
 #include "protocol_generated.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -46,6 +47,8 @@ void receiveAll(int fd, void *buffer, size_t length) {
   auto *bytes = static_cast<unsigned char *>(buffer);
   while (length) {
     const ssize_t count = read(fd, bytes, length);
+    if (count < 0 && errno == EINTR)
+      continue;
     require(count > 0, "worker socket closed or read failed");
     bytes += count;
     length -= static_cast<size_t>(count);
@@ -57,6 +60,8 @@ void sendAll(int fd, const flatbuffers::FlatBufferBuilder &builder) {
   size_t remaining = builder.GetSize();
   while (remaining) {
     const ssize_t count = send(fd, bytes, remaining, MSG_NOSIGNAL);
+    if (count < 0 && errno == EINTR)
+      continue;
     require(count > 0, "worker socket write failed");
     bytes += count;
     remaining -= static_cast<size_t>(count);
