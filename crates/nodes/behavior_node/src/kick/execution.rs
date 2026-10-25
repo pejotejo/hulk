@@ -162,6 +162,14 @@ pub fn execute_ball_action(blackboard: &mut Blackboard) -> Status {
 }
 
 fn execute_travel_action(blackboard: &mut Blackboard) -> Status {
+    let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
+    let can_switch = is_allowed_to_start_kick(blackboard);
+    if was_kicking && !can_switch {
+        if super::kick(blackboard) == Status::Failure {
+            return Status::Failure;
+        }
+        return super::select_fallback_kick_target(blackboard);
+    }
     let mut target = resolve_target(blackboard);
     if target.is_none() && !own_non_penalty_restart(blackboard) {
         super::strategy::select_ball_action(blackboard);
@@ -190,13 +198,9 @@ fn execute_travel_action(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     };
     blackboard.kick_target = Some(transform.inverse() * target);
-    let was_kicking = blackboard.last_motion_type == Some(MotionType::Kick);
-    let can_switch = is_allowed_to_start_kick(blackboard);
     let ready = !super::reception::is_receiving_ball(blackboard)
         || super::reception::is_ready_to_receive_kick(blackboard);
-    if ((ball.x() >= 0.0 && is_close_to_ball(blackboard) && ready) || (was_kicking && !can_switch))
-        && (was_kicking || can_switch)
-    {
+    if (ball.x() >= 0.0 && is_close_to_ball(blackboard) && ready) && (was_kicking || can_switch) {
         if super::kick(blackboard) == Status::Failure {
             return Status::Failure;
         }
@@ -279,8 +283,7 @@ fn approach_ball(blackboard: &mut Blackboard, ball: Point2<Ground>) -> Status {
         walking.normal_distance_to_be_aligned,
         walking.hysteresis,
     );
-    if let Some(BodyMotion::Walk { path, speed, .. }) = &mut blackboard.body_motion {
-        *speed = blackboard.parameters.walking.speed.kicking;
+    if let Some(BodyMotion::Walk { path, .. }) = &mut blackboard.body_motion {
         if path.forward(Point2::origin()).x() < 0.0 {
             blackboard.body_motion = Some(BodyMotion::WalkWithVelocity {
                 velocity: Vector2::zeros(),
@@ -494,6 +497,7 @@ mod tests {
     use super::*;
     use crate::{
         kick::strategy::{QuickKickReason, select_ball_action, urgent_kick_reason},
+        motion_assembler::assemble_motion_command,
         tree::create_tree,
     };
 
@@ -514,6 +518,86 @@ mod tests {
         board.world_state.robot.ground_to_field =
             Some(Pose2::new(point![robot_x, 0.0], 0.0).as_transform());
         board
+    }
+
+    #[test]
+    fn ball_approaches_slow_down_as_the_robot_gets_closer() {
+        let mut board = board(0.0);
+        let speeds = [3.0, 1.5].map(|distance| {
+            assert_eq!(
+                approach_ball(&mut board, point![distance, 0.0]),
+                Status::Success
+            );
+            let Some(BodyMotion::Walk { speed, .. }) = board.body_motion.as_ref() else {
+                panic!("expected ball approach");
+            };
+            *speed
+        });
+        assert!(speeds[1] < speeds[0]);
+        assert!(speeds[1] >= board.parameters.walking.speed.minimum_speed);
+        assert!(speeds[0] <= board.parameters.walking.speed.kicking);
+    }
+
+    #[test]
+    fn locked_travel_kicks_keep_their_target_when_openings_change() {
+        for action in [BallAction::Dribble, BallAction::Clear] {
+            for blocked in [false, true] {
+                let mut board = board(0.0);
+                board.ball_action = Some(action);
+                assert_eq!(execute_ball_action(&mut board), Status::Success);
+                let target = board.last_kick_target.unwrap();
+                board.last_motion_command =
+                    Some(assemble_motion_command(&board, Status::Success).unwrap());
+                board.last_motion_type = Some(MotionType::Kick);
+                board.last_motion_switch_time = board.world_state.now;
+                board.world_state.obstacles = vec![if blocked {
+                    Obstacle::robot(point![0.6, 0.0], 0.5, 0.5)
+                } else {
+                    Obstacle::robot(point![1.8, 0.0], 0.2, 0.2)
+                }];
+                let replanned = resolve_target(&board);
+                if blocked {
+                    assert!(replanned.is_none());
+                } else {
+                    assert!(replanned.is_some_and(|candidate| candidate != target));
+                }
+                let ball = point![0.65, 0.02];
+                let velocity = vector![0.1, -0.05];
+                board.visual_kick_ball_position = Some(BallPosition {
+                    position: ball,
+                    velocity,
+                    last_seen: board.world_state.now,
+                });
+                board.body_motion = None;
+                assert_eq!(execute_ball_action(&mut board), Status::Success);
+                let Some(BodyMotion::Kick {
+                    ball_position,
+                    ball_velocity,
+                    kick_direction,
+                    ..
+                }) = board.body_motion.as_ref()
+                else {
+                    panic!("expected ongoing kick");
+                };
+                assert_eq!(*ball_position, ball);
+                assert_eq!(*ball_velocity, velocity);
+                let transform = board.world_state.robot.ground_to_field.unwrap();
+                assert_eq!(board.last_kick_target, Some(target));
+                assert_eq!(board.kick_target, Some(transform.inverse() * target));
+                assert_eq!(
+                    *kick_direction,
+                    Orientation2::from_vector(transform.inverse() * target - ball)
+                );
+
+                board.world_state.now = board.world_state.now + Duration::from_secs(1);
+                execute_ball_action(&mut board);
+                if blocked {
+                    assert_eq!(board.body_motion, Some(BodyMotion::Stand));
+                } else {
+                    assert_ne!(board.last_kick_target, Some(target));
+                }
+            }
+        }
     }
 
     #[test]
