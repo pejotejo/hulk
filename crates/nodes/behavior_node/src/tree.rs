@@ -42,10 +42,7 @@ use crate::{
     subtree,
     switch_motion_type::switch_motion_type,
     voronoi::{calculate_voronoi_grid, calculate_voronoi_grid_without_goalkeeper},
-    walk::{
-        walk_alternatives_subtree, walk_to_ball_subtree, walk_to_kickoff_pose,
-        walk_to_voronoi_position,
-    },
+    walk::{walk_alternatives_subtree, walk_to_ball_subtree, walk_to_voronoi_position},
 };
 
 pub fn create_tree() -> Node<Blackboard> {
@@ -119,7 +116,7 @@ fn fall_subtree() -> Node<Blackboard> {
 }
 
 fn ready_subtree() -> Node<Blackboard> {
-    sequence!(action!(walk_to_kickoff_pose), action!(look_around),)
+    sequence!(action!(stand), action!(look_around))
 }
 
 fn playing_subtree() -> Node<Blackboard> {
