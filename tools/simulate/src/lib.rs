@@ -24,6 +24,7 @@ mod bevy_mujoco;
 #[cfg(all(feature = "bhuman", unix))]
 pub mod bhuman;
 mod buttons;
+mod match_effects;
 mod observations;
 mod parameters;
 mod presentation;
@@ -159,6 +160,7 @@ impl Simulator {
                 .goal_height,
         ))
         .insert_resource(first)
+        .insert_resource(prepared.team.effects())
         .insert_resource(prepared.team.clone())
         .add_plugins((
             bevy_mujoco::MujocoWorldPlugin,
@@ -166,6 +168,7 @@ impl Simulator {
             scene::ObjectsPlugin,
             simulation::MotionSimulationPlugin,
             presentation::PresentationPlugin,
+            match_effects::MatchEffectsPlugin,
         ))
         .add_systems(PreUpdate, viewport::setup_scene);
         app.finish();

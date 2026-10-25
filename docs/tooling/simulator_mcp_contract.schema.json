@@ -2886,7 +2886,14 @@
               "type": "string",
               "enum": [
                 "field",
-                "top"
+                "top",
+                "drone",
+                "sideline",
+                "endline",
+                "goal",
+                "chase",
+                "orbit",
+                "wide"
               ]
             }
           },

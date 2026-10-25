@@ -39,6 +39,7 @@ struct SceneRenderer {
     generation: u64,
     size: (u32, u32),
     renderer: mujoco_rs::renderer::MjRenderer,
+    snapshot: super::scene_render::VisualSnapshot,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -528,7 +529,7 @@ impl Session {
     fn render(&mut self, args: &Value) -> Result<Value> {
         ensure!(self.rendering, "Rendering disabled for session");
         let shared = self.shared();
-        let mut world = shared.lock();
+        let world = shared.lock();
         let mut camera = mujoco_rs::prelude::MjvCamera::default();
         let field = &self
             .team
@@ -572,29 +573,94 @@ impl Session {
         }
         let width = args["size"]["width"].as_u64().unwrap_or(1280) as u32;
         let height = args["size"]["height"].as_u64().unwrap_or(720) as u32;
-        world.data_mut().model_vis_mut().headlight.ambient = [0.5, 0.5, 0.5];
-        world.data_mut().model_vis_mut().headlight.diffuse = [0.7, 0.7, 0.7];
-        world.data_mut().model_vis_mut().global.offwidth = width as i32;
-        world.data_mut().model_vis_mut().global.offheight = height as i32;
+        let shot = match specification["name"].as_str() {
+            Some("drone") => Some(crate::presentation::Shot::Drone),
+            Some("sideline") => Some(crate::presentation::Shot::Sideline),
+            Some("endline") => Some(crate::presentation::Shot::Endline),
+            Some("goal") => Some(crate::presentation::Shot::Goal),
+            Some("chase") => Some(crate::presentation::Shot::Chase),
+            Some("orbit") => Some(crate::presentation::Shot::Orbit),
+            Some("wide") => Some(crate::presentation::Shot::Wide),
+            _ => None,
+        };
+        if let Some(shot) = shot {
+            let ball = world
+                .balls
+                .first()
+                .and_then(|entity| world.object_pose(*entity))
+                .map(|pose| pose.translation);
+            let player = self
+                .team
+                .members()
+                .iter()
+                .filter_map(|member| world.object_pose(member.entity?))
+                .min_by(|a, b| {
+                    a.translation
+                        .distance_squared(ball.unwrap_or_default())
+                        .total_cmp(&b.translation.distance_squared(ball.unwrap_or_default()))
+                });
+            let focus = if shot == crate::presentation::Shot::Goal {
+                self.team
+                    .effects()
+                    .burst(world.data().time())
+                    .map(|burst| Vec3::new(burst.goal_x, 0.4, 0.0))
+                    .or(ball)
+                    .unwrap_or_default()
+            } else {
+                ball.unwrap_or_default()
+            };
+            let pose = crate::presentation::shot_pose(
+                shot,
+                focus,
+                player,
+                ball,
+                field,
+                self.team
+                    .configuration()
+                    .field_configuration
+                    .as_ref()
+                    .unwrap()
+                    .goal_height,
+                width as f32 / height as f32,
+                world.data().time(),
+            );
+            let eye = pose.translation;
+            let target = eye + pose.forward().as_vec3() * 5.0;
+            let delta = eye - target;
+            camera.lookat = [target.x as f64, -target.z as f64, target.y as f64];
+            camera.distance = delta.length() as f64;
+            camera.azimuth = (-delta.z).atan2(delta.x).to_degrees() as f64 + 180.0;
+            camera.elevation = -(delta.y / delta.length()).asin().to_degrees() as f64;
+        }
         if self.renderer.as_ref().is_none_or(|cache| {
             cache.generation != world.generation || cache.size != (width, height)
         }) {
+            let snapshot =
+                super::scene_render::VisualSnapshot::new(world.data().model(), width, height)?;
             self.renderer = Some(SceneRenderer {
                 generation: world.generation,
                 size: (width, height),
                 renderer: mujoco_rs::renderer::MjRenderer::builder()
                     .width(width)
                     .height(height)
+                    .num_visual_user_geom(crate::match_effects::PARTICLE_COUNT as u32)
                     .rgb(true)
-                    .build(world.data().model())?,
+                    .build(snapshot.data.model())?,
+                snapshot,
             });
         }
-        let renderer = &mut self.renderer.as_mut().unwrap().renderer;
-        *renderer.camera_mut() = camera;
-        renderer.sync_data(world.data_mut())?;
+        let cache = self.renderer.as_mut().unwrap();
+        world.data().copy_visual_to(&mut cache.snapshot.data)?;
+        let display_time = world.data().time();
         let time = self.team.now().as_nanos() - self.origin;
         // MuJoCo's visual scene owns its snapshot; GPU readback and PNG I/O need no physics lock.
         drop(world);
+        cache.snapshot.animate(display_time);
+        let renderer = &mut cache.renderer;
+        renderer.opts_mut().geomgroup[5] = 1;
+        *renderer.camera_mut() = camera;
+        renderer.sync_data(&mut cache.snapshot.data)?;
+        super::scene_render::confetti(renderer, &self.team.effects(), display_time);
         renderer.render()?;
         let path = args["path"]
             .as_str()

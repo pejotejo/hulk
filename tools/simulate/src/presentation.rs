@@ -1,4 +1,5 @@
 //! View-only camera direction and pose replay; the physics worker remains live.
+mod director;
 mod replay;
 
 use bevy::prelude::*;
@@ -6,6 +7,7 @@ use eframe::egui::{self, Color32, Ui};
 
 use crate::{
     bevy_mujoco::{MujocoBody, MujocoPoseUpdateSet, MujocoRenderFrame},
+    match_effects::MatchEffects,
     parameters::CurrentSimulatorParameters,
     scene::{
         ball::{Ball, SpawnedBalls},
@@ -14,25 +16,9 @@ use crate::{
     },
     team::Team,
 };
+use director::{Director, safe_eye};
+pub(crate) use director::{Shot, shot_pose};
 use replay::{History, Replay, interpolate};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Shot {
-    #[default]
-    Drone,
-    Sideline,
-    Player,
-}
-
-impl Shot {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Drone => "Drone",
-            Self::Sideline => "Sideline",
-            Self::Player => "Player",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Subject {
@@ -47,6 +33,8 @@ pub(crate) struct Presentation {
     replay: Option<Replay>,
     cinematic: bool,
     shot: Shot,
+    director: Director,
+    live_time: f64,
     subject: Subject,
     manual_pose: Option<Transform>,
 }
@@ -54,6 +42,12 @@ pub(crate) struct Presentation {
 impl Presentation {
     pub(crate) fn is_replaying(&self) -> bool {
         self.replay.is_some()
+    }
+
+    pub(crate) fn display_time(&self) -> f64 {
+        self.replay
+            .as_ref()
+            .map_or(self.live_time, Replay::timestamp)
     }
 
     pub(super) fn cinematic(&self) -> bool {
@@ -78,10 +72,14 @@ impl Presentation {
             *camera = pose;
         }
         self.cinematic = enabled;
+        self.director = Director::default();
     }
 }
 
 pub(super) struct PresentationPlugin;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct PresentationUpdateSet;
 
 impl Plugin for PresentationPlugin {
     fn build(&self, app: &mut App) {
@@ -89,6 +87,7 @@ impl Plugin for PresentationPlugin {
             Update,
             (present_poses, direct_camera)
                 .chain()
+                .in_set(PresentationUpdateSet)
                 .after(MujocoPoseUpdateSet),
         );
     }
@@ -118,7 +117,7 @@ pub(super) fn toolbar(ui: &mut Ui, world: &mut World) {
             .width(80.0)
             .selected_text(presentation.shot.label())
             .show_ui(ui, |ui| {
-                for shot in [Shot::Drone, Shot::Sideline, Shot::Player] {
+                for shot in Shot::ALL {
                     ui.selectable_value(&mut presentation.shot, shot, shot.label());
                 }
             });
@@ -137,7 +136,8 @@ pub(super) fn toolbar(ui: &mut Ui, world: &mut World) {
             .add_enabled(duration >= 0.1, egui::Button::new("Replay"))
             .on_hover_text(format!(
                 "Replay the last {duration:.1} simulation seconds (up to 10 s).\n\
-                 Physics, robotics and match controls remain live."
+                 Physics, robotics and match controls remain live.\n\
+                 History is captured only while the viewport renders."
             ))
             .clicked()
         {
@@ -169,6 +169,9 @@ fn present_poses(
         (With<MujocoBody>, Or<(With<Ball>, With<ObjectPart>)>),
     >,
 ) {
+    if frame.time.is_finite() {
+        presentation.live_time = frame.time;
+    }
     // Always capture the live transforms before applying the historical ones.
     if presentation.history.record(
         frame.time,
@@ -176,6 +179,7 @@ fn present_poses(
         bodies.iter().map(|(entity, pose)| (entity, *pose)),
     ) {
         presentation.replay = None;
+        presentation.director = Director::default();
     }
     if let Some(replay) = &mut presentation.replay
         && !replay.advance(time.delta_secs_f64())
@@ -192,13 +196,14 @@ fn present_poses(
 }
 
 fn direct_camera(
-    presentation: Res<Presentation>,
+    mut presentation: ResMut<Presentation>,
     time: Res<Time<Real>>,
     team: Res<Team>,
     parameters: Res<CurrentSimulatorParameters>,
     balls: Res<SpawnedBalls>,
+    effects: Option<Res<MatchEffects>>,
     bodies: Query<
-        (&Transform, Option<&ObjectPart>, Has<RobotHead>),
+        (Entity, &Transform, Option<&ObjectPart>, Has<RobotHead>),
         (With<MujocoBody>, Without<Camera3d>),
     >,
     mut cameras: Query<(&mut Transform, &Projection), (With<Camera3d>, Without<MujocoBody>)>,
@@ -209,13 +214,27 @@ fn direct_camera(
     let ball = balls
         .0
         .iter()
-        .find_map(|entity| bodies.get(*entity).ok())
-        .map(|(pose, ..)| pose.translation);
+        .find_map(|entity| {
+            if let Some(replay) = &presentation.replay {
+                replay.pose(*entity)
+            } else {
+                bodies.get(*entity).ok().map(|(_, pose, ..)| *pose)
+            }
+        })
+        .map(|pose| pose.translation);
     let selected = team.selected().and_then(|member| member.entity);
     let player = bodies
         .iter()
-        .filter(|(_, part, head)| *head && part.is_some())
-        .min_by(|(a, part_a, _), (b, part_b, _)| {
+        .filter(|(_, _, part, head)| *head && part.is_some())
+        .filter_map(|(entity, pose, part, _)| {
+            let pose = if let Some(replay) = &presentation.replay {
+                replay.pose(entity)?
+            } else {
+                *pose
+            };
+            Some((pose, part))
+        })
+        .min_by(|(a, part_a), (b, part_b)| {
             if presentation.subject == Subject::Player {
                 let a_selected = part_a.is_some_and(|part| Some(part.0) == selected);
                 let b_selected = part_b.is_some_and(|part| Some(part.0) == selected);
@@ -227,67 +246,63 @@ fn direct_camera(
                 .distance_squared(ball.unwrap_or(Vec3::ZERO))
                 .total_cmp(&b.translation.distance_squared(ball.unwrap_or(Vec3::ZERO)))
         })
-        .map(|(pose, ..)| *pose);
+        .map(|(pose, _)| pose);
     let focus = match presentation.subject {
         Subject::Ball => ball.or(player.map(|pose| pose.translation)),
         Subject::Player => player.map(|pose| pose.translation).or(ball),
     }
     .unwrap_or(Vec3::ZERO);
+    let display_time = presentation.display_time();
+    let replaying = presentation.is_replaying();
+    let live_goal = if replaying {
+        None
+    } else {
+        effects
+            .as_ref()
+            .and_then(|effects| effects.goal())
+            .map(|goal| (goal.time, goal.goal_x))
+    };
+    let automatic = presentation.director.update(
+        display_time,
+        replaying,
+        ball,
+        player.map(|pose| pose.translation),
+        &parameters.field_dimensions,
+        parameters.goal_height,
+        live_goal,
+    );
+    let shot = if presentation.shot == Shot::Auto {
+        automatic
+    } else {
+        presentation.shot
+    };
+    let focus = if shot == Shot::Goal {
+        presentation.director.goal_focus().unwrap_or(focus)
+    } else {
+        focus
+    };
     for (mut camera, projection) in &mut cameras {
         let aspect = match projection {
             Projection::Perspective(projection) => projection.aspect_ratio,
             _ => 1.0,
         };
         let desired = shot_pose(
-            presentation.shot,
+            shot,
             focus,
             player,
             ball,
-            parameters.field_dimensions.width,
+            &parameters.field_dimensions,
+            parameters.goal_height,
             aspect,
+            display_time,
         );
         *camera = interpolate(*camera, desired, 1.0 - (-3.5 * time.delta_secs()).exp());
+        camera.translation = safe_eye(
+            camera.translation,
+            &parameters.field_dimensions,
+            parameters.goal_height,
+        );
     }
-}
-
-fn shot_pose(
-    shot: Shot,
-    focus: Vec3,
-    player: Option<Transform>,
-    ball: Option<Vec3>,
-    field_width: f32,
-    aspect: f32,
-) -> Transform {
-    let framing = aspect.max(0.25).recip().clamp(1.0, 2.0);
-    let target = focus.with_y(focus.y.max(0.25));
-    let (eye, target) = match shot {
-        Shot::Drone => {
-            let distance = (field_width * 0.8).max(4.5) * framing;
-            (target + Vec3::new(-0.3, 1.0, 0.8) * distance, target)
-        }
-        Shot::Sideline => (
-            Vec3::new(
-                focus.x * 0.65,
-                (field_width * 0.35).max(2.3) * framing,
-                field_width / 2.0 + 2.0 * framing,
-            ),
-            target,
-        ),
-        Shot::Player => {
-            let player = player.unwrap_or(Transform::from_translation(target));
-            let forward = (ball.unwrap_or(target + player.rotation * Vec3::X) - player.translation)
-                .with_y(0.0)
-                .try_normalize()
-                .unwrap_or(Vec3::X);
-            let side = forward.cross(Vec3::Y);
-            let eye = player.translation - forward * 2.2 * framing + side * 0.65 + Vec3::Y * 0.55;
-            (
-                eye.with_y(eye.y.max(1.2)),
-                player.translation.lerp(target, 0.6),
-            )
-        }
-    };
-    Transform::from_translation(eye).looking_at(target, Vec3::Y)
 }
 
 #[cfg(test)]
@@ -295,6 +310,7 @@ mod tests {
     use std::time::Duration;
 
     use bevy::time::TimeUpdateStrategy;
+    use types::field_dimensions::FieldDimensions;
 
     use super::*;
 
@@ -336,6 +352,7 @@ mod tests {
         let displayed = app.world().get::<Transform>(ball).unwrap().translation.x;
         assert!((displayed - 1.1).abs() < 1e-5);
         assert_eq!(app.world().resource::<MujocoRenderFrame>().time, 3.0);
+        assert!((app.world().resource::<Presentation>().display_time() - 1.1).abs() < 1e-5);
         assert_eq!(
             app.world()
                 .get::<GlobalTransform>(ball)
@@ -354,6 +371,7 @@ mod tests {
             .generation += 1;
         app.update();
         assert!(!app.world().resource::<Presentation>().is_replaying());
+        assert_eq!(app.world().resource::<Presentation>().display_time(), 4.0);
         assert_eq!(
             app.world().get::<Transform>(ball).unwrap().translation.x,
             4.0
@@ -363,22 +381,48 @@ mod tests {
     #[test]
     fn manual_camera_survives_shot_changes_and_cinematic_toggle() {
         let mut presentation = Presentation::default();
+        for time in [1.0, 2.0] {
+            presentation.history.record(time, 0, std::iter::empty());
+        }
+        presentation.replay = presentation.history.clip();
         let manual =
             Transform::from_xyz(3.0, 4.0, 5.0).looking_at(Vec3::new(1.0, 0.0, 2.0), Vec3::Y);
         let mut camera = manual;
         presentation.set_cinematic(true, &mut camera);
-        camera = shot_pose(Shot::Sideline, Vec3::ZERO, None, None, 6.0, 1.0);
+        for shot in Shot::ALL {
+            presentation.shot = shot;
+            camera = shot_pose(
+                shot,
+                Vec3::ZERO,
+                None,
+                None,
+                &FieldDimensions::SPL_2025,
+                1.1,
+                1.0,
+                2.0,
+            );
+        }
         presentation.set_cinematic(true, &mut camera);
         presentation.set_cinematic(false, &mut camera);
         assert_eq!(camera, manual);
+        assert!(presentation.is_replaying());
+        let moved_manually = Transform::from_xyz(-3.0, 2.0, 9.0);
+        camera = moved_manually;
+        presentation.set_cinematic(false, &mut camera);
+        assert_eq!(camera, moved_manually);
     }
 
     #[test]
     fn shots_stay_above_ground_and_frame_their_target_without_a_ball_or_player() {
-        for shot in [Shot::Drone, Shot::Sideline, Shot::Player] {
+        for shot in Shot::ALL {
             for width in [6.0, 9.0, 14.0] {
+                let field = FieldDimensions {
+                    width,
+                    length: width * 1.5,
+                    ..FieldDimensions::SPL_2025
+                };
                 for aspect in [0.5, 1.0, 16.0 / 9.0] {
-                    let pose = shot_pose(shot, Vec3::ZERO, None, None, width, aspect);
+                    let pose = shot_pose(shot, Vec3::ZERO, None, None, &field, 1.1, aspect, 0.0);
                     assert!(pose.translation.is_finite());
                     assert!(pose.translation.y >= 1.2);
                     assert!(pose.rotation.is_finite());

@@ -689,6 +689,32 @@ impl RobotStack {
         )
     }
 
+    pub(crate) fn presentation_score(&self) -> Option<crate::match_effects::Score> {
+        let state = self.game_state.get_latest()?;
+        let state = state.as_ref().as_ref()?;
+        let shootout = matches!(
+            &state.game_phase,
+            hsl_network_messages::GamePhase::PenaltyShootout { .. }
+        );
+        Some(crate::match_effects::Score {
+            goals: [&state.hulks_team, &state.opponent_team].map(|team| {
+                if shootout {
+                    team.penalty_shoots
+                        .iter()
+                        .filter(|shot| {
+                            matches!(shot, hsl_network_messages::PenaltyShoot::Successful)
+                        })
+                        .count() as u16
+                } else {
+                    u16::from(team.score)
+                }
+            }),
+            shootout,
+            home_defends_negative: state.global_field_side
+                == types::field_dimensions::GlobalFieldSide::Home,
+        })
+    }
+
     pub fn led_color(&self) -> Option<booster::LedColor> {
         #[cfg(all(feature = "bhuman", unix))]
         if let Some(native) = &self.bhuman {

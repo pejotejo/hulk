@@ -446,6 +446,11 @@ impl PhysicsWorker {
                         if frame_due {
                             sequence += 1;
                             last_frame = Some(time);
+                            crate::match_effects::observe_score(
+                                &team,
+                                &members,
+                                world.data().time(),
+                            );
                         }
                         let balls = crate::observations::balls(&world);
                         for (member, observation) in &observations {
@@ -488,6 +493,9 @@ impl PhysicsWorker {
                             };
                             samples.push((member.io.clone(), observation.clone(), time, frame));
                         }
+                    }
+                    if !running {
+                        crate::match_effects::observe_score(&team, &members, world.data().time());
                     }
                     if advanced {
                         team.advance(period)

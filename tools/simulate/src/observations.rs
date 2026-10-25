@@ -179,7 +179,7 @@ pub(crate) fn detect_scene(
         let (_, hit) = data.ray(
             origin.as_ref(),
             direction.as_ref(),
-            None,
+            Some(&[1, 1, 1, 1, 1, 0]), // Group 5 is presentation-only scenery.
             true,
             Some(sample.camera_housing),
             None,
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn scene_geometry_occludes_balls_and_posts_keep_ground_anchors() {
-        use mujoco_rs::prelude::{MjData, MjSpec, MjtGeom};
+        use mujoco_rs::prelude::{MjData, MjSpec, MjtGeom, SpecItem};
         let mut data = model();
         let binding = RobotBinding::new(&data, "").unwrap();
         let sample = binding.observe(&data);
@@ -637,6 +637,7 @@ mod tests {
             MjSpec::from_xml(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/k1_robot.xml")).unwrap();
         spec.world_body_mut()
             .add_geom()
+            .with_name("occluder")
             .with_type(MjtGeom::mjGEOM_BOX)
             .with_size([0.1; 3])
             .with_pos(occluder.coords.cast::<f64>().into());
@@ -649,9 +650,24 @@ mod tests {
             velocity: [0.0; 3],
         };
         assert!(
-            !detect(&mut data, &sample, &[ball], &field)
+            !detect(&mut data, &sample, &[ball.clone()], &field)
                 .iter()
                 .any(|o| o.label == Label::Ball)
+        );
+        // Decorative geometry and lighting must never occlude synthetic detections.
+        spec.geom_mut("occluder").unwrap().set_group(5);
+        spec.world_body_mut()
+            .add_light()
+            .with_diffuse([0.1, 0.8, 0.2]);
+        let mut decorated = MjData::new(Box::new(spec.compile().unwrap()));
+        decorated.forward();
+        let sample = RobotBinding::new(&decorated, "")
+            .unwrap()
+            .observe(&decorated);
+        assert!(
+            detect(&mut decorated, &sample, &[ball], &field)
+                .iter()
+                .any(|object| object.label == Label::Ball)
         );
     }
 
