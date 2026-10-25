@@ -403,11 +403,13 @@ fn each_urgent_trigger_precedes_target_planning_and_interception_in_the_live_tre
             _ => (),
         }
         blackboard.parameters.kicking.quick = false;
-        blackboard
-            .parameters
-            .kicking
-            .strategy
-            .maximum_dribble_distance = 0.0;
+        if trigger < 2 {
+            blackboard
+                .parameters
+                .kicking
+                .strategy
+                .maximum_dribble_distance = 0.0;
+        }
         blackboard.ball.as_mut().unwrap().velocity = vector![-2.0, 0.0];
         assert!(is_ball_interception_candidate(&mut blackboard));
         let (status, trace) = create_tree().tick_with_trace(&mut blackboard);

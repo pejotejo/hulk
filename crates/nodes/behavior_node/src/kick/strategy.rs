@@ -95,6 +95,11 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
         return previous;
     }
     let urgent = urgent_kick_reason(blackboard);
+    if urgent == Some(QuickKickReason::NearbyRobot) {
+        return Some(BallAction::QuickKick {
+            reason: QuickKickReason::NearbyRobot,
+        });
+    }
     if ball.x().abs() >= goal_x || ball.y().abs() >= field.width / 2.0 {
         return urgent.map(|reason| BallAction::QuickKick { reason });
     }
@@ -200,15 +205,6 @@ fn choose_ball_action(blackboard: &Blackboard) -> Option<BallAction> {
 pub(super) fn urgent_kick_reason(blackboard: &Blackboard) -> Option<QuickKickReason> {
     let ground_to_field = blackboard.world_state.robot.ground_to_field?;
     let robot = ground_to_field * point![0.0, 0.0];
-    // Initial tuning: robot-to-goal-mouth distance, matching the 3 m shot range.
-    for (half, reason) in [
-        (Half::Own, QuickKickReason::NearOwnGoal),
-        (Half::Opponent, QuickKickReason::NearOpponentGoal),
-    ] {
-        if goal_mouth(&blackboard.field_dimensions, half).distance_to(robot) <= 3.0 {
-            return Some(reason);
-        }
-    }
     // Ground positions are relative to us, not the ball. Use centre distances.
     let nearby_obstacle = blackboard.world_state.obstacles.iter().any(|obstacle| {
         matches!(
@@ -226,7 +222,19 @@ pub(super) fn urgent_kick_reason(blackboard: &Blackboard) -> Option<QuickKickRea
                     .as_ref()
                     .is_some_and(|state| (state.inner.pose.position() - robot).norm() <= 1.5)
         });
-    (nearby_obstacle || nearby_teammate).then_some(QuickKickReason::NearbyRobot)
+    if nearby_obstacle || nearby_teammate {
+        return Some(QuickKickReason::NearbyRobot);
+    }
+    // Initial tuning: robot-to-goal-mouth distance, matching the 3 m shot range.
+    for (half, reason) in [
+        (Half::Own, QuickKickReason::NearOwnGoal),
+        (Half::Opponent, QuickKickReason::NearOpponentGoal),
+    ] {
+        if goal_mouth(&blackboard.field_dimensions, half).distance_to(robot) <= 3.0 {
+            return Some(reason);
+        }
+    }
+    None
 }
 
 pub(crate) fn own_non_penalty_restart(blackboard: &Blackboard) -> bool {

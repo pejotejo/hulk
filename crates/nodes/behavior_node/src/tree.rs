@@ -146,7 +146,17 @@ fn playing_subtree() -> Node<Blackboard> {
             condition!(is_pass_receiver),
             subtree!(look_at_ball_subtree),
             selection!(
-                sequence!(condition!(is_pass_ball_arriving), subtree!(striker_subtree)),
+                sequence!(
+                    condition!(is_pass_ball_arriving),
+                    selection!(
+                        sequence!(
+                            action!(select_ball_action),
+                            condition!(is_urgent_quick_kick_selected),
+                            subtree!(quick_kick_subtree)
+                        ),
+                        subtree!(striker_subtree),
+                    )
+                ),
                 switch_motion_type(
                     MotionType::Walk,
                     action!(prepare_to_receive_pass),
@@ -219,7 +229,6 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
                     ),
                     action!(finish_close_goal),
                     sequence!(
-                        negation!(condition!(is_pass_receiver)),
                         condition!(is_urgent_quick_kick_selected),
                         subtree!(quick_kick_subtree)
                     ),
@@ -249,14 +258,15 @@ pub(crate) fn striker_subtree() -> Node<Blackboard> {
 }
 
 fn is_urgent_quick_kick_selected(blackboard: &mut Blackboard) -> bool {
-    matches!(
-        blackboard.ball_action,
+    match blackboard.ball_action {
         Some(BallAction::QuickKick {
-            reason: QuickKickReason::NearOwnGoal
-                | QuickKickReason::NearOpponentGoal
-                | QuickKickReason::NearbyRobot,
-        })
-    )
+            reason: QuickKickReason::NearbyRobot,
+        }) => true,
+        Some(BallAction::QuickKick {
+            reason: QuickKickReason::NearOwnGoal | QuickKickReason::NearOpponentGoal,
+        }) => !is_pass_receiver(blackboard),
+        _ => false,
+    }
 }
 
 fn is_restart_pass_in_flight(blackboard: &mut Blackboard) -> bool {
@@ -441,6 +451,47 @@ mod extraction_tests {
         assert!(matches!(
             board.body_motion,
             Some(BodyMotion::Walk { .. } | BodyMotion::WalkWithVelocity { .. })
+        ));
+    }
+
+    #[test]
+    fn pressured_pass_receiver_quick_kicks_before_settling_or_dribbling() {
+        let mut board = board();
+        board.player_number = PlayerNumber::Three;
+        let target = point![3.5_f32, 1.0];
+        let direction = (target - point![-1.0, 0.0]).normalize();
+        board.world_state.robot.ground_to_field = Some(
+            Pose2::new(point![4.0, 1.0], (-direction.y()).atan2(-direction.x())).as_transform(),
+        );
+        let sender = board.world_state.player_states.two.as_mut().unwrap();
+        sender.inner.pass = Some(hsl_network_messages::PassIntent {
+            receiver: PlayerNumber::Three,
+            target,
+        });
+        board.world_state.obstacles = vec![types::obstacles::Obstacle::robot(
+            point![0.8, 0.3],
+            0.2,
+            0.2,
+        )];
+        set_ball(&mut board, target - direction * 0.2, direction);
+
+        let (_, trace) = create_tree().tick_with_trace(&mut board);
+
+        assert!(succeeded(&trace, "is_pass_receiver"));
+        assert!(
+            succeeded(&trace, "subtree_quick_kick_subtree"),
+            "{trace:#?}"
+        );
+        assert!(!succeeded(&trace, "receive_rolling_ball"));
+        assert_eq!(
+            board.ball_action,
+            Some(BallAction::QuickKick {
+                reason: QuickKickReason::NearbyRobot,
+            })
+        );
+        assert!(matches!(
+            board.body_motion,
+            Some(BodyMotion::Kick { quick: true, .. })
         ));
     }
 

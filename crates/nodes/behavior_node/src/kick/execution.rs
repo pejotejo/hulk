@@ -598,7 +598,7 @@ mod tests {
             let mut board = board(if clearing { -6.0 } else { -4.5 });
             if clearing {
                 board.parameters.kicking.quick = false;
-                board.world_state.obstacles = vec![Obstacle::robot(point![1.2, 0.1], 0.2, 0.2)];
+                board.world_state.obstacles = vec![Obstacle::robot(point![1.6, 0.1], 0.3, 0.3)];
             }
             assert!(urgent_kick_reason(&board).is_some());
             let (status, _) = create_tree().tick_with_trace(&mut board);
