@@ -127,8 +127,36 @@ pub(crate) struct Engine {
 }
 impl Engine {
     pub(super) fn prime_scene(&mut self, snapshot: Snapshot) {
+        self.register_robots(&snapshot);
         if self.snapshot.robots.is_empty() {
             self.snapshot = snapshot;
+        } else {
+            // Retain paused additions without replacing the previous ball/pose observation.
+            for robot in snapshot.robots {
+                if !self.snapshot.robots.iter().any(|old| old.id == robot.id) {
+                    self.snapshot.robots.push(robot);
+                }
+            }
+        }
+    }
+
+    fn register_robots(&mut self, snapshot: &Snapshot) {
+        if self.core.get_game(false).phase == Phase::PenaltyShootout {
+            return;
+        }
+        for robot in &snapshot.robots {
+            if robot.id.number > self.core.params.competition.players_per_team
+                || self.snapshot.robots.iter().any(|old| old.id == robot.id)
+            {
+                continue;
+            }
+            for delayed in [false, true] {
+                let player = &mut self.core.get_context(delayed).game.teams[side(robot.id.team)]
+                    [PlayerNumber::new(robot.id.number)];
+                if player.penalty == Penalty::Substitute {
+                    player.penalty = Penalty::NoPenalty;
+                }
+            }
         }
     }
 
@@ -150,8 +178,15 @@ impl Engine {
             },
         };
         let journal = Journal::default();
+        let mut core = GameController::new(params, Box::new(journal.clone()));
+        // A ruleset's capacity is not a roster: only physically spawned robots may play.
+        for team in core.get_context(false).game.teams.values_mut() {
+            for player in &mut team.players {
+                player.penalty = Penalty::Substitute;
+            }
+        }
         Ok(Self {
-            core: GameController::new(params, Box::new(journal.clone())),
+            core,
             opponent,
             referee: Autoreferee::new(Self::config(&field)),
             stuck: super::stuck::Stuck::default(),
@@ -445,6 +480,7 @@ impl Engine {
             == (self.core.get_game(false).sides == SideMapping::HomeDefendsLeftGoal)
     }
     pub(super) fn update(&mut self, snapshot: &Snapshot, dt: Duration) -> Vec<Effect> {
+        self.register_robots(snapshot);
         if self.restoring {
             self.restoring = false;
             self.core.seek(dt);

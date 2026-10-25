@@ -136,6 +136,11 @@ outgoing packets to other B-Human players on the same team after all robots fini
 the current frame, and forwards packets for GameController budget accounting.
 Private worker connections isolate simultaneous matches.
 
+The embedded referee leaves unspawned player slots as substitutes, even when
+Small rules allow seven players, and registers robots as they are added.
+With an external GameController, mark absent players as substitutes as well:
+the advertised active roster must match the actual team.
+
 Actuation follows native calibration offsets, stiffness, motor gains, damping,
 head-pitch feedforward and get-up torque control. Host torque is clamped to both
 the returned limit and the model limit. Reset starts a fresh process and epoch;

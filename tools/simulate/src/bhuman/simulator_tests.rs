@@ -31,16 +31,17 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
         runtime.block_on(async { router.session().info().locators().await[0].to_string() });
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let parameter_root = root.join("../../etc/parameters");
-    let field = crate::FieldConfiguration::load(&parameter_root, "hsl_middle").unwrap();
+    let field = crate::FieldConfiguration::load(&parameter_root, "hsl_small").unwrap();
     let dimensions = field.dimensions;
     let configuration = crate::Configuration {
         referee: crate::RefereeMode::Automatic,
-        competition: crate::Competition::default(),
+        // Seven allowed slots with only five spawned players must not invent teammates.
+        competition: crate::Competition::Small,
         parameter_root,
         model_directory: root.join("../../etc/neural_networks"),
         router: Some(endpoint),
         namespace: crate::robot_namespace(crate::RobotId::FIRST),
-        location: Some("hsl_middle".into()),
+        location: Some("hsl_small".into()),
         robot_count: 5,
         opponent_count: 5,
         opponent: crate::Opponent::BHuman {
@@ -116,7 +117,8 @@ fn mixed_match_steps_native_players_and_preserves_pause() {
     let mut worker = PhysicsWorker::start_team(physics.clone(), team.clone());
     worker.set_speed(Speed::Quadruple);
     let wait = |worker: &mut PhysicsWorker, condition: &dyn Fn() -> bool| {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Allow a native reply deadline to reach worker.poll before the fixture itself expires.
+        let deadline = Instant::now() + Duration::from_secs(45);
         while !condition() {
             if let Some(error) = worker.poll() {
                 panic!("{error}");

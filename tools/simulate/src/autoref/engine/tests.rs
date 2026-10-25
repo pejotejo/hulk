@@ -77,6 +77,128 @@ fn advance(engine: &mut Engine, snapshot: &mut Snapshot, dt: Duration) {
 }
 
 #[test]
+fn roster_starts_empty_and_activates_only_spawned_players_without_clearing_penalties() {
+    let (_, mut snapshot) = fixture("hsl_small");
+    let field = FieldConfiguration::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../etc/parameters"),
+        "hsl_small",
+    )
+    .unwrap();
+    let mut engine = Engine::new(Competition::Small, field, crate::Opponent::Hulks).unwrap();
+    engine.enabled = false;
+    assert_eq!(engine.core.params.competition.players_per_team, 7);
+    for delayed in [false, true] {
+        for team in engine.core.get_game(delayed).teams.values() {
+            assert!(
+                team.players
+                    .iter()
+                    .all(|player| player.penalty == Penalty::Substitute)
+            );
+        }
+    }
+    engine.prime_scene(snapshot.clone());
+    for delayed in [false, true] {
+        for side in [Side::Home, Side::Away] {
+            for player in PlayerNumber::all() {
+                assert_eq!(
+                    engine.core.get_game(delayed).teams[side][player].penalty,
+                    if u8::from(player) <= 3 {
+                        Penalty::NoPenalty
+                    } else {
+                        Penalty::Substitute
+                    }
+                );
+            }
+        }
+    }
+    engine
+        .call(Call::Penalize(
+            RobotId {
+                team: TeamId::Hulks,
+                number: 1,
+            },
+            PenaltyCall::RequestForPickUp,
+        ))
+        .unwrap();
+    engine
+        .call(Call::Penalize(
+            RobotId {
+                team: TeamId::Opponents,
+                number: 2,
+            },
+            PenaltyCall::SendOff,
+        ))
+        .unwrap();
+    let mut added = snapshot.robots[0].clone();
+    added.id.number = 4;
+    snapshot.robots.push(added.clone());
+    // Registration also works while paused, before the next physics update.
+    engine.prime_scene(snapshot.clone());
+    for delayed in [false, true] {
+        assert_eq!(
+            engine.core.get_game(delayed).teams[Side::Home][PlayerNumber::new(4)].penalty,
+            Penalty::NoPenalty
+        );
+    }
+    engine
+        .call(Call::Penalize(added.id, PenaltyCall::SendOff))
+        .unwrap();
+    engine.prime_scene(snapshot.clone());
+    engine.update(&snapshot, Duration::ZERO);
+    assert_eq!(
+        engine.penalty(RobotId {
+            team: TeamId::Hulks,
+            number: 1
+        }),
+        Penalty::PickedUp
+    );
+    assert_eq!(
+        engine.penalty(RobotId {
+            team: TeamId::Opponents,
+            number: 2
+        }),
+        Penalty::SentOff
+    );
+    assert_eq!(engine.penalty(added.id), Penalty::SentOff);
+    for number in [5, 6, 7] {
+        assert_eq!(
+            engine.penalty(RobotId {
+                team: TeamId::Hulks,
+                number
+            }),
+            Penalty::Substitute
+        );
+    }
+}
+
+#[test]
+fn roster_addition_remains_registered_after_reversing_an_earlier_call() {
+    let (mut engine, mut snapshot) = fixture("hsl_small");
+    playing(&mut engine);
+    flush(&mut engine, &mut snapshot);
+    engine.call(Call::Goal(TeamId::Hulks)).unwrap();
+    let decision = engine.events.back().unwrap().decision.unwrap();
+    let mut added = snapshot.robots[0].clone();
+    added.id.number = 4;
+    snapshot.robots.push(added);
+    engine.prime_scene(snapshot.clone());
+    engine.reverse(decision).unwrap();
+    engine.update(&snapshot, Duration::ZERO);
+    for delayed in [false, true] {
+        let game = engine.core.get_game(delayed);
+        assert_eq!(game.teams[Side::Home].score, 0);
+        assert_eq!(
+            game.teams[Side::Home][PlayerNumber::new(4)].penalty,
+            Penalty::NoPenalty
+        );
+        assert_eq!(
+            game.teams[Side::Away][PlayerNumber::new(4)].penalty,
+            Penalty::Substitute
+        );
+    }
+}
+
+#[test]
 fn reverse_goal_restores_both_packet_views_and_placements_without_rewinding_time() {
     let (mut engine, mut snapshot) = fixture("hsl_small");
     playing(&mut engine);

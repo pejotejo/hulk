@@ -1146,14 +1146,16 @@ fn all_upstream_competition_presets_parse() {
             step(&mut e, &s, 0.01);
             assert_eq!(e.core.get_game(false).state, State::Ready);
             let team = &e.core.get_game(false).teams[Side::Home];
-            assert_eq!(
-                team[PlayerNumber::new(preset.players())].penalty,
-                Penalty::NoPenalty
-            );
-            assert_eq!(
-                team[PlayerNumber::new(preset.players() + 1)].penalty,
-                Penalty::Substitute
-            );
+            for player in PlayerNumber::all() {
+                assert_eq!(
+                    team[player].penalty,
+                    if u8::from(player) <= preset.players().min(3) {
+                        Penalty::NoPenalty
+                    } else {
+                        Penalty::Substitute
+                    }
+                );
+            }
         }
     }
     // Layouts saved before Foundation existed keep their Advanced preset.
