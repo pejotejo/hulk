@@ -192,14 +192,14 @@ mod tests {
             TimeWrapper {
                 time,
                 inner: IncomingMessage::Hsl(HulkMessage::State(StateMessage {
-                    player_number: PlayerNumber::Two,
-                    pose,
-                    head_yaw: 0.0,
-                    ball_position: None,
                     pass: Some(hsl_network_messages::PassIntent {
                         receiver: PlayerNumber::Three,
                         target: point![1.0, 2.0],
                     }),
+                    player_number: PlayerNumber::Two,
+                    pose,
+                    head_yaw: 0.0,
+                    ball_position: None,
                 })),
             },
         );
@@ -217,11 +217,11 @@ mod tests {
         let valid = |head_yaw| TimeWrapper {
             time: Time::from_nanos(42),
             inner: IncomingMessage::Hsl(HulkMessage::State(StateMessage {
+                pass: None,
                 player_number: PlayerNumber::Two,
                 pose: Pose2::default(),
                 head_yaw,
                 ball_position: None,
-                pass: None,
             })),
         };
 
@@ -239,11 +239,11 @@ mod tests {
                 }),
             },
             StateMessage {
+                pass: None,
                 player_number: PlayerNumber::Two,
                 pose: Pose2::new(point![f32::NAN, 0.0], 0.0),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
             StateMessage {
                 player_number: PlayerNumber::Two,
@@ -276,19 +276,19 @@ mod tests {
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(10),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
             time: Time::from_nanos(20),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
 
@@ -324,19 +324,19 @@ mod tests {
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_000),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
             time: Time::from_nanos(1_500_000_000),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
 
@@ -357,10 +357,10 @@ mod tests {
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_001),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
 
@@ -380,10 +380,10 @@ mod tests {
         last_received[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_000),
             inner: PlayerState {
+                pass: None,
                 pose: Pose2::default(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
 

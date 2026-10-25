@@ -656,10 +656,10 @@ mod tests {
         let ground_to_field: Isometry2<Ground, Field> =
             na::Isometry2::translation(1.0, 2.0).framed_transform();
         let player_state = PlayerState {
+            pass: None,
             pose: linear_algebra::point![3.0, 5.0].into(),
             head_yaw: 0.0,
             ball_position: None,
-            pass: None,
         };
 
         let position = measured_player_position(&player_state, &ground_to_field);
@@ -672,16 +672,16 @@ mod tests {
         use hsl_network_messages::PlayerNumber;
 
         let own_player_state = PlayerState {
+            pass: None,
             pose: linear_algebra::point![1.0, 2.0].into(),
             head_yaw: 0.0,
             ball_position: None,
-            pass: None,
         };
         let teammate_state = PlayerState {
+            pass: None,
             pose: linear_algebra::point![3.0, 4.0].into(),
             head_yaw: 0.0,
             ball_position: None,
-            pass: None,
         };
         let players = Players {
             two: Some(TimeWrapper {
@@ -722,10 +722,10 @@ mod tests {
         assert!(repeated_entries.is_empty());
 
         let newer_teammate_state = PlayerState {
+            pass: None,
             pose: linear_algebra::point![5.0, 6.0].into(),
             head_yaw: 0.0,
             ball_position: None,
-            pass: None,
         };
         let updated_players = Players {
             four: Some(TimeWrapper {

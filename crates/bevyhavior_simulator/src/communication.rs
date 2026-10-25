@@ -224,6 +224,7 @@ mod tests {
 
     fn hsl_state_message(player_number: PlayerNumber, x: f32, y: f32) -> HulkMessage {
         HulkMessage::State(hsl_network_messages::StateMessage {
+            pass: None,
             player_number,
             pose: Pose2::new(point![x, y], 0.0),
             ball_position: Some(hsl_network_messages::BallPosition {
@@ -231,7 +232,6 @@ mod tests {
                 position: point![x + 1.0, y],
             }),
             head_yaw: 0.0,
-            pass: None,
         })
     }
 

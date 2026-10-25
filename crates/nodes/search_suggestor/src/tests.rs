@@ -19,10 +19,10 @@ fn search_partition_excludes_assigned_goalkeeper_and_keeps_its_search_independen
         states[number] = Some(TimeWrapper {
             time: now,
             inner: PlayerState {
+                pass: None,
                 pose: pose.as_pose(),
                 head_yaw: 0.0,
                 ball_position: None,
-                pass: None,
             },
         });
     }

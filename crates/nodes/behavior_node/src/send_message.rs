@@ -197,11 +197,11 @@ impl Blackboard {
                 inner,
             });
             let message = HulkMessage::State(StateMessage {
+                pass,
                 player_number: self.player_number,
                 pose,
                 head_yaw: self.head_yaw,
                 ball_position,
-                pass,
             });
 
             self.last_sent_hsl_message_time = Some(now);
