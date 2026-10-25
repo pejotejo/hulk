@@ -5,7 +5,8 @@ use hsl_network_messages::{PlayerNumber, SubState, Team};
 use linear_algebra::{Point2, Rotation2, point};
 use types::{
     behavior_tree::Status, field_dimensions::Side,
-    filtered_game_controller_state::FilteredGameControllerState, obstacles::ObstacleKind,
+    filtered_game_controller_state::FilteredGameControllerState, motion_command::BodyMotion,
+    motion_type::MotionType, obstacles::ObstacleKind,
 };
 
 use crate::{
@@ -55,7 +56,7 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
                     negation!(condition!(is_close_to_ball_aligned)),
                     subtree!(walk_to_ball_subtree)
                 ),
-                subtree!(kick_subtree)
+                sequence!(subtree!(kick_subtree), action!(use_goal_kick_settings))
             )
         ),
         sequence!(
@@ -84,6 +85,18 @@ pub fn sub_state_subtree() -> Node<Blackboard> {
             action!(walk_to_block_position)
         )
     )
+}
+
+fn use_goal_kick_settings(blackboard: &mut Blackboard) -> Status {
+    if is_sub_state(blackboard, SubState::GoalKick)
+        && !matches!(blackboard.ball_action, Some(BallAction::Pass { .. }))
+        && blackboard.last_motion_type != Some(MotionType::Kick)
+        && let Some(BodyMotion::Kick { strong, quick, .. }) = &mut blackboard.body_motion
+    {
+        *strong = blackboard.parameters.kicking.allow_strong_kicks;
+        *quick = false;
+    }
+    Status::Success
 }
 
 fn restart_players(blackboard: &Blackboard) -> Vec<(PlayerNumber, Point2<Field>)> {
@@ -480,6 +493,32 @@ mod restart_tests {
     }
 
     #[test]
+    fn non_pass_goal_kicks_use_strong_non_quick_settings_only_on_their_restart() {
+        for (state, allow_strong, expected_strong, expected_quick) in [
+            (SubState::GoalKick, true, true, false),
+            (SubState::GoalKick, false, false, false),
+            (SubState::DirectFreeKick, true, true, true),
+        ] {
+            let mut board = restart_blackboard(state, point![-3.5, 0.0]);
+            board.world_state.robot.ground_to_field =
+                Some(Pose2::new(point![-4.1, 0.0], 0.0).as_transform());
+            board.parameters.kicking.allow_strong_kicks = allow_strong;
+
+            assert_eq!(
+                sub_state_subtree().tick_with_trace(&mut board).0,
+                Status::Success
+            );
+            assert!(!matches!(board.ball_action, Some(BallAction::Pass { .. })));
+            assert!(
+                matches!(board.body_motion, Some(BodyMotion::Kick { strong, quick, .. })
+                    if (strong, quick) == (expected_strong, expected_quick)),
+                "{state:?}: {:?}",
+                board.body_motion,
+            );
+        }
+    }
+
+    #[test]
     fn own_restarts_pass_from_touchlines_and_without_goal_alignment() {
         for (state, ball, receiver) in [
             (SubState::GoalKick, point![-3.5, 0.0], point![-1.5, 0.0]),
@@ -522,6 +561,12 @@ mod restart_tests {
                 ),
                 "{state:?}"
             );
+            if state == SubState::GoalKick {
+                assert!(matches!(
+                    board.body_motion,
+                    Some(BodyMotion::Kick { strong: false, .. })
+                ));
+            }
         }
     }
 
