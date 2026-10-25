@@ -401,17 +401,14 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
         return Status::Failure;
     }
 
-    let kickoff_pose = crate::kick::kickoff::kickoff_pose(blackboard, player_number)
-        .unwrap_or_else(|| {
-            select_kickoff_pose(
-                blackboard,
-                player_number,
-                game_controller_state,
-                blackboard.parameters.goalkeeper.player_number,
-                &blackboard.parameters.kickoff,
-                &blackboard.field_dimensions,
-            )
-        });
+    let kickoff_pose = select_kickoff_pose(
+        blackboard,
+        player_number,
+        game_controller_state,
+        blackboard.parameters.goalkeeper.player_number,
+        &blackboard.parameters.kickoff,
+        &blackboard.field_dimensions,
+    );
 
     let walk_and_stand_parameters = blackboard.parameters.walking.walk_and_stand;
 
@@ -425,7 +422,7 @@ pub fn walk_to_kickoff_pose(blackboard: &mut Blackboard) -> Status {
     )
 }
 
-fn select_kickoff_pose(
+pub(crate) fn select_kickoff_pose(
     blackboard: &Blackboard,
     player_number: PlayerNumber,
     game_controller_state: &FilteredGameControllerState,
