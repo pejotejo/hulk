@@ -493,6 +493,7 @@ mod runtime_tests {
                 for (side, publisher) in &publishers {
                     publisher
                         .publish(&OutgoingMessage::Hsl(HulkMessage::State(StateMessage {
+                            pass: None,
                             player_number: PlayerNumber::One,
                             head_yaw: if *side == TeamId::Hulks {
                                 1.234

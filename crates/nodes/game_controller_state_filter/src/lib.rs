@@ -585,6 +585,7 @@ mod tests {
             players: Vec::new(),
         };
         let mut game = GameControllerState {
+            half: hsl_network_messages::Half::First,
             game_state: GameState::Ready,
             stopped: false,
             game_phase: GamePhase::Normal,
