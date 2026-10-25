@@ -4,6 +4,7 @@ mod clock;
 mod export;
 mod queries;
 mod rosz;
+mod scene_render;
 mod server;
 mod verification;
 mod visual;

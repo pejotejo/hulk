@@ -32,6 +32,7 @@ struct Inner {
     clock_sink: Mutex<Option<Arc<dyn Fn(i64) + Send + Sync>>>,
     recording_directory: std::path::PathBuf,
     referee: Option<crate::autoref::AutoRef>,
+    effects: crate::match_effects::MatchEffects,
     network: tokio::sync::Mutex<Network>,
     members: Mutex<BTreeMap<RobotId, Member>>,
     selected: Mutex<RobotId>,
@@ -100,6 +101,7 @@ impl Team {
             recording_directory,
             network: tokio::sync::Mutex::new(network),
             referee,
+            effects: Default::default(),
             members: Mutex::new(BTreeMap::new()),
             selected: Mutex::new(RobotId::FIRST),
             controller: Mutex::new(None),
@@ -131,6 +133,9 @@ impl Team {
     }
     pub fn referee(&self) -> Option<&crate::autoref::AutoRef> {
         self.0.referee.as_ref()
+    }
+    pub(crate) fn effects(&self) -> crate::match_effects::MatchEffects {
+        self.0.effects.clone()
     }
     pub fn poll_controller(&self) -> Option<String> {
         if let Some(error) = self.referee().and_then(|r| r.poll()) {

@@ -24,7 +24,7 @@ assets = set(meshes.glob("*")) | set(models.glob("*.onnx")) | set(branding.glob(
 assets |= {meshes / "Trunk.STL", *(models / name for name in (
     "K1_walk.onnx", "K1_stand_up.onnx", "K1_kick_inner.onnx", "K1_kick_inner_soft.onnx"))}
 assets |= {branding / f"{name}_panel.png" for name in (
-    "hulks", "kdab", "cc", "draeger", "gea", "haspa", "tk", "gegenstrom")}
+    "hulks", "kdab", "cc", "draeger", "gea", "haspa", "tk", "gegenstrom", "tuhh")}
 missing = []
 for path in sorted(assets):
     if not path.exists():

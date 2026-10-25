@@ -94,6 +94,10 @@ pub(super) struct Replay {
 }
 
 impl Replay {
+    pub fn timestamp(&self) -> f64 {
+        self.frames[0].time + self.elapsed.clamp(0.0, self.duration())
+    }
+
     pub fn duration(&self) -> f64 {
         self.frames.last().unwrap().time - self.frames[0].time
     }
@@ -104,7 +108,32 @@ impl Replay {
     }
 
     pub fn for_each_pose(&self, mut apply: impl FnMut(Entity, Transform)) {
-        let time = self.frames[0].time + self.elapsed;
+        let (before, after, fraction) = self.sample();
+        for (entity, pose) in &before.poses {
+            let Ok(index) = after
+                .poses
+                .binary_search_by_key(&entity.to_bits(), |(entity, _)| entity.to_bits())
+            else {
+                continue;
+            };
+            apply(*entity, interpolate(*pose, after.poses[index].1, fraction));
+        }
+    }
+
+    pub fn pose(&self, entity: Entity) -> Option<Transform> {
+        let (before, after, fraction) = self.sample();
+        let lookup = |frame: &Frame| {
+            frame
+                .poses
+                .binary_search_by_key(&entity.to_bits(), |(entity, _)| entity.to_bits())
+                .ok()
+                .map(|index| frame.poses[index].1)
+        };
+        Some(interpolate(lookup(before)?, lookup(after)?, fraction))
+    }
+
+    fn sample(&self) -> (&Frame, &Frame, f32) {
+        let time = self.timestamp();
         let upper = self
             .frames
             .partition_point(|frame| frame.time <= time)
@@ -116,15 +145,7 @@ impl Replay {
         } else {
             0.0
         };
-        for (entity, pose) in &before.poses {
-            let Ok(index) = after
-                .poses
-                .binary_search_by_key(&entity.to_bits(), |(entity, _)| entity.to_bits())
-            else {
-                continue;
-            };
-            apply(*entity, interpolate(*pose, after.poses[index].1, fraction));
-        }
+        (before, after, fraction)
     }
 }
 
@@ -215,5 +236,29 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(replay.duration(), 1.0);
         assert!(!replay.advance(0.5));
+    }
+
+    #[test]
+    fn replay_timestamp_and_subject_poses_use_the_captured_clock() {
+        let mut world = World::new();
+        let ball = world.spawn_empty().id();
+        let live_only = world.spawn_empty().id();
+        let mut history = History::default();
+        for time in [12.0, 13.0] {
+            history.record(
+                time,
+                1,
+                std::iter::once((ball, Transform::from_xyz(time as f32, 0.1, 0.0))),
+            );
+        }
+        let mut replay = history.clip().unwrap();
+        assert!(replay.advance(0.25));
+        assert_eq!(replay.timestamp(), 12.25);
+        assert_eq!(replay.pose(ball).unwrap().translation.x, 12.25);
+        assert!(replay.pose(live_only).is_none());
+        history.record(99.0, 1, std::iter::empty());
+        assert_eq!(replay.timestamp(), 12.25);
+        replay.advance(50.0);
+        assert_eq!(replay.timestamp(), 13.0);
     }
 }

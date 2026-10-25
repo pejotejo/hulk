@@ -219,6 +219,14 @@ The manifest names finalized segments and stores barrier metadata. A crash can l
 Headless means no interactive window. Offscreen scene rendering can still need a graphics adapter and driver. Report rendering support separately from physics readiness and create rendering resources on demand.
 
 - Scene images use a frozen physics/scene snapshot and return its simulation time.
+  A cached independently owned visual model/data copy holds lighting and rotating
+  advertising material indices. `mjv_copyData` copies visual state under the physics
+  lock; subsequent scene sync, material selection, GPU rendering and PNG I/O leave
+  the live model untouched. The copy is never stepped. Confetti uses the renderer's
+  bounded visual-only user scene. Both effects use captured simulation time.
+  Camera presets `drone`, `sideline`, `endline`, `goal`, `chase`, `orbit` and `wide`
+  share the GUI's shot geometry; headless snapshots do not run its automatic director
+  or interactive replay schedule.
   The worker reuses its offscreen renderer while scene topology and output dimensions
   stay unchanged. Only visual-scene synchronization holds the physics lock on warm
   frames; GPU rendering, readback and PNG writing use that captured scene after

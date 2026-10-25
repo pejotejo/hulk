@@ -34,7 +34,7 @@ class Launchers(unittest.TestCase):
                          *(f"etc/neural_networks/{name}.onnx" for name in (
                              "K1_walk", "K1_stand_up", "K1_kick_inner", "K1_kick_inner_soft")),
                          *(f"tools/simulate/assets/branding/{name}_panel.png" for name in (
-                             "hulks", "kdab", "cc", "draeger", "gea", "haspa", "tk", "gegenstrom"))):
+                             "hulks", "kdab", "cc", "draeger", "gea", "haspa", "tk", "gegenstrom", "tuhh"))):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b"fixture asset")
@@ -153,7 +153,6 @@ class Launchers(unittest.TestCase):
         self.assertIn("Fetching simulator meshes", result.stderr)
 
     def test_branding_only_lfs_assets_are_hydrated_before_cargo(self):
-        panel = self.root / "tools/simulate/assets/branding/hulks_panel.png"
         log = self.root / "launch-order"
         self.command("git-lfs", "exit 0")
         self.command("git", 'printf "%s\\n" "$*" > "$LFS_CALL_LOG"\n'
@@ -161,19 +160,21 @@ class Launchers(unittest.TestCase):
                             'echo hydration > "$LAUNCH_ORDER"')
         self.command("cargo", '[[ "$(cat "$LFS_PANEL")" == "hydrated panel" ]]\n'
                               'echo cargo >> "$LAUNCH_ORDER"')
-        for state in ("pointer", "missing"):
-            with self.subTest(state=state):
-                if state == "pointer":
-                    panel.write_text("version https://git-lfs.github.com/spec/v1\n")
-                else:
-                    panel.unlink()
-                result = self.launch("simulator-mcp", ORT_DYLIB_PATH=str(self.ort),
-                                     LFS_PANEL=str(panel), LAUNCH_ORDER=str(log),
-                                     LFS_CALL_LOG=str(self.root / "git-calls"))
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(log.read_text().splitlines(), ["hydration", "cargo"])
-                self.assertIn("tools/simulate/assets/branding/*_panel.png",
-                              (self.root / "git-calls").read_text())
+        for name in ("hulks", "tuhh"):
+            panel = self.root / f"tools/simulate/assets/branding/{name}_panel.png"
+            for state in ("pointer", "missing"):
+                with self.subTest(name=name, state=state):
+                    if state == "pointer":
+                        panel.write_text("version https://git-lfs.github.com/spec/v1\n")
+                    else:
+                        panel.unlink()
+                    result = self.launch("simulator-mcp", ORT_DYLIB_PATH=str(self.ort),
+                                         LFS_PANEL=str(panel), LAUNCH_ORDER=str(log),
+                                         LFS_CALL_LOG=str(self.root / "git-calls"))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(log.read_text().splitlines(), ["hydration", "cargo"])
+                    self.assertIn("tools/simulate/assets/branding/*_panel.png",
+                                  (self.root / "git-calls").read_text())
 
     def test_legacy_dry_run_is_independent_of_caller_directory(self):
         result = self.launch("mujoco-simulator", "--dry-run", "--example", "value with spaces")

@@ -129,7 +129,7 @@ The preset opens this parameter; press **Refresh** once the simulator has starte
 **M** or **Fly camera** captures/releases the mouse; **Esc** releases it.
 While captured, a legend at the bottom of the scene lists the movement keys.
 While captured, use W/A/S/D to move, Q/E for down/up, and Shift for faster movement.
-**Cinematic** smoothly tracks the ball or selected player with **Drone**, **Sideline**, or **Player** shots.
+**Cinematic** smoothly tracks the ball or selected player. **Auto director** chooses establishing, drone, sideline, player, chase, orbit, endline and goal views using ball speed, proximity and goal approach, with dwell time and hysteresis. Each angle can also be selected directly. Accepted score changes hold a view of the scoring goal; manual camera controls still take over normally.
 Turning it off restores the previous manual camera; using manual camera controls also returns to manual mode.
 **Replay** plays the last available ten simulation seconds of poses at normal wall speed, with a clear REPLAY badge and **Return live** control.
 Live physics, robot behavior and referee controls continue throughout; this is presentation playback, not a rewind.
@@ -137,8 +137,10 @@ The history samples only while the viewport renders, at up to 30 Hz, with at mos
 A scene recompile clears the clip/history; live command arrows and scene editing are hidden/disabled during replay.
 For ten K1s this stores roughly a few MiB of transforms, without sensor messages, models or mesh copies.
 
-The small arena adds striped turf, stepped seating, lamps and perimeter sponsor boards beyond the carpet runoff and goal backs.
+The small arena adds striped turf, stepped seating, lamps and perimeter sponsor boards beyond the carpet runoff and goal backs. A restrained Hamburg waterfront surrounds it: Elbe-style water, brick warehouses, dock cranes, park trees and a distant skyline. Static scenery is batched by material; fixed warm sunlight and sky are decorative. Arena geometry has no contacts or DOFs, and its visual group is excluded from synthetic detection rays. Lighting, advertising and confetti never enter robot topics or localization.
 Branding is from the current [HULKs sponsors page](https://hulks.de/sponsors/), checked 2026-10-24; the [local asset manifest](assets/branding/README.md) records exact sources.
+Colored local derivatives preserve the original logo shapes. Nine preloaded brand materials rotate on a quiet 12-second simulation-time cadence with staggered offsets. Boards freeze when paused and follow historical simulation time during pose replay; no texture uploads or physics recompiles occur during rotation.
+Goals produce a short burst of at most 128 decorative confetti pieces at the relevant end, using accepted score increases or successful shootout results from the embedded referee or the external GameController. Score undo/reset cancels the burst. Its 3.5-second lifetime follows simulation time and freezes when paused. Confetti is suppressed entirely during pose replay, so a live goal cannot be overlaid on historical play. The pool is reused and hidden after expiry.
 Static meshes and materials are shared; decoration has no physics contacts. Goal posts/crossbar and the side/back/roof net panels do collide; the mouth remains open.
 Nets approximate rigid surfaces rather than cloth.
 

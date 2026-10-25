@@ -34,7 +34,6 @@ pub(super) fn setup_scene(
         ),
         Added<PanOrbitCamera>,
     >,
-    mut lights: Query<&mut Transform, (With<DirectionalLight>, Without<Camera>)>,
 ) {
     for (mut orbit, mut transform, mut camera, projection) in &mut cameras {
         // egui_bevy uses this component to identify its render target camera.
@@ -53,9 +52,6 @@ pub(super) fn setup_scene(
             );
         }
         camera.clear_color = ClearColorConfig::Default;
-        for mut light in &mut lights {
-            *light = Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y);
-        }
     }
 }
 
